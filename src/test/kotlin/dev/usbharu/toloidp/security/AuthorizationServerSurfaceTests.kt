@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.http.MediaType
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
@@ -47,19 +48,28 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.token_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(
                 jsonPath(
                     "$.introspection_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(
                 jsonPath(
                     "$.revocation_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
     }
@@ -72,7 +82,10 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.revocation_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(
@@ -95,22 +108,22 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.token_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
-                ),
-            )
-            .andExpect(
-                jsonPath(
-                    "$.introspection_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
-                ),
-            )
-            .andExpect(
-                jsonPath(
-                    "$.revocation_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(jsonPath("$.introspection_endpoint").exists())
+            .andExpect(
+                jsonPath(
+                    "$.introspection_endpoint_auth_methods_supported",
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
+                ),
+            )
     }
 
     @Test
@@ -118,6 +131,18 @@ class AuthorizationServerSurfaceTests(
         mockMvc.perform(
             post("/oauth2/revoke")
                 .with(httpBasic("client-123", "secret"))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    @Test
+    fun tokenRevocationEndpointAcceptsClientSecretPostAuthentication() {
+        mockMvc.perform(
+            post("/oauth2/revoke")
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", "client-123")
+                .param("client_secret", "secret"),
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))

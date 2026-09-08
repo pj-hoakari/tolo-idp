@@ -72,6 +72,7 @@ open class SeedDataRunner(
                     .clientSecret(passwordEncoder.encode(properties.seed.clientSecret))
                     .clientName("Development confidential client")
                     .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                     .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
                     .redirectUri("http://127.0.0.1:8080/login/oauth2/code/client-123")
