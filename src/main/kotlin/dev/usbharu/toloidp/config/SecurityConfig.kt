@@ -246,11 +246,20 @@ class SecurityConfig {
                 "events.write",
             )
             claims[OAuth2AuthorizationServerMetadataClaimNames.TOKEN_ENDPOINT_AUTH_METHODS_SUPPORTED] =
-                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                listOf(
+                    ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                    ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                )
             claims[OAuth2AuthorizationServerMetadataClaimNames.INTROSPECTION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
-                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                listOf(
+                    ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                    ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                )
             claims[OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
-                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+                listOf(
+                    ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                    ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                )
         }
 
     /**

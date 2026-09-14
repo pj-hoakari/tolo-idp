@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.http.MediaType
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
@@ -47,19 +48,28 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.token_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(
                 jsonPath(
                     "$.introspection_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(
                 jsonPath(
                     "$.revocation_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
     }
@@ -72,7 +82,10 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.revocation_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(
@@ -95,22 +108,22 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.token_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
-                ),
-            )
-            .andExpect(
-                jsonPath(
-                    "$.introspection_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
-                ),
-            )
-            .andExpect(
-                jsonPath(
-                    "$.revocation_endpoint_auth_methods_supported",
-                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
                 ),
             )
             .andExpect(jsonPath("$.introspection_endpoint").exists())
+            .andExpect(
+                jsonPath(
+                    "$.introspection_endpoint_auth_methods_supported",
+                    containsInAnyOrder(
+                        ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+                        ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ),
+                ),
+            )
     }
 
     @Test
@@ -122,4 +135,65 @@ class AuthorizationServerSurfaceTests(
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
     }
+
+    @Test
+    fun tokenRevocationEndpointAcceptsClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/revoke"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    @Test
+    fun tokenRevocationEndpointRejectsInvalidClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/revoke", clientSecret = "wrong-secret"),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun tokenEndpointAcceptsClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/token"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    @Test
+    fun tokenEndpointRejectsInvalidClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/token", clientSecret = "wrong-secret"),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun tokenIntrospectionEndpointAcceptsClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/introspect"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    @Test
+    fun tokenIntrospectionEndpointRejectsInvalidClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/introspect", clientSecret = "wrong-secret"),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    private fun clientSecretPostRequest(
+        path: String,
+        clientId: String = "client-123",
+        clientSecret: String = "secret",
+    ) =
+        post(path)
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .param("client_id", clientId)
+            .param("client_secret", clientSecret)
 }

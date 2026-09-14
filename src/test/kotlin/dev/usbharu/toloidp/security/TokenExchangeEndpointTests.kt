@@ -85,6 +85,17 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun exchangesTenantAccessTokenUsingClientSecretPostAuthentication() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken, useClientSecretPost = true))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.token_type").value("Bearer"))
+            .andExpect(jsonPath("$.issued_token_type").value(ACCESS_TOKEN_TYPE))
+            .andExpect(jsonPath("$.scope").value("events.read"))
+    }
+
+    @Test
     fun exchangesTenantAccessTokenForEventAccessJwtAndRecordsSuccessAudit() {
         val subjectToken = saveTenantAuthorization()
 
@@ -559,10 +570,19 @@ class TokenExchangeEndpointTests(
         audience: String? = "backend-api",
         resource: String? = "https://api.example.com/tenants/tenant-a/events/event-1",
         scope: String? = "events.read",
+        useClientSecretPost: Boolean = false,
     ) =
         post("/oauth2/token")
-            .with(httpBasic(clientId, clientSecret))
-            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .apply {
+                if (useClientSecretPost) {
+                    contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    param("client_id", clientId)
+                    param("client_secret", clientSecret)
+                } else {
+                    with(httpBasic(clientId, clientSecret))
+                    contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                }
+            }
             .param("grant_type", AuthorizationGrantType.TOKEN_EXCHANGE.value)
             .param("subject_token_type", subjectTokenType)
             .apply {

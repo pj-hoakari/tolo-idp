@@ -94,6 +94,17 @@ class TokenRevocationEndpointTests(
     }
 
     @Test
+    fun revokesTenantAccessTokenUsingClientSecretPostAuthentication() {
+        val token = saveAuthorization(jti = "tenant-revoke-post-jti")
+
+        mockMvc.perform(revocationRequest(token, useClientSecretPost = true))
+            .andExpect(status().isOk)
+            .andExpect(content().string(""))
+
+        assertTrue(jtiDenylistRepository.existsById("tenant-revoke-post-jti"))
+    }
+
+    @Test
     fun revokesTenantAccessTokenByAddingJtiToDenylistAndRecordingAudit() {
         val expiresAt = Instant.now().plusSeconds(3600)
         val token = saveAuthorization(jti = "tenant-revoke-jti", expiresAt = expiresAt)
@@ -228,10 +239,19 @@ class TokenRevocationEndpointTests(
         token: String,
         clientId: String = "client-123",
         clientSecret: String = "secret",
+        useClientSecretPost: Boolean = false,
     ) =
         post("/oauth2/revoke")
-            .with(httpBasic(clientId, clientSecret))
-            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .apply {
+                if (useClientSecretPost) {
+                    contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    param("client_id", clientId)
+                    param("client_secret", clientSecret)
+                } else {
+                    with(httpBasic(clientId, clientSecret))
+                    contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                }
+            }
             .param(OAuth2ParameterNames.TOKEN, token)
 
     private fun tokenExchangeRequest(token: String) =
