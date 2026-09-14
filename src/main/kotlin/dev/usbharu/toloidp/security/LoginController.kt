@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.slf4j.LoggerFactory
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.core.authority.FactorGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.core.context.SecurityContextImpl
 import org.springframework.security.core.userdetails.UserDetailsService
@@ -96,7 +97,7 @@ class LoginController(
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
             user.username,
             null,
-            user.authorities,
+            user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
         )
         val context = SecurityContextImpl(authentication)
         SecurityContextHolder.setContext(context)
