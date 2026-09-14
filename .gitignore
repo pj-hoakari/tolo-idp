@@ -42,3 +42,6 @@ out/
 ### Local environment / secrets ###
 .envrc.local
 secrets/
+
+### Local test harnesses ###
+local/better-auth-test/

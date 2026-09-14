@@ -13,7 +13,11 @@ data class IdpProperties(
     val seed: Seed = Seed(),
     val jwk: Jwk = Jwk(),
     val rateLimit: RateLimit = RateLimit(),
+    val cors: Cors = Cors(),
 ) {
+    data class Cors(
+        val allowedOrigins: Set<String> = emptySet(),
+    )
     data class Resource(
         val allowedHosts: Set<String> = setOf("api.example.com"),
     )

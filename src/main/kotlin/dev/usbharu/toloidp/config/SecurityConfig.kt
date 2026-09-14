@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.converter.HttpMessageConverter
 import org.springframework.http.server.ServletServerHttpResponse
@@ -272,9 +273,12 @@ class SecurityConfig {
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         http.authorizeHttpRequests {
-            it.requestMatchers("/actuator/health", "/api/login").permitAll()
+            it.requestMatchers("/actuator/health").permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/logout").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/login").permitAll()
                 .anyRequest().authenticated()
         }
+            .cors { }
             .exceptionHandling {
                 it.authenticationEntryPoint(HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
             }
