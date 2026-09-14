@@ -139,12 +139,61 @@ class AuthorizationServerSurfaceTests(
     @Test
     fun tokenRevocationEndpointAcceptsClientSecretPostAuthentication() {
         mockMvc.perform(
-            post("/oauth2/revoke")
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .param("client_id", "client-123")
-                .param("client_secret", "secret"),
+            clientSecretPostRequest("/oauth2/revoke"),
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
     }
+
+    @Test
+    fun tokenRevocationEndpointRejectsInvalidClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/revoke", clientSecret = "wrong-secret"),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun tokenEndpointAcceptsClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/token"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    @Test
+    fun tokenEndpointRejectsInvalidClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/token", clientSecret = "wrong-secret"),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun tokenIntrospectionEndpointAcceptsClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/introspect"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+    }
+
+    @Test
+    fun tokenIntrospectionEndpointRejectsInvalidClientSecretPostAuthentication() {
+        mockMvc.perform(
+            clientSecretPostRequest("/oauth2/introspect", clientSecret = "wrong-secret"),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    private fun clientSecretPostRequest(
+        path: String,
+        clientId: String = "client-123",
+        clientSecret: String = "secret",
+    ) =
+        post(path)
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .param("client_id", clientId)
+            .param("client_secret", clientSecret)
 }

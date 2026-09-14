@@ -48,6 +48,27 @@ class TokenIntrospectionEndpointTests(
     }
 
     @Test
+    fun confidentialClientCanIntrospectActiveTenantAccessTokenUsingClientSecretPost() {
+        val tokenValue = "tenant-token-post-${UUID.randomUUID()}"
+        saveAuthorization(
+            tokenValue = tokenValue,
+            claims = tokenClaims(
+                tokenUse = TOKEN_USE_TENANT_ACCESS,
+                resource = "https://api.example.com/tenants/tenant-1",
+                tenantId = "tenant-1",
+            ),
+        )
+
+        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue, useClientSecretPost = true))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.active").value(true))
+            .andExpect(jsonPath("$.client_id").value("client-123"))
+            .andExpect(jsonPath("$.token_use").value(TOKEN_USE_TENANT_ACCESS))
+            .andExpect(content().string(not(containsString(tokenValue))))
+            .andExpect(content().string(not(containsString("secret"))))
+    }
+
+    @Test
     fun confidentialClientCanIntrospectActiveTenantAccessToken() {
         val tokenValue = "tenant-token-${UUID.randomUUID()}"
         saveAuthorization(
@@ -220,10 +241,23 @@ class TokenIntrospectionEndpointTests(
             .andExpect(content().string(not(containsString("secret"))))
     }
 
-    private fun introspectionRequest(clientId: String, clientSecret: String, tokenValue: String) =
+    private fun introspectionRequest(
+        clientId: String,
+        clientSecret: String,
+        tokenValue: String,
+        useClientSecretPost: Boolean = false,
+    ) =
         post("/oauth2/introspect")
-            .with(httpBasic(clientId, clientSecret))
-            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .apply {
+                if (useClientSecretPost) {
+                    contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    param("client_id", clientId)
+                    param("client_secret", clientSecret)
+                } else {
+                    with(httpBasic(clientId, clientSecret))
+                    contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                }
+            }
             .param("token", tokenValue)
 
     private fun saveAuthorization(
