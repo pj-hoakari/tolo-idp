@@ -89,6 +89,7 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.RSAPublicKeySpec
 import java.util.Base64
 import java.util.UUID
+import java.util.function.Consumer
 
 /**
  * IDP の Spring Security / Spring Authorization Server 構成を束ねる設定クラス。
@@ -165,7 +166,13 @@ class SecurityConfig {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
         http.with(authorizationServerConfigurer) { authorizationServer ->
             authorizationServer
-                .oidc { }
+                .oidc { oidc ->
+                    oidc.providerConfigurationEndpoint { providerConfigurationEndpoint ->
+                        providerConfigurationEndpoint.providerConfigurationCustomizer { metadata ->
+                            metadata.claims(discoveryMetadataClaimsCustomizer())
+                        }
+                    }
+                }
                 .registeredClientRepository(registeredClientRepository)
                 .authorizationService(authorizationService)
                 .authorizationConsentService(authorizationConsentService)
@@ -173,23 +180,7 @@ class SecurityConfig {
                 .tokenGenerator(tokenGenerator)
                 .authorizationServerMetadataEndpoint { metadataEndpoint ->
                     metadataEndpoint.authorizationServerMetadataCustomizer { metadata ->
-                        metadata.claims { claims ->
-                            claims[OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
-                                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
-                        }
-                        metadata.grantTypes {
-                            it.clear()
-                            it.add(AuthorizationGrantType.AUTHORIZATION_CODE.value)
-                            it.add(AuthorizationGrantType.TOKEN_EXCHANGE.value)
-                        }
-                        metadata.tokenEndpointAuthenticationMethods {
-                            it.clear()
-                            it.add(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
-                        }
-                        metadata.tokenIntrospectionEndpointAuthenticationMethods {
-                            it.clear()
-                            it.add(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
-                        }
+                        metadata.claims(discoveryMetadataClaimsCustomizer())
                     }
                 }
                 .authorizationEndpoint { authorizationEndpoint ->
@@ -240,6 +231,27 @@ class SecurityConfig {
         addRateLimitFilter(http, rateLimitFilter)
         return http.build()
     }
+
+    private fun discoveryMetadataClaimsCustomizer(): Consumer<MutableMap<String, Any>> =
+        Consumer { claims ->
+            claims[OAuth2AuthorizationServerMetadataClaimNames.GRANT_TYPES_SUPPORTED] = listOf(
+                AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                AuthorizationGrantType.TOKEN_EXCHANGE.value,
+            )
+            claims[OAuth2AuthorizationServerMetadataClaimNames.SCOPES_SUPPORTED] = listOf(
+                "openid",
+                "tenant.read",
+                "tenant.write",
+                "events.read",
+                "events.write",
+            )
+            claims[OAuth2AuthorizationServerMetadataClaimNames.TOKEN_ENDPOINT_AUTH_METHODS_SUPPORTED] =
+                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+            claims[OAuth2AuthorizationServerMetadataClaimNames.INTROSPECTION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
+                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+            claims[OAuth2AuthorizationServerMetadataClaimNames.REVOCATION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
+                listOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value)
+        }
 
     /**
      * Authorization Server 外の application endpoint を保護する。

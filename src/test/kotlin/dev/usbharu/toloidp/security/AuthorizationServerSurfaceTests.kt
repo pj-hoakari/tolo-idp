@@ -22,13 +22,46 @@ class AuthorizationServerSurfaceTests(
     @Autowired private val mockMvc: MockMvc,
 ) {
     @Test
-    fun openIdProviderConfigurationIsPubliclyAvailable() {
+    fun openIdProviderConfigurationOnlyAdvertisesSupportedSurface() {
         mockMvc.perform(get("/.well-known/openid-configuration"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.issuer").value("http://localhost:8080"))
             .andExpect(jsonPath("$.authorization_endpoint").exists())
             .andExpect(jsonPath("$.token_endpoint").exists())
             .andExpect(jsonPath("$.jwks_uri").exists())
+            .andExpect(
+                jsonPath(
+                    "$.grant_types_supported",
+                    containsInAnyOrder(
+                        AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                        AuthorizationGrantType.TOKEN_EXCHANGE.value,
+                    ),
+                ),
+            )
+            .andExpect(
+                jsonPath(
+                    "$.scopes_supported",
+                    containsInAnyOrder("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
+                ),
+            )
+            .andExpect(
+                jsonPath(
+                    "$.token_endpoint_auth_methods_supported",
+                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                ),
+            )
+            .andExpect(
+                jsonPath(
+                    "$.introspection_endpoint_auth_methods_supported",
+                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                ),
+            )
+            .andExpect(
+                jsonPath(
+                    "$.revocation_endpoint_auth_methods_supported",
+                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                ),
+            )
     }
 
     @Test
@@ -55,7 +88,25 @@ class AuthorizationServerSurfaceTests(
             .andExpect(jsonPath("$.grant_types_supported", not(hasItem("refresh_token"))))
             .andExpect(
                 jsonPath(
+                    "$.scopes_supported",
+                    containsInAnyOrder("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
+                ),
+            )
+            .andExpect(
+                jsonPath(
                     "$.token_endpoint_auth_methods_supported",
+                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                ),
+            )
+            .andExpect(
+                jsonPath(
+                    "$.introspection_endpoint_auth_methods_supported",
+                    containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
+                ),
+            )
+            .andExpect(
+                jsonPath(
+                    "$.revocation_endpoint_auth_methods_supported",
                     containsInAnyOrder(ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value),
                 ),
             )
