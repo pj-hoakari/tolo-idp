@@ -65,33 +65,7 @@ open class SeedDataRunner(
             )
         }
 
-        if (registeredClientRepository.findByClientId("client-123") == null) {
-            registeredClientRepository.save(
-                RegisteredClient.withId(UUID.randomUUID().toString())
-                    .clientId("client-123")
-                    .clientSecret(passwordEncoder.encode(properties.seed.clientSecret))
-                    .clientName("Development confidential client")
-                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
-                    .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                    .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
-                    .redirectUri("http://127.0.0.1:8080/login/oauth2/code/client-123")
-                    .scope("openid")
-                    .scope("tenant.read")
-                    .scope("tenant.write")
-                    .scope("events.read")
-                    .scope("events.write")
-                    .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
-                    .tokenSettings(
-                        TokenSettings.builder()
-                            .accessTokenFormat(OAuth2TokenFormat.SELF_CONTAINED)
-                            .accessTokenTimeToLive(Duration.ofMinutes(15))
-                            .authorizationCodeTimeToLive(Duration.ofMinutes(5))
-                            .build(),
-                    )
-                    .build(),
-            )
-        }
+        seedDevelopmentClient()
 
         if (clientPolicyRepository.findByClientId("client-123") == null) {
             clientPolicyRepository.save(
@@ -110,5 +84,56 @@ open class SeedDataRunner(
                 ),
             )
         }
+    }
+
+    private fun seedDevelopmentClient() {
+        val existing = registeredClientRepository.findByClientId(DEVELOPMENT_CLIENT_ID)
+        if (existing == null) {
+            registeredClientRepository.save(newDevelopmentClient())
+            return
+        }
+
+        val missingRedirectUris = DEVELOPMENT_REDIRECT_URIS.filter { it !in existing.redirectUris }
+        if (missingRedirectUris.isEmpty()) {
+            return
+        }
+
+        val builder = RegisteredClient.from(existing)
+        missingRedirectUris.forEach { builder.redirectUri(it) }
+        registeredClientRepository.save(builder.build())
+    }
+
+    private fun newDevelopmentClient(): RegisteredClient =
+        RegisteredClient.withId(UUID.randomUUID().toString())
+            .clientId(DEVELOPMENT_CLIENT_ID)
+            .clientSecret(passwordEncoder.encode(properties.seed.clientSecret))
+            .clientName("Development confidential client")
+            .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+            .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
+            .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+            .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
+            .apply { DEVELOPMENT_REDIRECT_URIS.forEach { redirectUri(it) } }
+            .scope("openid")
+            .scope("tenant.read")
+            .scope("tenant.write")
+            .scope("events.read")
+            .scope("events.write")
+            .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+            .tokenSettings(
+                TokenSettings.builder()
+                    .accessTokenFormat(OAuth2TokenFormat.SELF_CONTAINED)
+                    .accessTokenTimeToLive(Duration.ofMinutes(15))
+                    .authorizationCodeTimeToLive(Duration.ofMinutes(5))
+                    .build(),
+            )
+            .build()
+
+    private companion object {
+        const val DEVELOPMENT_CLIENT_ID = "client-123"
+
+        val DEVELOPMENT_REDIRECT_URIS = listOf(
+            "http://127.0.0.1:8080/login/oauth2/code/client-123",
+            "http://localhost:3000/api/auth/callback/tolo-idp",
+        )
     }
 }

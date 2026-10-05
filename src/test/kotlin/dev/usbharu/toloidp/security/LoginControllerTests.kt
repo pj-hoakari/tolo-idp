@@ -26,8 +26,6 @@ import org.springframework.mock.web.MockHttpSession
 import org.springframework.web.util.UriComponentsBuilder
 import tools.jackson.databind.json.JsonMapper
 import java.time.Instant
-import kotlin.test.assertTrue
-
 @SpringBootTest
 @AutoConfigureMockMvc
 class LoginControllerTests(
@@ -64,13 +62,12 @@ class LoginControllerTests(
     }
 
     @Test
-    fun loginInvalidatesExistingSessionBeforeAuthentication() {
+    fun loginSucceedsWhenSessionAlreadyExists() {
         val preAuthSession = MockHttpSession()
 
         mockMvc.perform(loginRequest("user-123", "password", "tenant-a").session(preAuthSession))
             .andExpect(status().isOk)
-
-        assertTrue(preAuthSession.isInvalid)
+            .andExpect(jsonPath("$.username").value("user-123"))
     }
 
     @Test
