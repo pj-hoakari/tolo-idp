@@ -51,10 +51,14 @@ password、client secret、認可コード、token、セッション cookie は 
 
 ## CI
 
-GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。Java 24 で `./gradlew build` を実行し、同じ Compose と runbook でシナリオを検証します。ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
+GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。JVM／Native と amd64／arm64 の4通りで、Gradle build、`bootBuildImage`、`Dockerfile` によるイメージ作成を実行し、そのイメージに対して同じ runbook を実行します。CI 用 Compose override でアプリのイメージを指定するため、`Dockerfile.jvm` での再ビルドは行いません。ローカルの開発手順は上記のままです。
 
-CI は run ごとの Compose project を使います。成功・失敗を問わず、その project のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
+
+CI は実行 ID・runtime・architecture ごとの Compose project を使います。シナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+
+バージョンタグのリリース CI も同じ再利用ワークフローを呼びます。イメージのビルドと公開については [CI とリリース手順](../CI.md) を参照してください。
 
 失敗時の logout だけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
 
-ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS、Native Image はこのシナリオの対象外です。
+ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS はこのシナリオの対象外です。

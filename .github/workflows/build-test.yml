@@ -1,0 +1,112 @@
+name: Build and test application images
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release version resolved from the Git tag.
+        type: string
+        default: 0.0.1-SNAPSHOT
+      export-images:
+        description: Save tested Buildpacks images for the release workflow.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: ${{ matrix.runtime }} / ${{ matrix.platform.arch }}
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [jvm, native]
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      COMPOSE_PROJECT_NAME: tolo-idp-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runtime }}-${{ matrix.platform.arch }}
+      COMPOSE_FILE: docker-compose.dev.native.yaml:docker-compose.ci.yaml
+      CI_APP_IMAGE: tolo-idp-ci:${{ matrix.runtime }}-${{ matrix.platform.arch }}
+      BASE_IMAGE: tolo-idp-base:${{ matrix.runtime }}-${{ matrix.platform.arch }}
+      IMAGE_RUNTIME: ${{ matrix.runtime }}
+      IMAGE_PLATFORM: linux/${{ matrix.platform.arch }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "24"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate scenario configuration
+        run: docker compose --profile scenario config --quiet
+
+      - name: Start build and scenario dependencies
+        run: docker compose up -d --wait db redis relation-stub
+
+      - name: Build and test application
+        run: >-
+          ./gradlew build --no-daemon
+          "-PimageRuntime=$IMAGE_RUNTIME"
+          "-PreleaseVersion=$RELEASE_VERSION"
+          -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
+
+      - name: Build application image with Buildpacks
+        run: >-
+          ./gradlew bootBuildImage --no-daemon
+          "-PimageRuntime=$IMAGE_RUNTIME"
+          "-PreleaseVersion=$RELEASE_VERSION"
+          -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
+          "--imageName=$BASE_IMAGE"
+          "--imagePlatform=$IMAGE_PLATFORM"
+
+      - name: Wrap the Buildpacks image with Dockerfile
+        run: docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" --tag "$CI_APP_IMAGE" .
+
+      - name: Verify scenario cleanup on assertion failures
+        run: python3 scenario/tests/test_runn_cleanup.py
+
+      - name: Start application
+        run: docker compose up -d --no-build --pull never app
+
+      - name: Run OIDC and Token Exchange scenarios
+        run: docker compose --profile scenario run --rm --no-deps runn
+
+      - name: Verify production profile
+        run: bash .github/scripts/check-production-image.sh
+
+      - name: Save tested Buildpacks image
+        if: inputs.export-images
+        run: |
+          mkdir -p build/ci-image
+          docker image save "$BASE_IMAGE" --output build/ci-image/image.tar
+
+      - name: Upload tested Buildpacks image
+        if: inputs.export-images
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildpacks-${{ matrix.runtime }}-${{ matrix.platform.arch }}
+          path: build/ci-image/image.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Show service status on failure
+        if: failure()
+        run: docker compose ps -a
+
+      - name: Clean up scenario stack
+        if: always()
+        run: docker compose --profile scenario down --volumes --remove-orphans

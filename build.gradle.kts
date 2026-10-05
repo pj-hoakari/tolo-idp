@@ -1,15 +1,24 @@
+import org.springframework.boot.gradle.tasks.aot.ProcessAot
+import org.springframework.boot.gradle.tasks.bundling.BootBuildImage
+
 plugins {
     kotlin("jvm") version "2.2.21"
     kotlin("plugin.spring") version "2.2.21"
     id("org.springframework.boot") version "4.0.6"
     id("io.spring.dependency-management") version "1.1.7"
-    id("org.graalvm.buildtools.native") version "0.11.5"
+    id("org.graalvm.buildtools.native") version "0.11.5" apply false
     id("org.jetbrains.kotlinx.kover") version "0.9.8"
 }
 
 group = "dev.usbharu"
-version = "0.0.1-SNAPSHOT"
+version = providers.gradleProperty("releaseVersion").getOrElse("0.0.1-SNAPSHOT")
 description = "tolo-idp"
+
+val imageRuntime = providers.gradleProperty("imageRuntime").getOrElse("native")
+require(imageRuntime in setOf("jvm", "native")) { "imageRuntime must be jvm or native" }
+if (imageRuntime == "native") {
+    apply(plugin = "org.graalvm.buildtools.native")
+}
 
 java {
     toolchain {
@@ -66,6 +75,37 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+tasks.withType<ProcessAot>().configureEach {
+    // AOT fixes bean conditions and JDBC mapping metadata at build time. Use the
+    // production PostgreSQL setup, with a dedicated local database for processing.
+    args(
+        "--spring.profiles.active=prod",
+        "--spring.data.jdbc.dialect=postgresql",
+        "--spring.datasource.url=" + providers.gradleProperty("aotDatasourceUrl")
+            .getOrElse("jdbc:postgresql://localhost:5432/tolo_idp"),
+        "--spring.datasource.username=" + providers.gradleProperty("aotDatasourceUsername").getOrElse("tolo_idp"),
+        "--spring.datasource.password=" + providers.gradleProperty("aotDatasourcePassword").getOrElse("tolo_idp"),
+    )
+}
+
+tasks.named<BootBuildImage>("bootBuildImage") {
+    // Java 24 is no longer included in the latest builder. Keep the last
+    // compatible Java 24 builder for JVM images; Native uses the current GraalVM.
+    builder.set(
+        if (imageRuntime == "jvm") {
+            "paketobuildpacks/builder-noble-java-tiny:0.0.62@sha256:8b1849c892ea08c5f1e39e5eec46cdcaf4c28c739f8251596fcca134cc399a3f"
+        } else {
+            "paketobuildpacks/builder-noble-java-tiny:latest"
+        },
+    )
+    imageName.set("tolo-idp:${project.version}" + if (imageRuntime == "jvm") "-jvm" else "")
+    environment.put("BP_JVM_VERSION", if (imageRuntime == "native") "25" else "24")
+    environment.put("BP_NATIVE_IMAGE", (imageRuntime == "native").toString())
+    if (imageRuntime == "native") {
+        environment.put("BP_NATIVE_IMAGE_BUILD_ARGUMENTS", "-march=compatibility")
+    }
 }
 
 kover {
