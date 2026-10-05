@@ -100,7 +100,8 @@ tasks.named<BootBuildImage>("bootBuildImage") {
             "paketobuildpacks/builder-noble-java-tiny:latest"
         },
     )
-    imageName.set("tolo-idp:${project.version}" + if (imageRuntime == "jvm") "-jvm" else "")
+    val imageRepository = "tolo-idp" + if (imageRuntime == "jvm") "-jvm" else ""
+    imageName.set("$imageRepository:${project.version}")
     environment.put("BP_JVM_VERSION", if (imageRuntime == "native") "25" else "24")
     environment.put("BP_NATIVE_IMAGE", (imageRuntime == "native").toString())
     if (imageRuntime == "native") {

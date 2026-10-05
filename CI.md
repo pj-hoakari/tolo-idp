@@ -15,13 +15,14 @@ git push origin v1.2.3
 
 手動で再実行する場合は、GitHub Actions の `Build and publish container image` で対象のタグを選択してください。ブランチを選んだ実行はバージョン解決で失敗します。
 
-| 公開タグ | Native | JVM |
+| 項目 | Native | JVM |
 |---|---|---|
-| バージョン | `1.2.3` | `1.2.3-jvm` |
-| コミット | `sha-abcdef0` | `sha-abcdef0-jvm` |
-| 安定版 | `latest` | `latest-jvm` |
+| イメージ名 | `ghcr.io/<owner>/tolo-idp` | `ghcr.io/<owner>/tolo-idp-jvm` |
+| バージョンタグ | `1.2.3` | `1.2.3` |
+| コミットタグ | `sha-abcdef0` | `sha-abcdef0` |
+| 安定版タグ | `latest` | `latest` |
 
-公開先は `ghcr.io/<owner>/tolo-idp` です。各タグに `linux/amd64` と `linux/arm64` が含まれます。プレリリースは latest を更新しません。main 更新ではイメージを公開せず、major.minor タグも作成しません。
+Native 版は既存の `tolo-idp` を使い、JVM 版は別のイメージ名 `tolo-idp-jvm` で公開します。各タグに `linux/amd64` と `linux/arm64` が含まれます。プレリリースは latest を更新しません。main 更新ではイメージを公開せず、major.minor タグも作成しません。
 
 ## Spring Buildpacks と Dockerfile の両方を使う
 
@@ -31,7 +32,7 @@ Java／Kotlin のコンパイル対象は24です。Native のビルドには Bu
 
 公開ジョブは検証済みの Buildpacks イメージを artifact から読み込み、`ghcr.io/<owner>/tolo-idp-buildpacks` に実行 ID 付きのタグで保存します。runtime ごとの manifest を作り、その digest を共通 Action の `build-args` へ渡します。中間イメージはこの別 package に保持し、artifact は1日で削除します。
 
-共通 Action は [pj-hoakari/actions の PR #4](https://github.com/pj-hoakari/actions/pull/4) のコミット SHA に固定しています。`resolve-version` のタグ一覧を `publish-image` へ渡し、JVM の場合だけ `tag-suffix=-jvm` を指定します。
+共通 Action は [pj-hoakari/actions の PR #4](https://github.com/pj-hoakari/actions/pull/4) のコミット SHA に固定しています。`resolve-version` のタグ一覧を `publish-image` へ渡し、`image` 引数で Native／JVM それぞれの公開先を指定します。両方に同じリリースタグを使います。
 
 ## ローカルで Buildpacks イメージを作る
 
@@ -40,7 +41,7 @@ Java 24 と Docker が必要です。Native の AOT 処理は本番の PostgreSQ
 ```bash
 # JVM
 ./gradlew bootBuildImage -PimageRuntime=jvm -PreleaseVersion=1.2.3
-docker build --build-arg BASE_IMAGE=tolo-idp:1.2.3-jvm -t tolo-idp:1.2.3-jvm-final .
+docker build --build-arg BASE_IMAGE=tolo-idp-jvm:1.2.3 -t tolo-idp-jvm:1.2.3-final .
 
 # Native（imageRuntime を省略した場合も Native）
 ./gradlew bootBuildImage -PimageRuntime=native -PreleaseVersion=1.2.3

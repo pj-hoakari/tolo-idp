@@ -45,11 +45,16 @@ jobs:
     env:
       REPOSITORY: ${{ github.repository }}
       IMAGE_RUNTIME: ${{ matrix.runtime }}
+      IMAGE_SUFFIX: ${{ matrix.runtime == 'jvm' && '-jvm' || '' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Revalidate release version before publishing
         uses: pj-hoakari/actions/resolve-version@6cb0d060da6c0f7e2d5e2ceacccc82103b2279bf # pj-hoakari/actions#4
+
+      - name: Resolve image name
+        id: image
+        run: echo "name=ghcr.io/${REPOSITORY,,}$IMAGE_SUFFIX" >> "$GITHUB_OUTPUT"
 
       - name: Download tested Buildpacks images
         uses: actions/download-artifact@v4
@@ -76,14 +81,14 @@ jobs:
         with:
           version: ${{ needs.version.outputs.version }}
           tags: ${{ needs.version.outputs.tags }}
-          tag-suffix: ${{ matrix.runtime == 'jvm' && '-jvm' || '' }}
+          image: ${{ steps.image.outputs.name }}
           build-args: BASE_IMAGE=${{ steps.base.outputs.image }}
           cache-scope: tolo-idp-${{ matrix.runtime }}
 
       - name: Verify published platforms
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          SUFFIX: ${{ matrix.runtime == 'jvm' && '-jvm' || '' }}
+          IMAGE: ${{ steps.image.outputs.name }}
         run: |
-          docker buildx imagetools inspect "ghcr.io/${REPOSITORY,,}:$VERSION$SUFFIX" --raw \
+          docker buildx imagetools inspect "$IMAGE:$VERSION" --raw \
             | jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]'
