@@ -4,7 +4,7 @@ set -euo pipefail
 # A fresh Compose project exercises production startup without the scenario DB.
 PRODUCTION_PROJECT="${COMPOSE_PROJECT_NAME}-prod"
 KEY_DIRECTORY=$(mktemp -d)
-# shellcheck disable=SC2317 -- invoked via EXIT trap
+# shellcheck disable=SC2317
 cleanup() {
   docker compose -p "$PRODUCTION_PROJECT" -f docker-compose.prod.yaml down --volumes --remove-orphans
   rm -rf "$KEY_DIRECTORY"
