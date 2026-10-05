@@ -55,26 +55,43 @@ class ScopePolicy(
         }
     }
 
-    fun requireAllowedForRole(requested: Set<String>, role: RelationRole, reason: String) {
+    /** 所有権取得用 scope と通常の業務 scope の併用を拒否し、tenant role を検証する。 */
+    fun requireTenantAccessScopes(requested: Set<String>, role: RelationRole, reason: String) {
+        if (IdpScopes.TENANT_CLAIM in requested &&
+            (requested - IDENTITY_SCOPES - IdpScopes.TENANT_CLAIM).isNotEmpty()
+        ) {
+            throw ScopeNotAllowedException(reason)
+        }
         requireAllowed(requested - IDENTITY_SCOPES, allowedScopes(role), reason)
+    }
+
+    /** client / subject の保存済み設定にかかわらず、廃止済み scope と tenant.claim を拒否する。 */
+    fun requireEventAccessScopes(requested: Set<String>) {
+        if (IdpScopes.TENANT_CLAIM in requested) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_token_use")
+        }
+        requireAllowed(requested, IdpScopes.SUPPORTED, "scope_not_allowed_for_role")
     }
 
     companion object {
         const val SCOPE_AUTHORITY_PREFIX = "SCOPE_"
 
-        val IDENTITY_SCOPES: Set<String> = setOf("openid")
+        val IDENTITY_SCOPES: Set<String> = IdpScopes.IDENTITY
 
         fun defaultRoleHierarchy(): RoleHierarchy =
             RoleHierarchyImpl.fromHierarchy(
                 """
                 ROLE_OWNER > ROLE_STAFF
                 ROLE_ADMIN > ROLE_STAFF
-                ROLE_OWNER > SCOPE_tenant.write
-                ROLE_OWNER > SCOPE_events.write
-                ROLE_ADMIN > SCOPE_tenant.write
-                ROLE_ADMIN > SCOPE_events.write
-                ROLE_STAFF > SCOPE_tenant.read
-                ROLE_STAFF > SCOPE_events.read
+                ROLE_OWNER > SCOPE_${IdpScopes.TENANT_WRITE}
+                ROLE_OWNER > SCOPE_${IdpScopes.EVENTS_MANAGE}
+                ROLE_ADMIN > SCOPE_${IdpScopes.TENANT_WRITE}
+                ROLE_ADMIN > SCOPE_${IdpScopes.EVENTS_MANAGE}
+                ROLE_STAFF > SCOPE_${IdpScopes.TENANT_READ}
+                ROLE_STAFF > SCOPE_${IdpScopes.TENANT_CLAIM}
+                ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_READ}
+                ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_OPERATE}
+                ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_REPORT}
                 """.trimIndent(),
             )
     }

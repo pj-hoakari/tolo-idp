@@ -110,7 +110,7 @@ class ToloJwtCustomizer(
                 "tenant_role" to membership.tenantRole,
             )
             scopePolicy.requireAllowed(context.authorizedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
-            scopePolicy.requireAllowedForRole(context.authorizedScopes, membership.tenantRole, "scope_not_allowed_for_role")
+            scopePolicy.requireTenantAccessScopes(context.authorizedScopes, membership.tenantRole, "scope_not_allowed_for_role")
         } catch (ex: ScopeNotAllowedException) {
             log.structuredWarn(
                 "Tenant access scope validation failed",

@@ -94,7 +94,7 @@ class TenantAuthorizationValidator(
                 "tenant_role" to membership.tenantRole,
                 "scope_count" to requestedScopes.size,
             )
-            scopePolicy.requireAllowedForRole(requestedScopes, membership.tenantRole, "scope_not_allowed_for_role")
+            scopePolicy.requireTenantAccessScopes(requestedScopes, membership.tenantRole, "scope_not_allowed_for_role")
         } catch (ex: ScopeNotAllowedException) {
             log.structuredWarn(
                 "Authorization request scope validation failed",

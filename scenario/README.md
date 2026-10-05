@@ -38,11 +38,11 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 
 1. Health と Discovery の issuer、endpoint、対応フローを確認する。
 2. `/api/login` で tenant-a を選択し、HttpOnly のセッション cookie を保持する。
-3. PKCE S256、nonce、state と `openid tenant.read events.read events.write` を指定し、認可コード付きの302を確認する。
+3. PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定し、認可コード付きの302を確認する。
 4. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
 5. 認証付き Introspection で tenant_access の claim を確認する。
 6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
-7. event-2 への write は `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
+7. staff の event-2 への設計・構成の書き込みは `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
 8. 終了時にセッションを破棄する。ログインが200を返した場合は、レスポンスや cookie の検証が失敗しても logout を試行する。
 
 scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。

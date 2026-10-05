@@ -185,6 +185,7 @@ open class SpecTokenExchangeAuthenticationProvider(
             val subjectScopes = splitScope(claims["scope"])
             try {
                 scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
+                scopePolicy.requireEventAccessScopes(requestedScopes)
                 scopePolicy.requireAllowed(requestedScopes, subjectScopes, "scope_exceeds_subject_token")
                 val membership = relationService.getMembership(eventResource.tenantId, subject)
                 log.structuredDebug(

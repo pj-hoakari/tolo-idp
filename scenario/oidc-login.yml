@@ -23,8 +23,8 @@ vars:
   client_secret: secret
   redirect_uri: http://127.0.0.1:8080/login/oauth2/code/client-123
   audience: backend-api
-  scope: openid tenant.read events.read events.write
-  event_scope: events.read events.write
+  scope: openid tenant.read events.read events.manage events.operate events.report
+  event_scope: events.read events.manage events.operate events.report
   tenant_resource: https://api.example.com/tenants/tenant-a
   event_resource: https://api.example.com/tenants/tenant-a/events/event-1
   state: scenario-state-0123456789
@@ -271,8 +271,8 @@ steps:
       && "tenant_role" not in current.res.body
       && "event_role" not in current.res.body
 
-  reject_event_write:
-    desc: staff の event-2 に対する write 要求を拒否する
+  reject_event_manage:
+    desc: staff の event-2 に対する設計・構成の書き込み要求を拒否する
     idp:
       "{{ token_path }}":
         post:
@@ -286,7 +286,7 @@ steps:
               subject_token_type: urn:ietf:params:oauth:token-type:access_token
               audience: "{{ vars.audience }}"
               resource: https://api.example.com/tenants/tenant-a/events/event-2
-              scope: events.write
+              scope: events.manage
     test: current.res.status == 400 && current.res.body == {"error":"invalid_scope"}
 
   reject_nonmember_event:

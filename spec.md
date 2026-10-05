@@ -128,7 +128,7 @@ POST /api/logout
   "sub": "user-123",
   "aud": "backend-api",
   "client_id": "client-123",
-  "scope": "tenant.read tenant.write events.read events.write",
+  "scope": "tenant.read tenant.write events.read events.manage events.operate events.report",
   "token_use": "tenant_access",
   "resource": "https://api.example.com/tenants/tenant-a",
   "tenant_id": "tenant-a",
@@ -157,7 +157,7 @@ POST /api/logout
   "sub": "user-123",
   "aud": "backend-api",
   "client_id": "client-123",
-  "scope": "events.read events.write",
+  "scope": "events.read events.manage events.operate events.report",
   "token_use": "event_access",
   "resource": "https://api.example.com/tenants/tenant-a/events/event-1",
   "tenant_id": "tenant-a",
@@ -253,7 +253,7 @@ Authorization Server は Token Exchange Request に対して以下を検証す�
 
 ---
 
-## 9. 暫定 role / scope 仕様
+## 9. role / scope 仕様
 
 ### 9.1 role
 
@@ -271,24 +271,31 @@ staff
 
 ### 9.2 scope
 
-暫定 scope:
+業務スコープは以下の 7 種類とする。
 
-```text
-tenant.read
-tenant.write
-events.read
-events.write
-```
+| scope | 意味 | 主な RPC |
+|---|---|---|
+| `tenant.read` | テナントの参照と、自デバイスに限った書き込み | ListMemberships、RegisterDeviceToken / UnregisterDeviceToken |
+| `tenant.write` | テナント構成の書き込み（管理系書き込みの 6 RPC） | ArchiveTenant、ChangeTenantContract、AddTenantMember、ChangeTenantRole、GrantEventRole、RevokeRole |
+| `events.read` | イベントの参照 | ListEvents、GetGraph、GetEventOverview、FetchDeliveries、IssueFirestoreToken など |
+| `events.manage` | 設計・構成の書き込み | CreateEvent、AssignEventType、TransitionEventStatus、UpdateObservationSettings、SaveGraph、PublishRevision、QR 設置箇所の追加・更新・削除、RegisterEdgeDevice / UnregisterEdgeDevice など |
+| `events.operate` | 現場運用の書き込み（11 RPC） | OperateGate、ToggleDangerFlag、ReportCongestion、SendStaffMessage、DirectReassignment など |
+| `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
+| `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
 
-詳細な scope 設計は後で再検討する。
+OIDC の `openid` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
+
+旧 `events.write` は廃止する。新しい発行要求では、登録設定に残っていても拒否する。新スコープへの暗黙の変換は行わない。
 
 ### 9.3 role → scope 対応表
 
 | role | 許可 scope |
 |---|---|
-| `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.write` |
-| `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.write` |
-| `staff` | `tenant.read`, `events.read` |
+| `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
+| `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
+| `staff` | `tenant.read`, `events.read`, `events.operate`, `events.report`, `tenant.claim` |
+
+`tenant.claim` の発行先と併用条件は 11.3 に従う。
 
 ### 9.4 role の扱い
 
@@ -445,7 +452,7 @@ X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外�
 
 Authorization Server は、要求された `scope` を暗黙に縮小して発行してはならない。
 
-要求 scope に許可外 scope が含まれる場合、Authorization Server は `invalid_scope` を返す。
+要求 scope に client / role / token 種別で許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
 
 ### 11.1 tenant_access token 発行時
 
@@ -462,6 +469,10 @@ requested_scope ⊆ tenant_role.allowed_scopes
 
 ### 11.2 event_access token 発行時
 
+`tenant.claim` は発行しない。要求に含まれる場合は `invalid_scope` とする。
+
+既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` は event role の許可 scope に含まれず、発行しない。
+
 `event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
 ```text
@@ -475,6 +486,25 @@ requested_scope ⊆ event_role.allowed_scopes
 resource の `eventId` に一致する event が `events` に存在しない場合、event_access token は発行しない。
 
 `admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `event_role` へ割り当てる。`tolo-relation-stub` の response から `admin` を推定してはならない。
+
+### 11.3 tenant.claim token 発行時
+
+`tenant.claim` は所属済みの `owner` / `admin` / `staff` に対して、既存の Authorization Code フローで tenant_access token にのみ発行する。
+
+要求 scope は以下のいずれかに限定する。
+
+```text
+tenant.claim
+openid tenant.claim
+```
+
+他の業務 scope との混在は `invalid_scope` とする。認可リクエスト時と JWT 発行時の両方で検証する。
+
+通常の tenant_access と同じく、認証、選択 tenant の membership、client の許可 scope を検証する。新しい token_use や claim は追加しない。
+
+仮テナントの状態、所有権取得資格、ClaimTenantOwnership の最終認可は Resource Server が確認する。未所属ユーザーへの発行と所有権取得 RPC の実装は本仕様の対象外とする。
+
+tenant.claim のみを持つ token からイベント系 scope への Token Exchange は、交換元 scope を超えるため `invalid_grant` とする。
 
 ---
 
@@ -642,7 +672,7 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &subject_token_type=urn:ietf:params:oauth:token-type:access_token
 &audience=backend-api
 &resource=https://api.example.com/tenants/tenant-a/events/event-1
-&scope=events.read events.write
+&scope=events.read events.manage events.operate events.report
 ```
 
 Authorization Server は以下を確認する。
@@ -702,7 +732,7 @@ role は主に Authorization Server が scope 発行時に使う内部情報で�
 
 ### 16.1 write 系 API
 
-`tenant.write` または `events.write` を必要とする API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
+`tenant.write`、`events.manage`、`events.operate`、`events.report`、`tenant.claim` を必要とする API、および `tenant.read` による自デバイスへの書き込み API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
 
 ### 16.2 read 系 API
 
@@ -910,6 +940,7 @@ relation_response_invalid
 relation_role_unknown
 scope_not_allowed_for_client
 scope_not_allowed_for_role
+scope_not_allowed_for_token_use
 scope_exceeds_subject_token
 token_revoked
 unsupported_token_type
@@ -928,8 +959,8 @@ token_invalid_claims
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
   "requested_resource": "https://api.example.com/tenants/tenant-a/events/event-1",
-  "requested_scope": ["events.read", "events.write"],
-  "issued_scope": ["events.read", "events.write"],
+  "requested_scope": ["events.read", "events.manage", "events.operate", "events.report"],
+  "issued_scope": ["events.read", "events.manage", "events.operate", "events.report"],
   "tenant_id": "tenant-a",
   "event_id": "event-1",
   "result": "success",
@@ -952,7 +983,7 @@ token_invalid_claims
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
   "requested_resource": "https://api.example.com/tenants/tenant-a/events/event-2",
-  "requested_scope": ["events.write"],
+  "requested_scope": ["events.manage"],
   "issued_scope": [],
   "tenant_id": "tenant-a",
   "event_id": "event-2",
@@ -998,7 +1029,6 @@ token_invalid_claims
 ```text
 - 具体的な Resource Server 分割
 - 具体的な audience 名
-- 詳細な scope 設計
 - API path の最終形
 - ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
@@ -1029,8 +1059,20 @@ password=password
 client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
-allowed_scopes=tenant.read,tenant.write,events.read,events.write
+allowed_scopes=openid,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
 ```
+
+### 22.1 スコープ再設計に伴う移行
+
+開発 seed が有効な場合、`client-123` の RegisteredClient の登録 scope と ClientPolicy の `allowed_scopes` を上記の開発用セットに同期する。既存の secret、TTL、audience、grant type などは保持し、登録済み redirect URI も保持したうえで開発用 URI を補う。他の client は変更しない。seed が無効な場合は作成・更新しない。
+
+本番 client の自動移行や DB スキーマ変更は行わない。運用側で以下を実施する。
+
+1. Resource Server と client の要求 scope を新しいスコープ用途に合わせて更新する。
+2. 対象 client の `oauth2_registered_client.scopes` と `idp_client_policy.allowed_scopes` を両方更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.claim` も利用する client にのみ登録する。
+3. 新しい scope を要求して tenant_access token を再取得し、その scope の範囲内で event_access token を要求する。
+
+既発行 JWT と保存済み authorization は変更・一括失効しない。旧 scope を新しい scope として解釈しない。交換元が旧 `events.write` のみを持つ場合、新イベントスコープへの交換は `invalid_grant` とする。交換要求自体に `events.write` が含まれる場合は `invalid_scope` とする。
 
 ---
 

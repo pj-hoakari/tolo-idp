@@ -4,46 +4,80 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import org.junit.jupiter.params.provider.ValueSource
 
 class ScopePolicyTests {
     private val policy = ScopePolicy()
 
-    @Test
-    fun ownerAllowsAllTemporaryScopes() {
-        val allowed = policy.allowedScopes(RelationRole.OWNER)
-        assertTrue(allowed.containsAll(setOf("tenant.read", "tenant.write", "events.read", "events.write")))
+    @ParameterizedTest
+    @EnumSource(value = RelationRole::class, names = ["OWNER", "ADMIN"])
+    fun managersAllowAllBusinessScopes(role: RelationRole) {
+        assertEquals(
+            setOf("tenant.read", "tenant.write", "tenant.claim", "events.read", "events.manage", "events.operate", "events.report"),
+            policy.allowedScopes(role),
+        )
     }
 
     @Test
-    fun adminAllowsAllTemporaryScopes() {
-        val allowed = policy.allowedScopes(RelationRole.ADMIN)
-        assertTrue(allowed.containsAll(setOf("tenant.read", "tenant.write", "events.read", "events.write")))
+    fun staffAllowsReadOperationReportAndClaimScopes() {
+        assertEquals(
+            setOf("tenant.read", "tenant.claim", "events.read", "events.operate", "events.report"),
+            policy.allowedScopes(RelationRole.STAFF),
+        )
     }
 
-    @Test
-    fun staffAllowsOnlyReadScopesFromRoleHierarchy() {
-        assertEquals(setOf("tenant.read", "events.read"), policy.allowedScopes(RelationRole.STAFF))
-    }
-
-    @Test
-    fun staffDoesNotAllowWriteScopes() {
+    @ParameterizedTest
+    @ValueSource(strings = ["tenant.write", "events.manage"])
+    fun staffDoesNotAllowManagementScopes(scope: String) {
         assertFailsWith<ScopeNotAllowedException> {
-            policy.requireAllowed(setOf("events.write"), policy.allowedScopes(RelationRole.STAFF), "scope_not_allowed_for_role")
+            policy.requireTenantAccessScopes(setOf(scope), RelationRole.STAFF, "scope_not_allowed_for_role")
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(RelationRole::class)
+    fun claimIsAllowedAloneOrWithOpenIdForEveryRole(role: RelationRole) {
+        policy.requireTenantAccessScopes(setOf("tenant.claim"), role, "scope_not_allowed_for_role")
+        policy.requireTenantAccessScopes(setOf("openid", "tenant.claim"), role, "scope_not_allowed_for_role")
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["tenant.read", "tenant.write", "events.read", "events.manage", "events.operate", "events.report"])
+    fun claimCannotBeMixedWithBusinessScopes(scope: String) {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.requireTenantAccessScopes(setOf("openid", "tenant.claim", scope), RelationRole.OWNER, "scope_not_allowed_for_role")
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(RelationRole::class)
+    fun legacyWriteScopeIsRejectedForEveryRole(role: RelationRole) {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.requireTenantAccessScopes(setOf("events.write"), role, "scope_not_allowed_for_role")
         }
     }
 
     @Test
+    fun eventAccessDoesNotAllowClaim() {
+        val exception = assertFailsWith<ScopeNotAllowedException> {
+            policy.requireEventAccessScopes(setOf("tenant.claim"))
+        }
+        assertEquals("scope_not_allowed_for_token_use", exception.reason)
+    }
+
+    @Test
     fun identityScopeIsNotSubjectToRoleCheck() {
-        policy.requireAllowedForRole(setOf("openid", "tenant.read"), RelationRole.STAFF, "scope_not_allowed_for_role")
-        policy.requireAllowedForRole(setOf("openid"), RelationRole.STAFF, "scope_not_allowed_for_role")
+        policy.requireTenantAccessScopes(setOf("openid", "tenant.read"), RelationRole.STAFF, "scope_not_allowed_for_role")
+        policy.requireTenantAccessScopes(setOf("openid"), RelationRole.STAFF, "scope_not_allowed_for_role")
     }
 
     @Test
     fun identityScopeDoesNotBypassRoleCheckForOtherScopes() {
         val exception = assertFailsWith<ScopeNotAllowedException> {
-            policy.requireAllowedForRole(setOf("openid", "tenant.write"), RelationRole.STAFF, "scope_not_allowed_for_role")
+            policy.requireTenantAccessScopes(setOf("openid", "tenant.write"), RelationRole.STAFF, "scope_not_allowed_for_role")
         }
         assertEquals("scope_not_allowed_for_role", exception.reason)
     }

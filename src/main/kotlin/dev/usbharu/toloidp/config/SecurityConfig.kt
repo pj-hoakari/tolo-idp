@@ -11,6 +11,7 @@ import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.scope.ScopePolicy
+import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
@@ -239,13 +240,7 @@ class SecurityConfig {
                 AuthorizationGrantType.AUTHORIZATION_CODE.value,
                 AuthorizationGrantType.TOKEN_EXCHANGE.value,
             )
-            claims[OAuth2AuthorizationServerMetadataClaimNames.SCOPES_SUPPORTED] = listOf(
-                "openid",
-                "tenant.read",
-                "tenant.write",
-                "events.read",
-                "events.write",
-            )
+            claims[OAuth2AuthorizationServerMetadataClaimNames.SCOPES_SUPPORTED] = IdpScopes.SUPPORTED.toList()
             claims[OAuth2AuthorizationServerMetadataClaimNames.TOKEN_ENDPOINT_AUTH_METHODS_SUPPORTED] =
                 listOf(
                     ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,

@@ -42,7 +42,10 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.scopes_supported",
-                    containsInAnyOrder("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
+                    containsInAnyOrder(
+                        "openid", "tenant.read", "tenant.write", "tenant.claim",
+                        "events.read", "events.manage", "events.operate", "events.report",
+                    ),
                 ),
             )
             .andExpect(
@@ -102,7 +105,10 @@ class AuthorizationServerSurfaceTests(
             .andExpect(
                 jsonPath(
                     "$.scopes_supported",
-                    containsInAnyOrder("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
+                    containsInAnyOrder(
+                        "openid", "tenant.read", "tenant.write", "tenant.claim",
+                        "events.read", "events.manage", "events.operate", "events.report",
+                    ),
                 ),
             )
             .andExpect(
