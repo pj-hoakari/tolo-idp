@@ -56,6 +56,16 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
         SecurityJacksonModules.getModules(classLoader ?: javaClass.classLoader).forEach { module ->
             reflection.registerType(module.javaClass, MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS)
         }
+        // Jackson resolves the concrete collection names embedded in JDBC JSON.
+        listOf(
+            "java.util.Collections\$UnmodifiableMap",
+            "java.util.Collections\$UnmodifiableSet",
+            "java.util.Collections\$UnmodifiableRandomAccessList",
+            "java.util.Collections\$EmptyMap",
+            "java.util.Collections\$EmptyList",
+            "java.util.Collections\$SingletonList",
+            "java.util.Arrays\$ArrayList",
+        ).forEach { typeName -> reflection.registerType(TypeReference.of(typeName)) }
         listOf(
             "org.springframework.security.jackson.UsernamePasswordAuthenticationTokenMixin",
             "org.springframework.security.jackson.UsernamePasswordAuthenticationTokenDeserializer",
