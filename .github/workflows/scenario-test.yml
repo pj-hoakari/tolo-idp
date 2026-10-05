@@ -1,0 +1,58 @@
+name: Scenario tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scenario-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scenario:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: tolo-idp-scenario-${{ github.run_id }}-${{ github.run_attempt }}
+      COMPOSE_FILE: docker-compose.dev.native.yaml
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "24"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test application
+        run: ./gradlew build
+
+      - name: Validate scenario configuration
+        run: docker compose --profile scenario config --quiet
+
+      - name: Verify scenario cleanup on assertion failures
+        run: python3 scenario/tests/test_runn_cleanup.py
+
+      - name: Start development stack
+        run: docker compose up -d --build
+
+      - name: Run OIDC and Token Exchange scenarios
+        run: docker compose --profile scenario run --rm runn
+
+      - name: Show service status on failure
+        if: failure()
+        run: docker compose ps -a
+
+      - name: Clean up scenario stack
+        if: always()
+        run: docker compose --profile scenario down --volumes --remove-orphans

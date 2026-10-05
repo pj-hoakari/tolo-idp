@@ -1,6 +1,12 @@
 spring:
   application:
     name: tolo-idp
+  profiles:
+    group:
+      dev.jvm:
+        - dev
+      dev.native:
+        - dev
   datasource:
     url: jdbc:h2:mem:tolo-idp;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;DATABASE_TO_UPPER=false
     driver-class-name: org.h2.Driver

@@ -1,8 +1,6 @@
 # docker-compose.dev.jvm.yaml + host bootRun (profile dev.jvm).
 
 spring:
-  profiles:
-    include: dev
   datasource:
     url: jdbc:postgresql://localhost:15432/tolo_idp
 

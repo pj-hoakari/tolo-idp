@@ -21,6 +21,22 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  runn:
+    image: ghcr.io/k1low/runn:v1.10.0-slim
+    profiles:
+      - scenario
+    # Bypass the image's shell entrypoint so the host rule remains one argument.
+    entrypoint: ["runn"]
+    command: ["run", "--verbose", "--host-rules", "localhost app:8080", "/books/*.yml"]
+    environment:
+      IDP_ISSUER: http://localhost:18080
+    volumes:
+      - ./scenario:/books:ro
+    depends_on:
+      app:
+        condition: service_started
+    restart: "no"
+
   relation-stub:
     image: ghcr.io/pj-hoakari/tolo-relation-stub:latest
     ports:
