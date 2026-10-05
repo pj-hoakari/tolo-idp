@@ -43,16 +43,18 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 5. 認証付き Introspection で tenant_access の claim を確認する。
 6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
 7. event-2 への write は `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
-8. 終了時にセッションを破棄する。ログイン後のステップが失敗した場合も logout を試行する。
+8. 終了時にセッションを破棄する。ログインが200を返した場合は、レスポンスや cookie の検証が失敗しても logout を試行する。
 
 scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
 
-password、client secret、認可コード、token、セッション cookie は runn の `secrets` でマスクします。標準の実行はステップの成否だけを表示し、HTTP 詳細を出力しません。トークンや cookie の dump を追加しないでください。
+password、client secret、認可コード、token、セッション cookie は runn の `secrets` に登録しています。runn v1.10.0 の失敗 trace にはマスクされない値が出るため、公開済み seed 値を使う専用開発環境で実行してください。標準の実行は HTTP 詳細を無効にし、ステップの成否と失敗時の trace を表示します。
 
 ## CI
 
-GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。Java 24 で `./gradlew build` を実行し、同じ Compose と runbook でシナリオを検証します。runn の失敗はジョブの失敗になります。
+GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。Java 24 で `./gradlew build` を実行し、同じ Compose と runbook でシナリオを検証します。ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
 
 CI は run ごとの Compose project を使います。成功・失敗を問わず、その project のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+
+失敗時の logout だけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
 
 ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS、Native Image はこのシナリオの対象外です。

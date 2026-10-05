@@ -94,14 +94,18 @@ steps:
               username: "{{ vars.username }}"
               password: "{{ vars.password }}"
               tenantId: "{{ vars.tenant_id }}"
+
+  inspect_login:
+    desc: ログインのレスポンスと HttpOnly cookie を確認する
+    # Keep the HTTP response in steps.login so logout can run even if this test fails.
     test: |
-      current.res.status == 200
-      && current.res.body.username == vars.username
-      && current.res.body.tenantId == vars.tenant_id
-      && current.res.body.resource == vars.tenant_resource
-      && "ROLE_USER" in current.res.body.authorities
-      && current.res.cookies["JSESSIONID"] != nil
-      && current.res.cookies["JSESSIONID"].HttpOnly
+      steps.login.res.status == 200
+      && steps.login.res.body.username == vars.username
+      && steps.login.res.body.tenantId == vars.tenant_id
+      && steps.login.res.body.resource == vars.tenant_resource
+      && "ROLE_USER" in steps.login.res.body.authorities
+      && steps.login.res.cookies["JSESSIONID"] != nil
+      && steps.login.res.cookies["JSESSIONID"].HttpOnly
 
   authorize:
     desc: セッションと PKCE を使って認可コードを取得する

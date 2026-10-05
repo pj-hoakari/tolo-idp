@@ -40,6 +40,9 @@ jobs:
       - name: Validate scenario configuration
         run: docker compose --profile scenario config --quiet
 
+      - name: Verify scenario cleanup on assertion failures
+        run: python3 scenario/tests/test_runn_cleanup.py
+
       - name: Start development stack
         run: docker compose up -d --build
 
