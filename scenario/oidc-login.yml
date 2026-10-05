@@ -39,7 +39,9 @@ secrets:
   - '"Basic " + toBase64(vars.client_id + ":" + vars.client_secret)'
   - authorization_code
   - tenant_access_token
+  - 'split(tenant_access_token, ".")[1]'
   - event_access_token
+  - 'split(event_access_token, ".")[1]'
   - current.res.body.access_token
   - current.res.body.id_token
   - current.res.body.refresh_token
@@ -143,6 +145,18 @@ steps:
       && all(split(vars.scope, " "), {# in split(current.res.body.scope, " ")})
     bind:
       tenant_access_token: current.res.body.access_token
+      # Decode the Base64URL payload; signature verification is covered by Kotlin tests.
+      tenant_access_claims: fromJSON(fromBase64(replace(replace(split(current.res.body.access_token, ".")[1], "-", "+"), "_", "/") + repeat("=", (4 - len(split(current.res.body.access_token, ".")[1]) % 4) % 4)))
+
+  inspect_tenant_jwt:
+    desc: tenant_access の JWT 本体に必須 jti があり、role claim がないことを確認する
+    test: |
+      "jti" in tenant_access_claims
+      && type(tenant_access_claims.jti) == "string"
+      && tenant_access_claims.jti != ""
+      && "role" not in tenant_access_claims
+      && "tenant_role" not in tenant_access_claims
+      && "event_role" not in tenant_access_claims
 
   inspect_tenant_token:
     desc: tenant_access の claim を認証付き Introspection で確認する
@@ -169,6 +183,8 @@ steps:
       && "event_id" not in current.res.body
       && len(split(current.res.body.scope, " ")) == len(split(vars.scope, " "))
       && all(split(vars.scope, " "), {# in split(current.res.body.scope, " ")})
+      && "jti" in current.res.body
+      && type(current.res.body.jti) == "string"
       && current.res.body.jti != ""
       && current.res.body.iat > 0
       && current.res.body.nbf >= current.res.body.iat
@@ -203,6 +219,18 @@ steps:
       && all(split(vars.event_scope, " "), {# in split(current.res.body.scope, " ")})
     bind:
       event_access_token: current.res.body.access_token
+      # Decode the Base64URL payload; signature verification is covered by Kotlin tests.
+      event_access_claims: fromJSON(fromBase64(replace(replace(split(current.res.body.access_token, ".")[1], "-", "+"), "_", "/") + repeat("=", (4 - len(split(current.res.body.access_token, ".")[1]) % 4) % 4)))
+
+  inspect_event_jwt:
+    desc: event_access の JWT 本体に必須 jti があり、role claim がないことを確認する
+    test: |
+      "jti" in event_access_claims
+      && type(event_access_claims.jti) == "string"
+      && event_access_claims.jti != ""
+      && "role" not in event_access_claims
+      && "tenant_role" not in event_access_claims
+      && "event_role" not in event_access_claims
 
   inspect_event_token:
     desc: event_access の claim を認証付き Introspection で確認する
@@ -229,6 +257,8 @@ steps:
       && current.res.body.event_id == "event-1"
       && len(split(current.res.body.scope, " ")) == len(split(vars.event_scope, " "))
       && all(split(vars.event_scope, " "), {# in split(current.res.body.scope, " ")})
+      && "jti" in current.res.body
+      && type(current.res.body.jti) == "string"
       && current.res.body.jti != ""
       && current.res.body.iat > 0
       && current.res.body.nbf >= current.res.body.iat

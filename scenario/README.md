@@ -45,7 +45,7 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 7. event-2 への write は `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
 8. 終了時にセッションを破棄する。ログイン後のステップが失敗した場合も logout を試行する。
 
-scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認し、role claim がないことも確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
+scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
 
 password、client secret、認可コード、token、セッション cookie は runn の `secrets` でマスクします。標準の実行はステップの成否だけを表示し、HTTP 詳細を出力しません。トークンや cookie の dump を追加しないでください。
 
