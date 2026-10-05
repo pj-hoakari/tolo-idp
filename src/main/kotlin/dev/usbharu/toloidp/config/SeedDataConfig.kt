@@ -3,6 +3,7 @@ package dev.usbharu.toloidp.config
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.client.ClientType
+import dev.usbharu.toloidp.scope.IdpScopes
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -67,7 +68,8 @@ open class SeedDataRunner(
 
         seedDevelopmentClient()
 
-        if (clientPolicyRepository.findByClientId("client-123") == null) {
+        val existingPolicy = clientPolicyRepository.findByClientId(DEVELOPMENT_CLIENT_ID)
+        if (existingPolicy == null) {
             clientPolicyRepository.save(
                 ClientPolicy(
                     clientId = "client-123",
@@ -78,10 +80,14 @@ open class SeedDataRunner(
                     ),
                     allowedTransitions = setOf("tenant_access:event_access"),
                     allowedAudiences = setOf("backend-api"),
-                    allowedScopes = setOf("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
+                    allowedScopes = IdpScopes.SUPPORTED,
                     tenantAccessTtl = Duration.ofSeconds(900),
                     eventAccessTtl = Duration.ofSeconds(600),
                 ),
+            )
+        } else if (existingPolicy.allowedScopes != IdpScopes.SUPPORTED) {
+            clientPolicyRepository.save(
+                existingPolicy.copy(allowedScopes = IdpScopes.SUPPORTED).apply { isNewEntity = false },
             )
         }
     }
@@ -94,11 +100,15 @@ open class SeedDataRunner(
         }
 
         val missingRedirectUris = DEVELOPMENT_REDIRECT_URIS.filter { it !in existing.redirectUris }
-        if (missingRedirectUris.isEmpty()) {
+        if (missingRedirectUris.isEmpty() && existing.scopes == IdpScopes.SUPPORTED) {
             return
         }
 
         val builder = RegisteredClient.from(existing)
+            .scopes { scopes ->
+                scopes.clear()
+                scopes.addAll(IdpScopes.SUPPORTED)
+            }
         missingRedirectUris.forEach { builder.redirectUri(it) }
         registeredClientRepository.save(builder.build())
     }
@@ -113,11 +123,7 @@ open class SeedDataRunner(
             .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
             .apply { DEVELOPMENT_REDIRECT_URIS.forEach { redirectUri(it) } }
-            .scope("openid")
-            .scope("tenant.read")
-            .scope("tenant.write")
-            .scope("events.read")
-            .scope("events.write")
+            .scopes { it.addAll(IdpScopes.SUPPORTED) }
             .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
             .tokenSettings(
                 TokenSettings.builder()
