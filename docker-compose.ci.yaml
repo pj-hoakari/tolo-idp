@@ -1,0 +1,5 @@
+# Use the already-built Dockerfile image for scenarios; never rebuild the app.
+services:
+  app:
+    image: ${CI_APP_IMAGE:?CI_APP_IMAGE is required}
+    pull_policy: never

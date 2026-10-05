@@ -79,6 +79,9 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "resource": "https://api.example.com/tenants/tenant-a", "authorities": ["ROLE_USER"],
             }, {"Set-Cookie": f"JSESSIONID={COOKIE}; Path=/{suffix}"})
         elif path == "/oauth2/token":
+            if self.server.failure == "token-status":
+                self.respond(500, None)
+                return
             # A valid JWT response with insufficient scope triggers the token assertion.
             self.respond(200, {
                 "token_type": "Bearer", "expires_in": 300,
@@ -122,6 +125,11 @@ class RunnCleanupTests(unittest.TestCase):
             thread.join(timeout=5)
 
         self.assertEqual(1, result.returncode, "The scenario must report assertion failure")
+        if failure == "token-status":
+            output = result.stdout + result.stderr
+            self.assertIn("test failed", output)
+            self.assertIn("current.res.status => 500", output)
+            self.assertNotIn("bind failed", output)
         requests = [path for path, _ in server.requests]
         self.assertIn(last_path, requests, "The intended assertion must be reached")
         if cleanup:
@@ -140,6 +148,9 @@ class RunnCleanupTests(unittest.TestCase):
 
     def test_token_scope_assertion_failure_logs_out(self):
         self.check_failure("scope", "/oauth2/token", True)
+
+    def test_token_http_failure_logs_out(self):
+        self.check_failure("token-status", "/oauth2/token", True)
 
     def test_rejected_login_does_not_attempt_logout(self):
         self.check_failure("login-rejected", "/api/login", False)
