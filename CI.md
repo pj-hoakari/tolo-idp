@@ -26,13 +26,13 @@ Native 版は既存の `tolo-idp` を使い、JVM 版は別のイメージ名 `t
 
 ## Spring Buildpacks と Dockerfile の両方を使う
 
-再利用ワークフローは Java 24 で Gradle build を実行し、`bootBuildImage` の成果物を `Dockerfile` の `BASE_IMAGE` 引数に渡します。この最終イメージで OIDC／Token Exchange のシナリオと本番プロファイルの起動を検証します。
+再利用ワークフローは Java 24 で Gradle build を実行し、`bootBuildImage` の成果物を `Dockerfile` の `BASE_IMAGE` 引数に渡します。この最終イメージで OIDC／Token Exchange のシナリオを実行します。本番プロファイルは新規 DB と一時署名鍵を使った別の Compose プロジェクトで起動し、`scenario/production/startup.yml` で Health と Discovery の issuer を検証します。
 
 Java／Kotlin のコンパイル対象は24です。Native のビルドには Buildpacks 内の GraalVM 25 を使い、`-march=compatibility` を指定します。JVM 版には Java 24 を使います。最新の Paketo builder は Java 24 を含まないため、JVM 版だけ `builder-noble-java-tiny:0.0.62` の digest に固定しています。Native 版は最新の Noble Java Tiny builder を使います。
 
-公開ジョブは検証済みの Buildpacks イメージを artifact から読み込み、`ghcr.io/<owner>/tolo-idp-buildpacks` に実行 ID 付きのタグで保存します。runtime ごとの manifest を作り、その digest を共通 Action の `build-args` へ渡します。中間イメージはこの別 package に保持し、artifact は1日で削除します。
+公開ジョブは検証済みの Buildpacks イメージを artifact から読み込み、`ghcr.io/<owner>/tolo-idp-buildpacks` に実行 ID 付きのタグで保存します。runtime ごとの manifest を作り、その digest を `ARG BASE_IMAGE` のデフォルト値に設定した `Dockerfile.release` を生成します。それ以外の内容は既存の `Dockerfile` と同じです。中間イメージはこの別 package に保持し、artifact は1日で削除します。
 
-共通 Action は [pj-hoakari/actions の PR #4](https://github.com/pj-hoakari/actions/pull/4) のコミット SHA に固定しています。`resolve-version` のタグ一覧を `publish-image` へ渡し、`image` 引数で Native／JVM それぞれの公開先を指定します。両方に同じリリースタグを使います。
+共通 Action は [pj-hoakari/actions の main にあるコミット](https://github.com/pj-hoakari/actions/commit/d619552a3e89628f83a45f57ac80e9e9c9590859) の SHA に固定しています。`publish-image` へ `version`、`image`、`file`、`cache-scope` を渡し、公開先と生成した Dockerfile を指定します。バージョン・コミット・安定版のタグは共通 Action が生成します。両方に同じリリースタグを使い、Actions 側への変更は不要です。
 
 ## ローカルで Buildpacks イメージを作る
 

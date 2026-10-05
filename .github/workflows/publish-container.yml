@@ -17,12 +17,11 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
-      tags: ${{ steps.version.outputs.tags }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve release version
         id: version
-        uses: pj-hoakari/actions/resolve-version@6cb0d060da6c0f7e2d5e2ceacccc82103b2279bf # pj-hoakari/actions#4
+        uses: pj-hoakari/actions/resolve-version@d619552a3e89628f83a45f57ac80e9e9c9590859
 
   build:
     needs: version
@@ -50,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Revalidate release version before publishing
-        uses: pj-hoakari/actions/resolve-version@6cb0d060da6c0f7e2d5e2ceacccc82103b2279bf # pj-hoakari/actions#4
+        uses: pj-hoakari/actions/resolve-version@d619552a3e89628f83a45f57ac80e9e9c9590859
 
       - name: Resolve image name
         id: image
@@ -74,18 +73,41 @@ jobs:
 
       - name: Publish Buildpacks base manifest
         id: base
-        run: bash .github/scripts/publish-buildpacks-base.sh
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${REPOSITORY,,}-buildpacks"
+          run_tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${IMAGE_RUNTIME}"
+          sources=()
+          for arch in amd64 arm64; do
+            docker image load --input "build/ci-images/buildpacks-${IMAGE_RUNTIME}-${arch}/image.tar"
+            source="$image:$run_tag-$arch"
+            docker image tag "tolo-idp-base:$IMAGE_RUNTIME-$arch" "$source"
+            docker image push "$source"
+            digest=$(docker buildx imagetools inspect "$source" --format '{{.Manifest.Digest}}')
+            sources+=("$image@$digest")
+          done
+          docker buildx imagetools create --tag "$image:$run_tag" "${sources[@]}"
+          digest=$(docker buildx imagetools inspect "$image:$run_tag" --format '{{.Manifest.Digest}}')
+          echo "image=$image@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release Dockerfile
+        env:
+          BASE_IMAGE: ${{ steps.base.outputs.image }}
+        run: >-
+          awk -v base="$BASE_IMAGE"
+          '/^ARG BASE_IMAGE=/ { print "ARG BASE_IMAGE=" base; next } { print }'
+          Dockerfile > Dockerfile.release
 
       - name: Publish final multi-arch image
-        uses: pj-hoakari/actions/publish-image@6cb0d060da6c0f7e2d5e2ceacccc82103b2279bf # pj-hoakari/actions#4
+        uses: pj-hoakari/actions/publish-image@d619552a3e89628f83a45f57ac80e9e9c9590859
         with:
           version: ${{ needs.version.outputs.version }}
-          tags: ${{ needs.version.outputs.tags }}
           image: ${{ steps.image.outputs.name }}
-          build-args: BASE_IMAGE=${{ steps.base.outputs.image }}
+          file: ./Dockerfile.release
           cache-scope: tolo-idp-${{ matrix.runtime }}
 
       - name: Verify published platforms
+        shell: bash
         env:
           VERSION: ${{ needs.version.outputs.version }}
           IMAGE: ${{ steps.image.outputs.name }}

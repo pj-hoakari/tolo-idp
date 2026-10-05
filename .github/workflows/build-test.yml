@@ -37,6 +37,7 @@ jobs:
       IMAGE_RUNTIME: ${{ matrix.runtime }}
       IMAGE_PLATFORM: linux/${{ matrix.platform.arch }}
       RELEASE_VERSION: ${{ inputs.version }}
+      CI_PRODUCTION_KEY_DIRECTORY: ${{ github.workspace }}/build/ci-key
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -84,8 +85,33 @@ jobs:
       - name: Run OIDC and Token Exchange scenarios
         run: docker compose --profile scenario run --rm --no-deps runn
 
-      - name: Verify production profile
-        run: bash .github/scripts/check-production-image.sh
+      - name: Prepare production scenario signing key
+        id: production-key
+        run: |
+          mkdir -p "$CI_PRODUCTION_KEY_DIRECTORY"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$CI_PRODUCTION_KEY_DIRECTORY/private.pem" 2>/dev/null
+          # The Buildpacks image runs as a non-root user. This is a disposable test key.
+          chmod 755 "$CI_PRODUCTION_KEY_DIRECTORY"
+          chmod 644 "$CI_PRODUCTION_KEY_DIRECTORY/private.pem"
+          {
+            echo "TOLO_IDP_IMAGE=$CI_APP_IMAGE"
+            echo "TOLO_IDP_POSTGRES_PASSWORD=tolo-idp-ci"
+            echo "TOLO_IDP_ISSUER=http://localhost:8080"
+            echo "TOLO_IDP_JWK_PRIVATE_KEY_HOST_PATH=$CI_PRODUCTION_KEY_DIRECTORY/private.pem"
+            echo "TOLO_IDP_JWK_PRIVATE_KEY_LOCATION=/run/tolo-idp/private.pem"
+          } >> "$GITHUB_ENV"
+
+      - name: Start production application
+        run: >-
+          docker compose -p "$COMPOSE_PROJECT_NAME-prod"
+          -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml
+          up -d --pull never app
+
+      - name: Run production startup scenario
+        run: >-
+          docker compose -p "$COMPOSE_PROJECT_NAME-prod"
+          -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml
+          --profile scenario run --rm --no-deps runn
 
       - name: Save tested Buildpacks image
         if: inputs.export-images
@@ -106,6 +132,20 @@ jobs:
       - name: Show service status on failure
         if: failure()
         run: docker compose ps -a
+
+      - name: Show production service status on failure
+        if: failure() && steps.production-key.outcome == 'success'
+        run: >-
+          docker compose -p "$COMPOSE_PROJECT_NAME-prod"
+          -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml ps -a
+
+      - name: Clean up production scenario stack
+        if: always() && steps.production-key.outcome == 'success'
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME-prod" \
+            -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml \
+            --profile scenario down --volumes --remove-orphans
+          rm -rf "$CI_PRODUCTION_KEY_DIRECTORY"
 
       - name: Clean up scenario stack
         if: always()
