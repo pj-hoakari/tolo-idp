@@ -1,0 +1,13 @@
+# docker-compose.prod.yaml
+
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    locations: classpath:db/postgresql
+
+tolo-idp:
+  seed:
+    enabled: false
+  jwk:
+    allow-ephemeral: false

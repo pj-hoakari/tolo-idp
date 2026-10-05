@@ -1,0 +1,14 @@
+# docker-compose.dev.native.yaml (profile dev.native).
+
+spring:
+  profiles:
+    include: dev
+  datasource:
+    url: jdbc:postgresql://db:5432/tolo_idp
+
+tolo-idp:
+  relation:
+    base-url: http://relation-stub:8080
+  rate-limit:
+    redis:
+      uri: redis://redis:6379

@@ -1,0 +1,20 @@
+# Shared dev settings (included by dev.jvm / dev.native).
+
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    username: tolo_idp
+    password: tolo_idp
+  flyway:
+    locations: classpath:db/postgresql
+
+tolo-idp:
+  issuer: http://localhost:18080
+  seed:
+    enabled: true
+  jwk:
+    allow-ephemeral: true
+  cors:
+    allowed-origins:
+      - http://localhost:3000
+      - http://127.0.0.1:3000

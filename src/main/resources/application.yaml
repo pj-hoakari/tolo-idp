@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: tolo-idp
+  datasource:
+    url: jdbc:h2:mem:tolo-idp;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;DATABASE_TO_UPPER=false
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  flyway:
+    enabled: true
+  h2:
+    console:
+      enabled: false
+  cloud:
+    gcp:
+      core:
+        enabled: false
+
+logging:
+  level:
+    org.springframework.security: INFO
+
+tolo-idp:
+  issuer: http://localhost:8080
+  resource:
+    allowed-hosts: api.example.com
+  relation:
+    base-url: http://localhost:8081
+    cache:
+      ttl: 5m
+  jwk:
+    allow-ephemeral: true

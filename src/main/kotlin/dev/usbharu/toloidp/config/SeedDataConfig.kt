@@ -133,6 +133,7 @@ open class SeedDataRunner(
 
         val DEVELOPMENT_REDIRECT_URIS = listOf(
             "http://127.0.0.1:8080/login/oauth2/code/client-123",
+            "http://127.0.0.1:18080/login/oauth2/code/client-123",
             "http://localhost:3000/api/auth/callback/tolo-idp",
         )
     }

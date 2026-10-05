@@ -12,21 +12,22 @@ This directory is committed only on the stacked review branch `feature/better-au
 ## bootRun
 
 ```bash
-# terminal 1: relation-stub on :8081 (or use docker-compose.dev.yaml)
+# terminal 1:
+docker compose -f docker-compose.dev.jvm.yaml up -d
 # terminal 2:
 cd /path/to/tolo-idp
 TOLO_IDP_SEED_ENABLED=true \
 TOLO_IDP_RATE_LIMIT_ENABLED=false \
 TOLO_IDP_ISSUER=http://localhost:8080 \
-./gradlew bootRun --rerun-tasks
+./gradlew bootRun --args='--spring.profiles.active=dev.jvm' --rerun-tasks
 ```
 
 `.env.local` defaults to `TOLO_IDP_URL=http://localhost:8080`.
 
-## docker-compose.dev
+## docker-compose.dev.native
 
 ```bash
-docker compose -f docker-compose.dev.yaml up
+docker compose -f docker-compose.dev.native.yaml up --build
 ```
 
 Update `.env.local`:

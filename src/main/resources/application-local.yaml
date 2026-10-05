@@ -1,0 +1,23 @@
+# docker-compose.local.yaml
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/tolo_idp
+    driver-class-name: org.postgresql.Driver
+    username: tolo_idp
+    password: tolo_idp
+  flyway:
+    locations: classpath:db/postgresql
+
+tolo-idp:
+  issuer: http://localhost:8080
+  rate-limit:
+    redis:
+      uri: redis://localhost:6379
+  seed:
+    enabled: true
+  jwk:
+    allow-ephemeral: true
+  cors:
+    allowed-origins:
+      - http://localhost:3000
