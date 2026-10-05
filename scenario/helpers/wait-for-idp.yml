@@ -1,0 +1,14 @@
+# Retry this helper only: authentication and token issuance must not be retried.
+desc: IdP の起動を待つ
+loop:
+  count: 60
+  interval: 2sec
+  until: outcome == "success"
+# The parent supplies health, including its transport and host rules.
+steps:
+  health:
+    health:
+      /actuator/health:
+        get:
+          body: null
+    test: current.res.status == 200 && current.res.body.status == "UP"
