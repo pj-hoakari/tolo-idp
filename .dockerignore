@@ -1,0 +1,11 @@
+.git
+.github
+.gradle
+build
+local
+**/node_modules
+**/.next
+*.md
+docker-compose*.yaml
+Dockerfile
+relation-stub

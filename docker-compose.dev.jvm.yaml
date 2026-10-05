@@ -1,0 +1,53 @@
+# Dev dependencies for host bootRun (Spring profile: dev.jvm).
+# Published ports match application-jvm.properties.
+
+name: tolo-idp-dev
+
+services:
+  relation-stub:
+    image: ghcr.io/pj-hoakari/tolo-relation-stub:latest
+    ports:
+      - "18081:8080"
+    environment:
+      RELATION_ADDR: ":8080"
+      RELATION_DATA: /data/sample.json
+    volumes:
+      - ./relation-stub:/data:ro
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_DB: tolo_idp
+      POSTGRES_USER: tolo_idp
+      POSTGRES_PASSWORD: tolo_idp
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis-dev-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  postgres-dev-data:
+  redis-dev-data:

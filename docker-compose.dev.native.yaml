@@ -1,22 +1,17 @@
+# Dev stack with IdP in a container (Spring profile: dev.native).
+
 name: tolo-idp-dev
 
 services:
   app:
-    image: tolo-idp:0.0.1-SNAPSHOT
+    build:
+      context: .
+      dockerfile: Dockerfile.jvm
+    image: tolo-idp-dev-native:local
     ports:
       - "18080:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: dev
-      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/tolo_idp
-      SPRING_DATASOURCE_USERNAME: tolo_idp
-      SPRING_DATASOURCE_PASSWORD: tolo_idp
-      SPRING_FLYWAY_LOCATIONS: classpath:db/postgresql
-      TOLO_IDP_ISSUER: http://localhost:18080
-      TOLO_IDP_RATE_LIMIT_REDIS_URI: redis://redis:6379
-      TOLO_IDP_RELATION_BASE_URL: http://relation-stub:8080
-      TOLO_IDP_SEED_ENABLED: "true"
-      TOLO_IDP_JWK_ALLOW_EPHEMERAL: "true"
+      SPRING_PROFILES_ACTIVE: dev.native
     depends_on:
       db:
         condition: service_healthy
