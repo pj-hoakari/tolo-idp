@@ -20,7 +20,19 @@ class RateLimitFilter(
         response: HttpServletResponse,
         filterChain: FilterChain,
     ) {
-        val wrappedRequest = wrapIfNeeded(request)
+        val wrappedRequest = try {
+            wrapIfNeeded(request)
+        } catch (_: RequestBodyTooLargeException) {
+            log.structuredWarn(
+                "Login body too large",
+                "event" to "login_body_too_large",
+                "method" to request.method,
+                "path" to request.requestURI,
+                "status" to HttpStatus.PAYLOAD_TOO_LARGE.value(),
+            )
+            writeJsonError(response, HttpStatus.PAYLOAD_TOO_LARGE, "payload_too_large", null)
+            return
+        }
         val identity = identityExtractor.identity(wrappedRequest)
         val decision = try {
             rateLimitService.consume(identity)
