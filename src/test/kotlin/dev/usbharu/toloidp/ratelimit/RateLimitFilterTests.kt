@@ -6,6 +6,7 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
+import jakarta.servlet.ServletInputStream
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -14,6 +15,7 @@ import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.http.MediaType
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -120,6 +122,26 @@ class RateLimitFilterTests(
     }
 
     @Test
+    fun chunkedOversizedLoginJsonIsRejectedBeforeRateLimit() {
+        rateLimitService.unavailable.set(true)
+        val body = CountingServletInputStream(OVERSIZED_LOGIN_BODY_BYTES)
+
+        mockMvc.perform(
+            post("/api/login")
+                .withRemoteAddr("192.0.2.15")
+                .contentType(MediaType.APPLICATION_JSON)
+                .with { request ->
+                    UnboundedLoginBodyRequest(request, body)
+                },
+        )
+            .andExpect(status().isPayloadTooLarge)
+            .andExpect(jsonPath("$.error").value("payload_too_large"))
+
+        assertNull(rateLimitService.lastIdentity.get())
+        assertEquals(CachedBodyHttpServletRequest.MAX_LOGIN_JSON_BYTES + 1, body.bytesRead)
+    }
+
+    @Test
     fun redisFailureReturnsServiceUnavailable() {
         rateLimitService.unavailable.set(true)
 
@@ -174,6 +196,26 @@ class RecordingRateLimitService : RateLimitService {
 }
 
 private const val OVERSIZED_LOGIN_BODY_BYTES = 2 * 1024 * 1024 + 1024
+
+private class UnboundedLoginBodyRequest(
+    delegate: MockHttpServletRequest,
+    private val body: ServletInputStream,
+) : MockHttpServletRequest(delegate.method, delegate.requestURI) {
+    init {
+        contentType = delegate.contentType
+        remoteAddr = delegate.remoteAddr
+        servletPath = delegate.servletPath
+        contextPath = delegate.contextPath
+        pathInfo = delegate.pathInfo
+        characterEncoding = delegate.characterEncoding
+    }
+
+    override fun getContentLength(): Int = -1
+
+    override fun getContentLengthLong(): Long = -1
+
+    override fun getInputStream(): ServletInputStream = body
+}
 
 private fun <T : org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder> T.withRemoteAddr(
     remoteAddr: String,

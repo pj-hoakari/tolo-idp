@@ -5,9 +5,8 @@ import jakarta.servlet.ServletInputStream
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpServletRequest
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNotEquals
-import kotlin.test.assertTrue
 
 class CachedBodyHttpServletRequestTests {
     @Test
@@ -44,14 +43,13 @@ class CachedBodyHttpServletRequestTests {
             CachedBodyHttpServletRequest(request)
         }
 
-        assertNotEquals(OVERSIZED_LOGIN_BODY_BYTES, body.bytesRead)
-        assertTrue(body.bytesRead <= CachedBodyHttpServletRequest.MAX_LOGIN_JSON_BYTES + 1)
+        assertEquals(CachedBodyHttpServletRequest.MAX_LOGIN_JSON_BYTES + 1, body.bytesRead)
     }
 }
 
 private const val OVERSIZED_LOGIN_BODY_BYTES = 2 * 1024 * 1024 + 1024
 
-private class CountingServletInputStream(
+class CountingServletInputStream(
     private val size: Int,
 ) : ServletInputStream() {
     var bytesRead: Int = 0
