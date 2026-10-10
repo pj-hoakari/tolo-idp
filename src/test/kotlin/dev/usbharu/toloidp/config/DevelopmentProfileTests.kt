@@ -29,15 +29,31 @@ class DevelopmentProfileTests {
         assertEquals("redis://localhost:16379", environment.getProperty("tolo-idp.rate-limit.redis.uri"))
     }
 
-    private fun loadProfile(profile: String): ConfigurableEnvironment = StandardEnvironment().apply {
+    private fun loadProfile(profile: String): ConfigurableEnvironment {
+        val environment = StandardEnvironment()
+        // Ignore host SPRING_PROFILES_ACTIVE so only [profile] (and its group) is activated.
+        environment.propertySources.remove("systemEnvironment")
         // Use the main YAML files only, excluding application.properties in test resources.
-        systemProperties["spring.config.location"] = "classpath:/application.yaml"
-        ConfigDataEnvironmentPostProcessor.applyTo(
-            this,
-            DefaultResourceLoader(javaClass.classLoader),
-            null,
-            listOf(profile),
-        )
+        // spring.config.location must be visible during ConfigData bootstrap; clear it afterward so
+        // it does not leak to other tests in the same JVM.
+        val configLocationKey = "spring.config.location"
+        val previousConfigLocation = System.getProperty(configLocationKey)
+        System.setProperty(configLocationKey, "classpath:/application.yaml")
+        try {
+            ConfigDataEnvironmentPostProcessor.applyTo(
+                environment,
+                DefaultResourceLoader(javaClass.classLoader),
+                null,
+                listOf(profile),
+            )
+        } finally {
+            if (previousConfigLocation == null) {
+                System.clearProperty(configLocationKey)
+            } else {
+                System.setProperty(configLocationKey, previousConfigLocation)
+            }
+        }
+        return environment
     }
 
     private fun assertSharedDevelopmentSettings(environment: ConfigurableEnvironment, profile: String) {
