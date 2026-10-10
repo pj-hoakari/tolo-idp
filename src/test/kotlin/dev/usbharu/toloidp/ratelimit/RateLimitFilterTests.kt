@@ -27,6 +27,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 @SpringBootTest(properties = ["tolo-idp.rate-limit.enabled=false"])
 @AutoConfigureMockMvc
@@ -102,6 +103,23 @@ class RateLimitFilterTests(
     }
 
     @Test
+    fun oversizedLoginJsonIsRejectedBeforeRateLimit() {
+        rateLimitService.unavailable.set(true)
+        val body = ByteArray(OVERSIZED_LOGIN_BODY_BYTES)
+
+        mockMvc.perform(
+            post("/api/login")
+                .withRemoteAddr("192.0.2.14")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body),
+        )
+            .andExpect(status().isPayloadTooLarge)
+            .andExpect(jsonPath("$.error").value("payload_too_large"))
+
+        assertNull(rateLimitService.lastIdentity.get())
+    }
+
+    @Test
     fun redisFailureReturnsServiceUnavailable() {
         rateLimitService.unavailable.set(true)
 
@@ -154,6 +172,8 @@ class RecordingRateLimitService : RateLimitService {
         unavailable.set(false)
     }
 }
+
+private const val OVERSIZED_LOGIN_BODY_BYTES = 2 * 1024 * 1024 + 1024
 
 private fun <T : org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder> T.withRemoteAddr(
     remoteAddr: String,
