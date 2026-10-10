@@ -8,10 +8,17 @@ import dev.usbharu.toloidp.scope.RelationRole
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
+import java.io.IOException
 import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class HttpRelationServiceTests {
     private lateinit var server: HttpServer
@@ -169,6 +176,51 @@ class HttpRelationServiceTests {
             service.getMembership(" tenant-a", "user-123")
         }
         assertEquals("resource_invalid_format", exception.message)
+    }
+
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    fun readTimeoutFailsWhenPeerSendsNoBytes() {
+        ServerSocket().use { serverSocket ->
+            serverSocket.bind(InetSocketAddress("127.0.0.1", 0), 1)
+            val accepted = CountDownLatch(1)
+            val acceptThread = Thread {
+                try {
+                    serverSocket.accept().use { socket ->
+                        accepted.countDown()
+                        try {
+                            socket.getInputStream().read()
+                        } catch (_: IOException) {
+                        }
+                    }
+                } catch (_: IOException) {
+                }
+            }
+            acceptThread.isDaemon = true
+            acceptThread.start()
+            val slowService = HttpRelationService(
+                IdpProperties(
+                    relation = IdpProperties.Relation(
+                        baseUrl = "http://127.0.0.1:${serverSocket.localPort}",
+                        connectTimeout = Duration.ofSeconds(1),
+                        readTimeout = Duration.ofSeconds(1),
+                    ),
+                ),
+                parser,
+            )
+            val started = Instant.now()
+            try {
+                val exception = assertFailsWith<RelationLookupException> {
+                    slowService.getMembership("tenant-a", "user-1")
+                }
+                assertEquals("relation_lookup_failed", exception.reason)
+                assertTrue(accepted.count == 0L)
+                assertTrue(Duration.between(started, Instant.now()) < Duration.ofMillis(2500))
+            } finally {
+                serverSocket.close()
+                acceptThread.join(1_000)
+            }
+        }
     }
 
     private fun respondWith(status: Int, body: String) {
