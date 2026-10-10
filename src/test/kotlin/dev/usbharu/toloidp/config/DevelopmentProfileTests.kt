@@ -2,8 +2,9 @@ package dev.usbharu.toloidp.config
 
 import org.junit.jupiter.api.Test
 import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor
-import org.springframework.core.env.MapPropertySource
+import org.springframework.core.env.ConfigurableEnvironment
 import org.springframework.core.env.StandardEnvironment
+import org.springframework.core.io.DefaultResourceLoader
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -28,21 +29,18 @@ class DevelopmentProfileTests {
         assertEquals("redis://localhost:16379", environment.getProperty("tolo-idp.rate-limit.redis.uri"))
     }
 
-    private fun loadProfile(profile: String): StandardEnvironment = StandardEnvironment().apply {
+    private fun loadProfile(profile: String): ConfigurableEnvironment = StandardEnvironment().apply {
         // Use the main YAML files only, excluding application.properties in test resources.
-        propertySources.addFirst(
-            MapPropertySource(
-                "development-profile-test",
-                mapOf(
-                    "spring.config.location" to "classpath:/application.yaml",
-                    "spring.profiles.active" to profile,
-                ),
-            ),
+        systemProperties["spring.config.location"] = "classpath:/application.yaml"
+        ConfigDataEnvironmentPostProcessor.applyTo(
+            this,
+            DefaultResourceLoader(javaClass.classLoader),
+            null,
+            listOf(profile),
         )
-        ConfigDataEnvironmentPostProcessor.applyTo(this)
     }
 
-    private fun assertSharedDevelopmentSettings(environment: StandardEnvironment, profile: String) {
+    private fun assertSharedDevelopmentSettings(environment: ConfigurableEnvironment, profile: String) {
         assertTrue(profile in environment.activeProfiles)
         assertTrue("dev" in environment.activeProfiles)
         assertEquals("http://localhost:18080", environment.getProperty("tolo-idp.issuer"))
