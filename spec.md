@@ -1021,6 +1021,8 @@ tolo-idp.token.tenant-access-ttl=15m
 tolo-idp.token.event-access-ttl=10m
 ```
 
+RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev / local / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
+
 seed data が有効な場合の開発用デフォルト:
 
 ```text

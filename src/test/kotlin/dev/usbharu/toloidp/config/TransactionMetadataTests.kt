@@ -49,6 +49,16 @@ class TransactionMetadataTests {
         assertReadWrite(RelationCacheController::class.java, "purgeOne", String::class.java, String::class.java)
         assertReadWrite(SpecTokenExchangeAuthenticationProvider::class.java, "authenticate", Authentication::class.java)
         assertReadWrite(SeedDataRunner::class.java, "run", ApplicationArguments::class.java)
+        assertReadWrite(
+            RegisteredClientConfigurationSynchronizer::class.java,
+            "run",
+            ApplicationArguments::class.java,
+        )
+        assertReadWrite(
+            RegisteredClientConfigurationSynchronizer::class.java,
+            "synchronize",
+            Map::class.java,
+        )
     }
 
     private fun assertReadOnly(targetClass: Class<*>, methodName: String, vararg parameterTypes: Class<*>) {
