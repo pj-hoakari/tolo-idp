@@ -34,7 +34,9 @@ class HttpRelationService(
                 HttpClient.newBuilder()
                     .connectTimeout(properties.relation.connectTimeout)
                     .build(),
-            ),
+            ).apply {
+                setReadTimeout(properties.relation.readTimeout)
+            },
         )
         .build()
 

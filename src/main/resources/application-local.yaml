@@ -31,8 +31,11 @@ spring:
                 - openid
                 - tenant.read
                 - tenant.write
+                - tenant.claim
                 - events.read
-                - events.write
+                - events.manage
+                - events.operate
+                - events.report
             require-proof-key: true
             require-authorization-consent: false
             token:

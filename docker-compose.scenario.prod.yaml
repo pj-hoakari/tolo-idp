@@ -1,0 +1,16 @@
+# Run the startup scenario against the production stack and its fresh database.
+services:
+  runn:
+    image: ghcr.io/k1low/runn:v1.10.0-slim
+    profiles:
+      - scenario
+    entrypoint: ["runn"]
+    command: ["run", "--verbose", "--host-rules", "localhost app:8080", "--scopes", "read:parent", "/books/production/startup.yml"]
+    environment:
+      IDP_ISSUER: ${TOLO_IDP_ISSUER:?TOLO_IDP_ISSUER is required}
+    volumes:
+      - ./scenario:/books:ro
+    depends_on:
+      app:
+        condition: service_started
+    restart: "no"

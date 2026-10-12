@@ -10,14 +10,22 @@ import kotlin.test.assertFailsWith
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.transaction.PlatformTransactionManager
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertTrue
 
 @SpringBootTest(properties = ["tolo-idp.seed.enabled=false"])
 class CachedRelationServiceTests(
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
+    @Autowired private val cacheStore: RelationMembershipCacheStore,
+    @Autowired private val cacheController: RelationCacheController,
+    @Autowired private val transactionManager: PlatformTransactionManager,
     @Autowired private val resourceParser: ResourceParser,
 ) {
     private val now = Instant.parse("2026-06-01T00:00:00Z")
@@ -36,7 +44,7 @@ class CachedRelationServiceTests(
     @Test
     fun firstLookupDelegatesAndWritesCacheRow() {
         val delegate = RecordingRelationService()
-        val service = CachedRelationService(delegate, cacheRepository, properties, resourceParser, clock)
+        val service = service(delegate)
 
         val membership = service.getMembership("tenant-a", "user-123")
 
@@ -48,7 +56,7 @@ class CachedRelationServiceTests(
     @Test
     fun secondLookupWithinTtlUsesCacheWithoutDelegateCall() {
         val delegate = RecordingRelationService()
-        val service = CachedRelationService(delegate, cacheRepository, properties, resourceParser, clock)
+        val service = service(delegate)
 
         service.getMembership("tenant-a", "user-123")
         service.getMembership("tenant-a", "user-123")
@@ -61,7 +69,7 @@ class CachedRelationServiceTests(
     fun expiredRowIsIgnoredAndRefreshed() {
         cacheMembership("tenant-a", "user-123", sampleMembership("tenant-a", "event-old"), now.minusSeconds(600), now.minusSeconds(1))
         val delegate = RecordingRelationService()
-        val service = CachedRelationService(delegate, cacheRepository, properties, resourceParser, clock)
+        val service = service(delegate)
 
         val membership = service.getMembership("tenant-a", "user-123")
 
@@ -73,7 +81,7 @@ class CachedRelationServiceTests(
     @Test
     fun delegateFailuresAreNotCached() {
         val delegate = RecordingRelationService(failure = RelationLookupException("relation_lookup_failed"))
-        val service = CachedRelationService(delegate, cacheRepository, properties, resourceParser, clock)
+        val service = service(delegate)
 
         assertFailsWith<RelationLookupException> {
             service.getMembership("tenant-a", "user-123")
@@ -99,6 +107,46 @@ class CachedRelationServiceTests(
 
         assertEquals(0, cacheRowCount())
     }
+
+    @Test
+    fun purgeAllDuringMissDoesNotWriteBackFetchedMembership() {
+        assertPurgeDuringMissDoesNotWriteBack {
+            cacheController.purgeAll()
+        }
+    }
+
+    @Test
+    fun purgeOneDuringMissDoesNotWriteBackFetchedMembership() {
+        assertPurgeDuringMissDoesNotWriteBack {
+            cacheController.purgeOne("tenant-a", "user-1")
+        }
+    }
+
+    private fun assertPurgeDuringMissDoesNotWriteBack(purge: () -> Unit) {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val delegate = BlockingRelationService(entered, release)
+        val service = service(delegate)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val future = executor.submit<TenantMembership> {
+                service.getMembership("tenant-a", "user-1")
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            purge()
+            assertEquals(0, cacheRowCount())
+            release.countDown()
+            assertEquals(sampleMembership("tenant-a"), future.get(5, TimeUnit.SECONDS))
+            assertNull(cachedMembership("tenant-a", "user-1"))
+            assertEquals(0, cacheRowCount())
+        } finally {
+            release.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    private fun service(delegate: RelationService): CachedRelationService =
+        CachedRelationService(delegate, cacheStore, properties, resourceParser, clock, transactionManager)
 
     private fun cacheRowCount(): Int =
         cacheRepository.count().toInt()
@@ -130,6 +178,17 @@ class CachedRelationServiceTests(
             tenantRole = RelationRole.OWNER,
             events = listOf(EventMembership(eventId, RelationRole.STAFF)),
         )
+
+    private inner class BlockingRelationService(
+        private val entered: CountDownLatch,
+        private val release: CountDownLatch,
+    ) : RelationService {
+        override fun getMembership(tenantId: String, userId: String): TenantMembership {
+            entered.countDown()
+            assertTrue(release.await(10, TimeUnit.SECONDS))
+            return sampleMembership(tenantId)
+        }
+    }
 
     private inner class RecordingRelationService(
         private val failure: RuntimeException? = null,

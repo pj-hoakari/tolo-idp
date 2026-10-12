@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import dev.usbharu.toloidp.scope.IdpScopes
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -54,10 +55,7 @@ class RegisteredClientConfigurationSynchronizerTests(
             ),
             client.redirectUris,
         )
-        assertEquals(
-            setOf("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
-            client.scopes,
-        )
+        assertEquals(IdpScopes.SUPPORTED, client.scopes)
         assertEquals(
             setOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC, ClientAuthenticationMethod.CLIENT_SECRET_POST),
             client.clientAuthenticationMethods,

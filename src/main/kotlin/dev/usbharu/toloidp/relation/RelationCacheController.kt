@@ -17,6 +17,7 @@ import org.springframework.web.server.ResponseStatusException
 @RequestMapping("/internal/relation-cache")
 class RelationCacheController(
     private val cacheRepository: RelationMembershipCacheRepository,
+    private val cacheStore: RelationMembershipCacheStore,
     private val resourceParser: ResourceParser,
 ) {
     @DeleteMapping
@@ -29,7 +30,7 @@ class RelationCacheController(
             "target" to "all",
             "cache_count" to cacheCount,
         )
-        cacheRepository.deleteAll()
+        cacheStore.purgeAll()
         log.structuredInfo(
             "Relation membership cache purge completed",
             "event" to "relation_membership_cache_purge_completed",
@@ -57,7 +58,7 @@ class RelationCacheController(
             "tenant_id" to tenantId,
             "subject" to userId,
         )
-        cacheRepository.deleteById(RelationMembershipCacheId(tenantId, userId))
+        cacheStore.purgeOne(tenantId, userId)
         log.structuredInfo(
             "Relation membership cache purge completed",
             "event" to "relation_membership_cache_purge_completed",

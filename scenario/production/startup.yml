@@ -1,0 +1,29 @@
+desc: 本番プロファイルの新規 DB と署名鍵で起動できることを確認する
+labels:
+  - production
+  - startup
+runners:
+  health:
+    endpoint: ${IDP_ISSUER:-http://localhost:8080}
+    notFollowRedirect: true
+    timeout: 2sec
+  idp:
+    endpoint: ${IDP_ISSUER:-http://localhost:8080}
+    notFollowRedirect: true
+    timeout: 3sec
+vars:
+  issuer: ${IDP_ISSUER:-http://localhost:8080}
+steps:
+  wait_for_idp:
+    include: ../helpers/wait-for-idp.yml
+
+  discovery:
+    idp:
+      /.well-known/openid-configuration:
+        get:
+          headers:
+            Accept: application/json
+          body: null
+    test: |
+      current.res.status == 200
+      && current.res.body.issuer == vars.issuer

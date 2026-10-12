@@ -38,11 +38,11 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 
 1. Health と Discovery の issuer、endpoint、対応フローを確認する。
 2. `/api/login` で tenant-a を選択し、HttpOnly のセッション cookie を保持する。
-3. PKCE S256、nonce、state と `openid tenant.read events.read events.write` を指定し、認可コード付きの302を確認する。
+3. PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定し、認可コード付きの302を確認する。
 4. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
 5. 認証付き Introspection で tenant_access の claim を確認する。
 6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
-7. event-2 への write は `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
+7. staff の event-2 への設計・構成の書き込みは `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
 8. 終了時にセッションを破棄する。ログインが200を返した場合は、レスポンスや cookie の検証が失敗しても logout を試行する。
 
 scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
@@ -51,10 +51,16 @@ password、client secret、認可コード、token、セッション cookie は 
 
 ## CI
 
-GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。Java 24 で `./gradlew build` を実行し、同じ Compose と runbook でシナリオを検証します。ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
+GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。JVM／Native と amd64／arm64 の4通りで、Gradle build、`bootBuildImage`、`Dockerfile` によるイメージ作成を実行し、そのイメージに対して同じ runbook を実行します。CI 用 Compose override でアプリのイメージを指定するため、`Dockerfile.jvm` での再ビルドは行いません。ローカルの開発手順は上記のままです。
 
-CI は run ごとの Compose project を使います。成功・失敗を問わず、その project のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+本番プロファイルの起動は `production/startup.yml` で検証します。`docker-compose.prod.yaml` と `docker-compose.scenario.prod.yaml` を使った別の Compose プロジェクトで、新規 DB と一時署名鍵を用意し、Health が UP になることと Discovery の issuer を確認します。seed data は無効のまま実行し、終了時には専用の volume と署名鍵を削除します。
+
+ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
+
+CI は実行 ID・runtime・architecture ごとの Compose project を使います。シナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+
+バージョンタグのリリース CI も同じ再利用ワークフローを呼びます。イメージのビルドと公開については [CI とリリース手順](../CI.md) を参照してください。
 
 失敗時の logout だけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
 
-ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS、Native Image はこのシナリオの対象外です。
+ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS はこのシナリオの対象外です。
