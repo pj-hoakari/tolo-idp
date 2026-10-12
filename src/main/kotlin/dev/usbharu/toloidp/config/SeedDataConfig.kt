@@ -68,8 +68,7 @@ open class SeedDataRunner(
 
         seedDevelopmentClient()
 
-        val existingPolicy = clientPolicyRepository.findByClientId(DEVELOPMENT_CLIENT_ID)
-        if (existingPolicy == null) {
+        if (clientPolicyRepository.findByClientId(DEVELOPMENT_CLIENT_ID) == null) {
             clientPolicyRepository.save(
                 ClientPolicy(
                     clientId = "client-123",
@@ -85,10 +84,6 @@ open class SeedDataRunner(
                     eventAccessTtl = Duration.ofSeconds(600),
                 ),
             )
-        } else if (existingPolicy.allowedScopes != IdpScopes.SUPPORTED) {
-            clientPolicyRepository.save(
-                existingPolicy.copy(allowedScopes = IdpScopes.SUPPORTED).apply { isNewEntity = false },
-            )
         }
     }
 
@@ -100,15 +95,11 @@ open class SeedDataRunner(
         }
 
         val missingRedirectUris = DEVELOPMENT_REDIRECT_URIS.filter { it !in existing.redirectUris }
-        if (missingRedirectUris.isEmpty() && existing.scopes == IdpScopes.SUPPORTED) {
+        if (missingRedirectUris.isEmpty()) {
             return
         }
 
         val builder = RegisteredClient.from(existing)
-            .scopes { scopes ->
-                scopes.clear()
-                scopes.addAll(IdpScopes.SUPPORTED)
-            }
         missingRedirectUris.forEach { builder.redirectUri(it) }
         registeredClientRepository.save(builder.build())
     }

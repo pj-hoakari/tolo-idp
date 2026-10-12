@@ -1064,9 +1064,9 @@ allowed_scopes=openid,tenant.read,tenant.write,tenant.claim,events.read,events.m
 
 ### 22.1 スコープ再設計に伴う移行
 
-開発 seed が有効な場合、`client-123` の RegisteredClient の登録 scope と ClientPolicy の `allowed_scopes` を上記の開発用セットに同期する。既存の secret、TTL、audience、grant type などは保持し、登録済み redirect URI も保持したうえで開発用 URI を補う。他の client は変更しない。seed が無効な場合は作成・更新しない。
+開発 seed が有効な場合、`client-123` の RegisteredClient と ClientPolicy が存在しなければ、上記の開発用スコープで作成する。既存の登録 scope と `allowed_scopes` は更新しない。RegisteredClient は従来どおり、不足する開発用 redirect URI のみ補う。他の client は変更しない。seed が無効な場合は作成・更新しない。
 
-本番 client の自動移行や DB スキーマ変更は行わない。運用側で以下を実施する。
+開発・本番ともに既存 client のスコープの自動移行や DB スキーマ変更は行わない。運用側で以下を実施する。
 
 1. Resource Server と client の要求 scope を新しいスコープ用途に合わせて更新する。
 2. 対象 client の `oauth2_registered_client.scopes` と `idp_client_policy.allowed_scopes` を両方更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.claim` も利用する client にのみ登録する。

@@ -63,7 +63,7 @@ class SeedDataRunnerTests(
     }
 
     @Test
-    fun synchronizesExistingScopesPreservingClientAndPolicySettings() {
+    fun preservesExistingScopesAndClientAndPolicySettings() {
         runSeed()
         val existingClient = RegisteredClient.from(checkNotNull(registeredClients.findByClientId("client-123")))
             .clientName("Customized development client")
@@ -84,7 +84,7 @@ class SeedDataRunnerTests(
 
         runSeed()
         val updatedClient = checkNotNull(registeredClients.findByClientId("client-123"))
-        assertEquals(expectedScopes, updatedClient.scopes)
+        assertEquals(existingClient.scopes, updatedClient.scopes)
         assertEquals(existingClient.id, updatedClient.id)
         assertEquals(existingClient.clientName, updatedClient.clientName)
         assertEquals(existingClient.clientSecret, updatedClient.clientSecret)
@@ -93,11 +93,11 @@ class SeedDataRunnerTests(
         assertEquals(existingClient.clientAuthenticationMethods, updatedClient.clientAuthenticationMethods)
         assertEquals(existingClient.clientSettings.settings, updatedClient.clientSettings.settings)
         assertEquals(existingClient.tokenSettings.settings, updatedClient.tokenSettings.settings)
-        assertEquals(existingPolicy.copy(allowedScopes = expectedScopes), policies.findByClientId("client-123"))
+        assertEquals(existingPolicy, policies.findByClientId("client-123"))
 
         runSeed()
         assertEquals(1L, policies.count())
-        assertEquals(existingPolicy.copy(allowedScopes = expectedScopes), policies.findByClientId("client-123"))
+        assertEquals(existingPolicy, policies.findByClientId("client-123"))
     }
 
     @Test
@@ -106,6 +106,7 @@ class SeedDataRunnerTests(
         val before = checkNotNull(registeredClients.findByClientId("client-123"))
         registeredClients.save(
             RegisteredClient.from(before)
+                .scopes { it.clear(); it.add("events.write") }
                 .redirectUris { it.clear(); it.add("https://custom.example.com/callback") }
                 .build(),
         )
@@ -113,6 +114,7 @@ class SeedDataRunnerTests(
         runSeed()
         val after = checkNotNull(registeredClients.findByClientId("client-123"))
         assertEquals(before.redirectUris + "https://custom.example.com/callback", after.redirectUris)
+        assertEquals(setOf("events.write"), after.scopes)
     }
 
     @Test
