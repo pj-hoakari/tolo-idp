@@ -9,9 +9,13 @@ import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
+import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.RelationRole
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -318,7 +322,7 @@ class TokenExchangeEndpointTests(
     fun rejectsMultipleScopeParametersAsInvalidRequest() {
         val subjectToken = saveTenantAuthorization()
 
-        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("scope", "events.write"))
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken).param("scope", "events.manage"))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
             .andExpect(jsonPath("$.error_description").doesNotExist())
@@ -337,7 +341,7 @@ class TokenExchangeEndpointTests(
 
     @Test
     fun rejectsOpenIdScopeOnEventAccessExchangeAsInvalidScope() {
-        replaceClient123Policy(allowedScopes = setOf("openid", "tenant.read", "events.read", "events.write"))
+        replaceClient123Policy(allowedScopes = setOf("openid", "tenant.read", "events.read", "events.manage"))
         val subjectToken = saveTenantAuthorization(scopes = setOf("openid", "tenant.read", "events.read"))
 
         mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, scope = "openid events.read"))
@@ -351,7 +355,7 @@ class TokenExchangeEndpointTests(
     fun rejectsScopeExceedingSubjectTokenAsInvalidGrant() {
         val subjectToken = saveTenantAuthorization(scopes = setOf("events.read"))
 
-        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, scope = "events.write"))
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, scope = "events.manage"))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
 
@@ -359,20 +363,124 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
-    fun rejectsWriteScopeForStaffEventMemberAsInvalidScope() {
+    fun rejectsManageScopeForStaffEventMemberAsInvalidScope() {
         val subjectToken = saveTenantAuthorization()
 
         mockMvc.perform(
             tokenExchangeRequest(
                 subjectToken = subjectToken,
                 resource = "https://api.example.com/tenants/tenant-a/events/event-staff",
-                scope = "events.write",
+                scope = "events.manage",
             ),
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_scope"))
 
         assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
+    }
+
+    @ParameterizedTest
+    @CsvSource(
+        "event-1, events.manage",
+        "event-1, events.operate",
+        "event-1, events.report",
+        "event-1, events.read events.manage events.operate events.report",
+        "event-staff, events.operate",
+        "event-staff, events.report",
+        "event-staff, events.read events.operate events.report",
+        "event-1, tenant.read tenant.write",
+        "event-staff, tenant.read",
+    )
+    fun exchangesNewEventAndExistingTenantScopesWithoutShrinking(eventId: String, scope: String) {
+        val subjectToken = saveTenantAuthorization()
+        val result = mockMvc.perform(
+            tokenExchangeRequest(subjectToken, resource = "https://api.example.com/tenants/tenant-a/events/$eventId", scope = scope),
+        )
+            .andExpect(status().isOk)
+            .andReturn()
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        val expectedScopes = scope.split(' ').toSet()
+        assertEquals(expectedScopes, response["scope"].asText().split(' ').toSet())
+        assertEquals(expectedScopes, (jwt.claims["scope"] as String).split(' ').toSet())
+        assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
+        assertEquals(eventId, jwt.claims["event_id"])
+        assertFalse(jwt.claims.containsKey("role"))
+        assertFalse(jwt.claims.containsKey("tenant_role"))
+        assertFalse(jwt.claims.containsKey("event_role"))
+        assertEquals("success", latestAudit()["result"])
+        assertEquals(expectedScopes, (latestAudit()["issued_scope"] as String).split(' ').toSet())
+    }
+
+    @Test
+    fun rejectsTenantWriteForStaffEventMember() {
+        val subjectToken = saveTenantAuthorization()
+        mockMvc.perform(tokenExchangeRequest(subjectToken, resource = "https://api.example.com/tenants/tenant-a/events/event-staff", scope = "tenant.write"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_scope"))
+        assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["events.manage", "events.operate", "events.report"])
+    fun rejectsNewScopeOutsideClientPolicy(scope: String) {
+        replaceClient123Policy(allowedScopes = IdpScopes.SUPPORTED - scope)
+        val subjectToken = saveTenantAuthorization()
+        mockMvc.perform(tokenExchangeRequest(subjectToken, scope = "events.read $scope"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_scope"))
+        assertEquals("scope_not_allowed_for_client", latestAudit()["failure_reason"])
+        assertEquals("failure", latestAudit()["result"])
+        assertEquals("", latestAudit()["issued_scope"])
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["events.manage", "events.operate", "events.report"])
+    fun rejectsNewScopeMissingFromSubjectWithoutConvertingLegacyScope(scope: String) {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("events.read", "events.write"))
+        mockMvc.perform(tokenExchangeRequest(subjectToken, scope = scope))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+        assertEquals("scope_exceeds_subject_token", latestAudit()["failure_reason"])
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["tenant.claim", "tenant.claim events.read"])
+    fun rejectsClaimOnTokenExchangeAsInvalidScope(scope: String) {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.claim"))
+        mockMvc.perform(tokenExchangeRequest(subjectToken, scope = scope))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_scope"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+        assertEquals("scope_not_allowed_for_token_use", latestAudit()["failure_reason"])
+        assertEquals("failure", latestAudit()["result"])
+        assertEquals("", latestAudit()["issued_scope"])
+    }
+
+    @Test
+    fun claimOnlySubjectCannotBeExchangedForEventScopes() {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.claim"))
+        mockMvc.perform(tokenExchangeRequest(subjectToken))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+        assertEquals("scope_exceeds_subject_token", latestAudit()["failure_reason"])
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["events.write", "events.read"])
+    fun rejectsLegacyScopeEvenWhenClientStillAllowsIt(subjectScope: String) {
+        val existing = registeredClientRepository.findByClientId("client-123")!!
+        registeredClientRepository.save(RegisteredClient.from(existing).scope("events.write").build())
+        try {
+            replaceClient123Policy(allowedScopes = IdpScopes.SUPPORTED + "events.write")
+            val subjectToken = saveTenantAuthorization(scopes = setOf(subjectScope))
+            mockMvc.perform(tokenExchangeRequest(subjectToken, scope = "events.write"))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_scope"))
+            assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
+        } finally {
+            registeredClientRepository.save(existing)
+        }
     }
 
     @Test
@@ -606,7 +714,7 @@ class TokenExchangeEndpointTests(
         subjectAudience: Any? = listOf("backend-api"),
         tenantId: String = "tenant-a",
         subjectResource: String? = "https://api.example.com/tenants/$tenantId",
-        scopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
+        scopes: Set<String> = IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_CLAIM,
         jti: String? = "jti-${UUID.randomUUID()}",
     ): String {
         val tokenValue = "subject-token-${UUID.randomUUID()}"
@@ -686,7 +794,7 @@ class TokenExchangeEndpointTests(
         allowedGrantTypes: Set<String> = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
         allowedTransitions: Set<String> = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
         allowedAudiences: Set<String> = setOf("backend-api"),
-        allowedScopes: Set<String> = setOf("tenant.read", "events.read", "events.write"),
+        allowedScopes: Set<String> = IdpScopes.SUPPORTED,
     ) {
         clientPolicyRepository.deleteById("client-123")
         clientPolicyRepository.save(
@@ -724,7 +832,7 @@ class TokenExchangeEndpointTests(
                 allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
                 allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
                 allowedAudiences = setOf("backend-api"),
-                allowedScopes = setOf("tenant.read", "events.read", "events.write"),
+                allowedScopes = IdpScopes.SUPPORTED,
                 tenantAccessTtl = java.time.Duration.ofSeconds(900),
                 eventAccessTtl = java.time.Duration.ofSeconds(600),
             ),
@@ -752,7 +860,7 @@ class TokenExchangeEndpointTests(
                 allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
                 allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
                 allowedAudiences = setOf("backend-api"),
-                allowedScopes = setOf("tenant.read", "events.read", "events.write"),
+                allowedScopes = IdpScopes.SUPPORTED,
                 tenantAccessTtl = java.time.Duration.ofSeconds(900),
                 eventAccessTtl = java.time.Duration.ofSeconds(600),
             ),

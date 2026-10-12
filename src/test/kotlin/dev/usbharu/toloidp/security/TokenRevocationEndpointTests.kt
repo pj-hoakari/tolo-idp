@@ -283,7 +283,7 @@ class TokenRevocationEndpointTests(
             listOf(SimpleGrantedAuthority("ROLE_USER")),
         )
         val issuedAt = expiresAt.minusSeconds(3600)
-        val scopes = setOf("tenant.read", "events.read", "events.write")
+        val scopes = setOf("tenant.read", "events.read", "events.manage")
         val token = OAuth2AccessToken(
             OAuth2AccessToken.TokenType.BEARER,
             tokenValue,
@@ -338,7 +338,7 @@ class TokenRevocationEndpointTests(
                     .redirectUri("http://127.0.0.1:8080/login/oauth2/code/$clientId")
                     .scope("tenant.read")
                     .scope("events.read")
-                    .scope("events.write")
+                    .scope("events.manage")
                     .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
                     .build(),
             )
@@ -354,7 +354,7 @@ class TokenRevocationEndpointTests(
                 ),
                 allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
                 allowedAudiences = setOf("backend-api"),
-                allowedScopes = setOf("tenant.read", "events.read", "events.write"),
+                allowedScopes = setOf("tenant.read", "events.read", "events.manage"),
                 tenantAccessTtl = Duration.ofSeconds(900),
                 eventAccessTtl = Duration.ofSeconds(600),
             ),

@@ -34,7 +34,7 @@ class AuditServiceTests(
                 requestedTokenUse = "event_access",
                 requestedAudience = "backend-api",
                 requestedResource = "https://api.example.com/tenants/tenant-a/events/event-1",
-                requestedScope = listOf("events.read", "events.write"),
+                requestedScope = listOf("events.read", "events.manage"),
                 issuedScope = listOf("events.read"),
                 tenantId = "tenant-a",
                 eventId = "event-1",
@@ -54,7 +54,7 @@ class AuditServiceTests(
         assertEquals("tenant_access", row.sourceTokenUse)
         assertEquals("event_access", row.requestedTokenUse)
         assertEquals("backend-api", row.requestedAudience)
-        assertEquals("events.read events.write", row.requestedScope)
+        assertEquals("events.read events.manage", row.requestedScope)
         assertEquals("events.read", row.issuedScope)
         assertEquals("tenant-a", row.tenantId)
         assertEquals("event-1", row.eventId)
@@ -64,6 +64,6 @@ class AuditServiceTests(
         assertEquals("test-agent", row.userAgent)
         assertEquals("jti-1", row.issuedJti)
         assertContains(row.payload, """"timestamp":"2026-06-01T00:00:00Z"""")
-        assertContains(row.payload, """"requestedScope":["events.read","events.write"]""")
+        assertContains(row.payload, """"requestedScope":["events.read","events.manage"]""")
     }
 }
