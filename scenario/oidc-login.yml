@@ -147,10 +147,13 @@ steps:
       && current.res.body.id_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
       && len(split(current.res.body.scope, " ")) == len(split(vars.scope, " "))
       && all(split(vars.scope, " "), {# in split(current.res.body.scope, " ")})
+
+  read_tenant_token:
+    desc: 成功したレスポンスから tenant_access を取得する
     bind:
-      tenant_access_token: current.res.body.access_token
+      tenant_access_token: steps.tenant_token.res.body.access_token
       # Decode the Base64URL payload; signature verification is covered by Kotlin tests.
-      tenant_access_claims: fromJSON(fromBase64(replace(replace(split(current.res.body.access_token, ".")[1], "-", "+"), "_", "/") + repeat("=", (4 - len(split(current.res.body.access_token, ".")[1]) % 4) % 4)))
+      tenant_access_claims: fromJSON(fromBase64(replace(replace(split(steps.tenant_token.res.body.access_token, ".")[1], "-", "+"), "_", "/") + repeat("=", (4 - len(split(steps.tenant_token.res.body.access_token, ".")[1]) % 4) % 4)))
 
   inspect_tenant_jwt:
     desc: tenant_access の JWT 本体に必須 jti があり、role claim がないことを確認する
