@@ -74,6 +74,7 @@ open class RegisteredClientConfigurationSynchronizer(
         }
         rejectDuplicateClientIds(desired)
         rejectEmptyClientSettings(desired)
+        rejectMissingClientSecrets(desired)
         val existingByClientId = desired.associate { it.clientId to registeredClientRepository.findByClientId(it.clientId) }
         rejectRegistrationIdCollisions(desired, existingByClientId)
 
@@ -160,6 +161,23 @@ open class RegisteredClientConfigurationSynchronizer(
             }
             if (registration.authorizationGrantTypes.isEmpty()) {
                 throw IllegalStateException("Authorization grant types must not be empty.")
+            }
+        }
+    }
+
+    private fun rejectMissingClientSecrets(desired: List<DesiredClient>) {
+        desired.forEach { item ->
+            val registration = item.client.registration
+            if (registration.clientAuthenticationMethods.any { it in SECRET_AUTHENTICATION_METHODS } &&
+                registration.clientSecret.isNullOrBlank()
+            ) {
+                log.structuredWarn(
+                    "Registered client configuration rejected",
+                    "event" to "registered_client_configuration_rejected",
+                    "failure_reason" to "missing_client_secret",
+                    "client_id" to item.clientId,
+                )
+                throw IllegalStateException("Client '${item.clientId}' requires a non-blank client secret.")
             }
         }
     }
@@ -290,5 +308,10 @@ open class RegisteredClientConfigurationSynchronizer(
 
     private companion object {
         val log = LoggerFactory.getLogger(RegisteredClientConfigurationSynchronizer::class.java)
+        val SECRET_AUTHENTICATION_METHODS = setOf(
+            ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
+            ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+            ClientAuthenticationMethod.CLIENT_SECRET_JWT.value,
+        )
     }
 }

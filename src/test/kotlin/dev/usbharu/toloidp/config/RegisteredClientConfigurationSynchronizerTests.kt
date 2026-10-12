@@ -3,6 +3,10 @@ package dev.usbharu.toloidp.config
 import dev.usbharu.toloidp.scope.IdpScopes
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.security.oauth2.server.authorization.autoconfigure.servlet.OAuth2AuthorizationServerProperties
 import org.springframework.boot.test.context.SpringBootTest
@@ -141,6 +145,78 @@ class RegisteredClientConfigurationSynchronizerTests(
         assertEquals("{noop}top-secret", registeredClientRepository.findByClientId("encoded-client")?.clientSecret)
     }
 
+    @ParameterizedTest
+    @MethodSource("missingSecrets")
+    fun rejectsMissingSecretWithoutChangingExistingCredentials(method: String, secret: String?) {
+        synchronizer.synchronize(
+            properties.client + ("secret-client" to configuredClient(
+                clientId = "secret-client",
+                clientSecret = "original-secret",
+                authenticationMethods = setOf(method),
+            )),
+        )
+        val before = checkNotNull(registeredClientRepository.findByClientId("secret-client"))
+
+        assertFailsWith<IllegalStateException> {
+            synchronizer.synchronize(
+                linkedMapOf(
+                    "new-valid-client" to configuredClient(clientId = "new-valid-client"),
+                    "secret-client" to configuredClient(
+                        clientId = "secret-client", clientSecret = secret, authenticationMethods = setOf(method),
+                    ),
+                ),
+            )
+        }
+
+        val after = checkNotNull(registeredClientRepository.findByClientId("secret-client"))
+        assertEquals(before, after)
+        assertTrue(passwordEncoder.matches("original-secret", after.clientSecret))
+        assertNull(registeredClientRepository.findByClientId("new-valid-client"))
+        assertNotNull(registeredClientRepository.findByClientId("client-123"))
+    }
+
+    @ParameterizedTest
+    @MethodSource("missingSecrets")
+    fun rejectsNewSecretBasedClientWithoutSecret(method: String, secret: String?) {
+        assertFailsWith<IllegalStateException> {
+            synchronizer.synchronize(
+                mapOf("invalid-client" to configuredClient(
+                    clientId = "invalid-client", clientSecret = secret, authenticationMethods = setOf(method),
+                )),
+            )
+        }
+
+        assertNull(registeredClientRepository.findByClientId("invalid-client"))
+        assertNotNull(registeredClientRepository.findByClientId("client-123"))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["none", "private_key_jwt"])
+    fun permitsClientsWithoutSecretWhenAuthenticationDoesNotUseIt(method: String) {
+        synchronizer.synchronize(
+            properties.client + ("secretless-client" to configuredClient(
+                clientId = "secretless-client", clientSecret = null, authenticationMethods = setOf(method),
+            )),
+        )
+
+        val client = checkNotNull(registeredClientRepository.findByClientId("secretless-client"))
+        assertNull(client.clientSecret)
+        assertEquals(setOf(ClientAuthenticationMethod(method)), client.clientAuthenticationMethods)
+    }
+
+    @Test
+    fun rejectsMissingSecretEvenWhenAnotherAuthenticationMethodDoesNotNeedIt() {
+        assertFailsWith<IllegalStateException> {
+            synchronizer.synchronize(
+                mapOf("mixed-client" to configuredClient(
+                    clientId = "mixed-client", clientSecret = null,
+                    authenticationMethods = setOf("private_key_jwt", "client_secret_basic"),
+                )),
+            )
+        }
+        assertNull(registeredClientRepository.findByClientId("mixed-client"))
+    }
+
     @Test
     fun deletesConfigurationManagedClientsRemovedFromConfiguration() {
         synchronizer.synchronize(mapOf("temp" to configuredClient(clientId = "removed-client")))
@@ -220,17 +296,26 @@ class RegisteredClientConfigurationSynchronizerTests(
         clientSecret: String? = "secret",
         redirectUris: Set<String> = setOf("http://127.0.0.1:8080/callback"),
         scopes: Set<String> = setOf("openid"),
+        authenticationMethods: Set<String> = setOf("client_secret_basic"),
     ): OAuth2AuthorizationServerProperties.Client {
         val client = OAuth2AuthorizationServerProperties.Client()
         client.registration.clientId = clientId
         client.registration.clientSecret = clientSecret
         client.registration.clientName = clientId
-        client.registration.clientAuthenticationMethods = linkedSetOf("client_secret_basic")
+        client.registration.clientAuthenticationMethods = authenticationMethods.toCollection(linkedSetOf())
         client.registration.authorizationGrantTypes = linkedSetOf("authorization_code")
         client.registration.redirectUris = redirectUris.toCollection(linkedSetOf())
         client.registration.scopes = scopes.toCollection(linkedSetOf())
         client.isRequireProofKey = false
         client.isRequireAuthorizationConsent = false
         return client
+    }
+
+    private companion object {
+        @JvmStatic
+        fun missingSecrets(): List<Arguments> =
+            listOf("client_secret_basic", "client_secret_post", "client_secret_jwt").flatMap { method ->
+                listOf(null, "", " \t ").map { secret -> Arguments.of(method, secret) }
+            }
     }
 }
