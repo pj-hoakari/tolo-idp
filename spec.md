@@ -1053,6 +1053,8 @@ tolo-idp.token.event-access-ttl=10m
 
 RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev / local / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
 
+構成管理クライアントの削除時は、その内部 ID に紐付く保存済み authorization と consent も同一トランザクションで削除する。他のクライアントのデータは変更しない。削除された authorization の token を、認証済みの別クライアントが Introspection した場合は `200 OK` と `{"active": false}` を返す。この削除による JWT の denylist 登録は行わず、Resource Server における自己検証時の失効方針は 17 節に従う。
+
 seed data が有効な場合の開発用デフォルト:
 
 ```text

@@ -99,6 +99,18 @@ open class RegisteredClientConfigurationSynchronizer(
         val configuredClientIds = desired.map { it.clientId }.toSet()
         val deletedClientIds = managedClientIds().filter { it !in configuredClientIds }
         deletedClientIds.forEach { clientId ->
+            // Authorization と consent は RegisteredClient の内部 ID を参照する。
+            // 親行の削除前に整理し、照会時の参照切れや再登録時の同意の引き継ぎを防ぐ。
+            val managedClientIdQuery =
+                "SELECT id FROM oauth2_registered_client WHERE client_id = ? AND configuration_managed = true"
+            jdbcTemplate.update(
+                "DELETE FROM oauth2_authorization WHERE registered_client_id IN ($managedClientIdQuery)",
+                clientId,
+            )
+            jdbcTemplate.update(
+                "DELETE FROM oauth2_authorization_consent WHERE registered_client_id IN ($managedClientIdQuery)",
+                clientId,
+            )
             jdbcTemplate.update(
                 "DELETE FROM oauth2_registered_client WHERE client_id = ? AND configuration_managed = true",
                 clientId,
