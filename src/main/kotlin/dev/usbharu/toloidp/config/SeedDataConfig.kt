@@ -3,6 +3,7 @@ package dev.usbharu.toloidp.config
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.client.ClientType
+import dev.usbharu.toloidp.scope.IdpScopes
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -67,7 +68,7 @@ open class SeedDataRunner(
 
         seedDevelopmentClient()
 
-        if (clientPolicyRepository.findByClientId("client-123") == null) {
+        if (clientPolicyRepository.findByClientId(DEVELOPMENT_CLIENT_ID) == null) {
             clientPolicyRepository.save(
                 ClientPolicy(
                     clientId = "client-123",
@@ -78,7 +79,7 @@ open class SeedDataRunner(
                     ),
                     allowedTransitions = setOf("tenant_access:event_access"),
                     allowedAudiences = setOf("backend-api"),
-                    allowedScopes = setOf("openid", "tenant.read", "tenant.write", "events.read", "events.write"),
+                    allowedScopes = IdpScopes.SUPPORTED,
                     tenantAccessTtl = Duration.ofSeconds(900),
                     eventAccessTtl = Duration.ofSeconds(600),
                 ),
@@ -113,11 +114,7 @@ open class SeedDataRunner(
             .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
             .apply { DEVELOPMENT_REDIRECT_URIS.forEach { redirectUri(it) } }
-            .scope("openid")
-            .scope("tenant.read")
-            .scope("tenant.write")
-            .scope("events.read")
-            .scope("events.write")
+            .scopes { it.addAll(IdpScopes.SUPPORTED) }
             .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
             .tokenSettings(
                 TokenSettings.builder()
