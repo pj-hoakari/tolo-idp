@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import dev.usbharu.toloidp.client.ClientPolicyConfig
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredTrace
@@ -30,12 +31,14 @@ class RegisteredClientSyncConfig {
     @Bean
     fun registeredClientConfigurationSynchronizer(
         properties: OAuth2AuthorizationServerProperties,
+        idpProperties: IdpProperties,
         registeredClientRepository: RegisteredClientRepository,
         passwordEncoder: PasswordEncoder,
         jdbcTemplate: JdbcTemplate,
     ): RegisteredClientConfigurationSynchronizer =
         RegisteredClientConfigurationSynchronizer(
             properties,
+            idpProperties,
             registeredClientRepository,
             passwordEncoder,
             jdbcTemplate,
@@ -49,17 +52,21 @@ class RegisteredClientSyncConfig {
  */
 open class RegisteredClientConfigurationSynchronizer(
     private val properties: OAuth2AuthorizationServerProperties,
+    private val idpProperties: IdpProperties,
     private val registeredClientRepository: RegisteredClientRepository,
     private val passwordEncoder: PasswordEncoder,
     private val jdbcTemplate: JdbcTemplate,
 ) : ApplicationRunner {
     @Transactional
     override fun run(args: ApplicationArguments) {
-        synchronize(properties.client)
+        synchronize(properties.client, idpProperties.clients)
     }
 
     @Transactional
-    open fun synchronize(clients: Map<String, OAuth2AuthorizationServerProperties.Client>) {
+    open fun synchronize(
+        clients: Map<String, OAuth2AuthorizationServerProperties.Client>,
+        policies: Map<String, ClientPolicyConfig>,
+    ) {
         log.structuredTrace(
             "Registered client configuration sync started",
             "event" to "registered_client_configuration_sync_started",
@@ -75,6 +82,21 @@ open class RegisteredClientConfigurationSynchronizer(
         rejectDuplicateClientIds(desired)
         rejectEmptyClientSettings(desired)
         rejectMissingClientSecrets(desired)
+        val clientPolicies = try {
+            require(policies.keys == clients.keys) {
+                "Client registrations and tolo-idp.clients must have exactly the same registration keys."
+            }
+            desired.associate { item ->
+                item.clientId to policies.getValue(item.registrationId).toPolicy(item.clientId, item.client)
+            }
+        } catch (ex: IllegalArgumentException) {
+            log.structuredWarn(
+                "Registered client configuration rejected",
+                "event" to "registered_client_configuration_rejected",
+                "failure_reason" to "invalid_client_policy_configuration",
+            )
+            throw ex
+        }
         val existingByClientId = desired.associate { it.clientId to registeredClientRepository.findByClientId(it.clientId) }
         rejectRegistrationIdCollisions(desired, existingByClientId)
 
@@ -82,7 +104,7 @@ open class RegisteredClientConfigurationSynchronizer(
         var updated = 0
         desired.forEach { item ->
             val existing = existingByClientId[item.clientId]
-            registeredClientRepository.save(toRegisteredClient(item, existing))
+            registeredClientRepository.save(clientPolicies.getValue(item.clientId).toRegisteredClient(toRegisteredClient(item, existing)))
             markConfigurationManaged(item.clientId)
             if (existing == null) {
                 created += 1

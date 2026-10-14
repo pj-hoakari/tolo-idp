@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.config.synchronizeTestClients
 import dev.usbharu.toloidp.config.RegisteredClientConfigurationSynchronizer
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -55,7 +56,7 @@ class TokenIntrospectionClientRemovalTests(
         jdbc.update("DELETE FROM oauth2_authorization")
         jdbc.update("DELETE FROM oauth2_authorization_consent")
         jdbc.update("DELETE FROM oauth2_registered_client")
-        synchronizer.synchronize(properties.client)
+        synchronizer.synchronizeTestClients(properties.client)
     }
 
     @Test
@@ -73,7 +74,7 @@ class TokenIntrospectionClientRemovalTests(
         }
         assertActive("removed-active")
 
-        synchronizer.synchronize(properties.client)
+        synchronizer.synchronizeTestClients(properties.client)
 
         assertNull(clients.findByClientId(removed.clientId))
         assertNull(authorizations.findByToken("removed-active", OAuth2TokenType.ACCESS_TOKEN))
@@ -95,7 +96,7 @@ class TokenIntrospectionClientRemovalTests(
             registration.clientAuthenticationMethods = linkedSetOf("client_secret_basic")
             registration.authorizationGrantTypes = linkedSetOf("client_credentials")
         }
-        synchronizer.synchronize(properties.client + (REGISTRATION_ID to replacement))
+        synchronizer.synchronizeTestClients(properties.client + (REGISTRATION_ID to replacement))
         val newClient = checkNotNull(clients.findByClientId("replacement-client"))
         assertNull(consents.findById(newClient.id, "fixture-user"))
         assertInactive("removed-active")
@@ -112,7 +113,7 @@ class TokenIntrospectionClientRemovalTests(
         try {
             jdbc.update("INSERT INTO deletion_blocker(client_id) VALUES (?)", removed.id)
             assertFailsWith<org.springframework.dao.DataIntegrityViolationException> {
-                synchronizer.synchronize(properties.client)
+                synchronizer.synchronizeTestClients(properties.client)
             }
             assertNotNull(clients.findByClientId(removed.clientId))
             assertNotNull(authorizations.findByToken("rollback-token", OAuth2TokenType.ACCESS_TOKEN))
@@ -133,7 +134,7 @@ class TokenIntrospectionClientRemovalTests(
             registration.clientAuthenticationMethods = linkedSetOf("client_secret_basic")
             registration.authorizationGrantTypes = linkedSetOf("client_credentials")
         }
-        synchronizer.synchronize(properties.client + (REGISTRATION_ID to config))
+        synchronizer.synchronizeTestClients(properties.client + (REGISTRATION_ID to config))
         return checkNotNull(clients.findByClientId(existing.clientId)).also { assertEquals(existing.id, it.id) }
     }
 

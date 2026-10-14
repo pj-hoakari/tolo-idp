@@ -44,6 +44,14 @@ spring:
               access-token-format: self-contained
 
 tolo-idp:
+  clients:
+    client-123:
+      allowed-audiences:
+        - backend-api
+      allowed-token-exchange-transitions:
+        - tenant_access:event_access
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
   issuer: http://localhost:8080
   rate-limit:
     redis:

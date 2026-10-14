@@ -215,7 +215,7 @@ Authorization Server は以下の Token Exchange のみを許可する。
 
 ## 8. client 認可仕様
 
-Authorization Server は `client_id` ごとに以下の設定を持つ。
+Authorization Server は `client_id` ごとに以下の設定を持つ。実行時の正本は JDBC に保存された RegisteredClient とし、独立した ClientPolicy テーブルは使用しない。
 
 ```text
 client_id
@@ -228,7 +228,48 @@ tenant_access_ttl_seconds
 event_access_ttl_seconds
 ```
 
-### 8.1 Token Exchange 許可条件
+### 8.1 設定の保持と構成ファイル
+
+`allowed_grant_types` と `allowed_scopes` は、それぞれ RegisteredClient の `authorizationGrantTypes` と `scopes` を正とする。
+
+`client_type`、`allowed_audiences`、`allowed_token_exchange_transitions` は ClientSettings の `tolo-idp.*` 拡張設定に保存する。構成管理クライアントの `client_type` は認証方式から決める。`none` のみなら public、それ以外は confidential とし、`none` と他の認証方式の混在は拒否する。
+
+`tenant_access_ttl_seconds` は TokenSettings の標準 `accessTokenTimeToLive`、`event_access_ttl_seconds` は `tolo-idp.event-access-ttl-seconds` に保存する。認可処理はこれらを型付きの ClientPolicy ビューで読み取る。拡張設定が不足・不正の場合は token 発行を拒否し、既定値で補わない。
+
+構成管理では、Spring Boot 標準の登録設定と `tolo-idp.clients` を同じ登録キーで対応付ける。登録キーと `client-id` は別の値でもよい。
+
+```yaml
+spring:
+  security:
+    oauth2:
+      authorizationserver:
+        client:
+          web-app:
+            registration:
+              client-id: web-app-client
+              client-secret: ${WEB_APP_CLIENT_SECRET}
+              client-authentication-methods: [client_secret_basic]
+              authorization-grant-types:
+                - authorization_code
+                - urn:ietf:params:oauth:grant-type:token-exchange
+              redirect-uris: [https://app.example.com/callback]
+              scopes: [openid, tenant.read, events.read]
+            require-proof-key: true
+
+tolo-idp:
+  clients:
+    web-app:
+      allowed-audiences: [backend-api]
+      allowed-token-exchange-transitions: ["tenant_access:event_access"]
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
+```
+
+両設定の登録キーは完全に一致させる。`tolo-idp` 配下の未知の設定キーはバインド時に拒否し、誤記を既定値で補わない。独自設定の欠落・登録設定のないキー・空の audience・不正な TTL・未知 scope・未知の交換遷移・public client の Token Exchange・JWT 以外の access token 形式を、DB 更新前に拒否する。TTL は正の整数秒とし、未指定時は tenant 15 分・event 10 分とする。tenant TTL は上記の独自構成を正とし、RegisteredClient の標準 access token TTL に反映する。
+
+同期対象は完成した RegisteredClient 全体とし、標準項目と独自項目を同一トランザクションで保存する。構成管理外クライアントの設定は起動時に変更しない。
+
+### 8.2 Token Exchange 許可条件
 
 Authorization Server は Token Exchange Request に対して以下を検証する。
 
@@ -241,7 +282,7 @@ Authorization Server は Token Exchange Request に対して以下を検証す�
 - requested token_use 遷移が client.allowed_token_exchange_transitions に含まれる
 ```
 
-### 8.2 禁止事項
+### 8.3 禁止事項
 
 ```text
 - public client からの Token Exchange
@@ -1047,8 +1088,8 @@ tolo-idp.relation.connect-timeout=2s
 tolo-idp.relation.read-timeout=3s
 tolo-idp.relation.cache.ttl=5m
 tolo-idp.relation.cache.admin-subjects=[]
-tolo-idp.token.tenant-access-ttl=15m
-tolo-idp.token.event-access-ttl=10m
+tolo-idp.clients.client-123.tenant-access-ttl=15m
+tolo-idp.clients.client-123.event-access-ttl=10m
 ```
 
 RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev / local / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
@@ -1068,14 +1109,18 @@ allowed_audience=backend-api
 allowed_scopes=openid,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
 ```
 
-### 22.1 スコープ再設計に伴う移行
+### 22.1 RegisteredClient 設定の集約
 
-`configuration_managed` が真の RegisteredClient は、起動時に構成ファイルの scope と redirect URI へ合わせる。seed は ClientPolicy が無い場合だけ開発用 `client-123` の policy を作成し、既存の `allowed_scopes` は更新しない。seed は RegisteredClient を作成・更新しない。構成に無く、`configuration_managed` が偽の client は変更しない。
+DB スキーマの V5 で `idp_client_policy` テーブルを削除する。旧データからの移行・旧設定の読み替え・旧テーブルへのフォールバックは行わない。構成管理クライアントは、8.1 の新しい設定を用意してから起動する。構成管理外クライアントは、登録時に標準設定と独自設定を備えた RegisteredClient として保存する。
+
+### 22.2 スコープ再設計に伴う運用
+
+`configuration_managed` が真の RegisteredClient は、起動時に標準の登録設定と `tolo-idp.clients` の独自設定へ合わせる。seed は開発用 user のみを作成し、RegisteredClient と ClientPolicy ビューを作成・更新しない。構成に無く、`configuration_managed` が偽の client は変更しない。
 
 開発・本番ともに、構成管理外の既存 client に対するスコープの自動移行や、旧 scope の読み替えは行わない。運用側で以下を実施する。
 
 1. Resource Server と client の要求 scope を新しいスコープ用途に合わせて更新する。
-2. 対象 client の `oauth2_registered_client.scopes` と `idp_client_policy.allowed_scopes` を両方更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.claim` も利用する client にのみ登録する。
+2. 対象 client の RegisteredClient の `scopes` を更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.claim` も利用する client にのみ登録する。
 3. 新しい scope を要求して tenant_access token を再取得し、その scope の範囲内で event_access token を要求する。
 
 既発行 JWT と保存済み authorization は変更・一括失効しない。旧 scope を新しい scope として解釈しない。交換元が旧 `events.write` のみを持つ場合、新イベントスコープへの交換は `invalid_grant` とする。交換要求自体に `events.write` が含まれる場合は `invalid_scope` とする。

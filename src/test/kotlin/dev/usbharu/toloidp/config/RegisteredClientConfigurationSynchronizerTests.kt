@@ -42,7 +42,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @BeforeEach
     fun setUp() {
         jdbcTemplate.update("DELETE FROM oauth2_registered_client")
-        synchronizer.synchronize(properties.client)
+        synchronizer.synchronizeTestClients(properties.client)
     }
 
     @Test
@@ -94,7 +94,7 @@ class RegisteredClientConfigurationSynchronizerTests(
                 .build(),
         )
 
-        synchronizer.synchronize(
+        synchronizer.synchronizeTestClients(
             mapOf(
                 "legacy-registration" to configuredClient(
                     clientId = "legacy-client",
@@ -117,17 +117,17 @@ class RegisteredClientConfigurationSynchronizerTests(
 
     @Test
     fun keepsPlaintextSecretHashUntilTheSecretChanges() {
-        synchronizer.synchronize(mapOf("secret-client" to configuredClient(clientId = "secret-client", clientSecret = "plain-secret")))
+        synchronizer.synchronizeTestClients(mapOf("secret-client" to configuredClient(clientId = "secret-client", clientSecret = "plain-secret")))
         val firstSecret = registeredClientRepository.findByClientId("secret-client")?.clientSecret
 
-        synchronizer.synchronize(mapOf("secret-client" to configuredClient(clientId = "secret-client", clientSecret = "plain-secret")))
+        synchronizer.synchronizeTestClients(mapOf("secret-client" to configuredClient(clientId = "secret-client", clientSecret = "plain-secret")))
         val secondSecret = registeredClientRepository.findByClientId("secret-client")?.clientSecret
 
         assertNotNull(firstSecret)
         assertEquals(firstSecret, secondSecret)
         assertTrue(passwordEncoder.matches("plain-secret", secondSecret))
 
-        synchronizer.synchronize(mapOf("secret-client" to configuredClient(clientId = "secret-client", clientSecret = "other-secret")))
+        synchronizer.synchronizeTestClients(mapOf("secret-client" to configuredClient(clientId = "secret-client", clientSecret = "other-secret")))
         val changedSecret = registeredClientRepository.findByClientId("secret-client")?.clientSecret
 
         assertNotNull(changedSecret)
@@ -138,7 +138,7 @@ class RegisteredClientConfigurationSynchronizerTests(
 
     @Test
     fun storesEncodedSecretAsProvided() {
-        synchronizer.synchronize(
+        synchronizer.synchronizeTestClients(
             mapOf("encoded-client" to configuredClient(clientId = "encoded-client", clientSecret = "{noop}top-secret")),
         )
 
@@ -148,7 +148,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @ParameterizedTest
     @MethodSource("missingSecrets")
     fun rejectsMissingSecretWithoutChangingExistingCredentials(method: String, secret: String?) {
-        synchronizer.synchronize(
+        synchronizer.synchronizeTestClients(
             properties.client + ("secret-client" to configuredClient(
                 clientId = "secret-client",
                 clientSecret = "original-secret",
@@ -158,7 +158,7 @@ class RegisteredClientConfigurationSynchronizerTests(
         val before = checkNotNull(registeredClientRepository.findByClientId("secret-client"))
 
         assertFailsWith<IllegalStateException> {
-            synchronizer.synchronize(
+            synchronizer.synchronizeTestClients(
                 linkedMapOf(
                     "new-valid-client" to configuredClient(clientId = "new-valid-client"),
                     "secret-client" to configuredClient(
@@ -179,7 +179,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @MethodSource("missingSecrets")
     fun rejectsNewSecretBasedClientWithoutSecret(method: String, secret: String?) {
         assertFailsWith<IllegalStateException> {
-            synchronizer.synchronize(
+            synchronizer.synchronizeTestClients(
                 mapOf("invalid-client" to configuredClient(
                     clientId = "invalid-client", clientSecret = secret, authenticationMethods = setOf(method),
                 )),
@@ -193,7 +193,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @ParameterizedTest
     @ValueSource(strings = ["none", "private_key_jwt"])
     fun permitsClientsWithoutSecretWhenAuthenticationDoesNotUseIt(method: String) {
-        synchronizer.synchronize(
+        synchronizer.synchronizeTestClients(
             properties.client + ("secretless-client" to configuredClient(
                 clientId = "secretless-client", clientSecret = null, authenticationMethods = setOf(method),
             )),
@@ -207,7 +207,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @Test
     fun rejectsMissingSecretEvenWhenAnotherAuthenticationMethodDoesNotNeedIt() {
         assertFailsWith<IllegalStateException> {
-            synchronizer.synchronize(
+            synchronizer.synchronizeTestClients(
                 mapOf("mixed-client" to configuredClient(
                     clientId = "mixed-client", clientSecret = null,
                     authenticationMethods = setOf("private_key_jwt", "client_secret_basic"),
@@ -219,10 +219,10 @@ class RegisteredClientConfigurationSynchronizerTests(
 
     @Test
     fun deletesConfigurationManagedClientsRemovedFromConfiguration() {
-        synchronizer.synchronize(mapOf("temp" to configuredClient(clientId = "removed-client")))
+        synchronizer.synchronizeTestClients(mapOf("temp" to configuredClient(clientId = "removed-client")))
         assertTrue(isConfigurationManaged("removed-client"))
 
-        synchronizer.synchronize(properties.client)
+        synchronizer.synchronizeTestClients(properties.client)
 
         assertNull(registeredClientRepository.findByClientId("removed-client"))
         assertNotNull(registeredClientRepository.findByClientId("client-123"))
@@ -240,7 +240,7 @@ class RegisteredClientConfigurationSynchronizerTests(
                 .build(),
         )
 
-        synchronizer.synchronize(properties.client)
+        synchronizer.synchronizeTestClients(properties.client)
 
         assertNotNull(registeredClientRepository.findByClientId("runtime-client"))
         assertFalse(isConfigurationManaged("runtime-client"))
@@ -250,7 +250,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @Test
     fun duplicateClientIdIsRejectedWithoutSaving() {
         val failure = assertFailsWith<IllegalStateException> {
-            synchronizer.synchronize(
+            synchronizer.synchronizeTestClients(
                 mapOf(
                     "first" to configuredClient(clientId = "same-client"),
                     "second" to configuredClient(clientId = "same-client"),
@@ -276,7 +276,7 @@ class RegisteredClientConfigurationSynchronizerTests(
         )
 
         assertFailsWith<IllegalStateException> {
-            synchronizer.synchronize(mapOf("taken-id" to configuredClient(clientId = "other-client")))
+            synchronizer.synchronizeTestClients(mapOf("taken-id" to configuredClient(clientId = "other-client")))
         }
 
         assertNull(registeredClientRepository.findByClientId("other-client"))

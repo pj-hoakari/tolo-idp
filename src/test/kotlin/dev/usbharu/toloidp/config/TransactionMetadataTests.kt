@@ -2,7 +2,6 @@ package dev.usbharu.toloidp.config
 
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.audit.TokenAuditEvent
-import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.relation.CachedRelationService
 import dev.usbharu.toloidp.relation.RelationCacheController
 import dev.usbharu.toloidp.relation.RelationMembershipCache
@@ -24,11 +23,6 @@ class TransactionMetadataTests {
 
     @Test
     fun `custom repository reads are marked read only`() {
-        assertReadOnly(
-            ClientPolicyRepository::class.java,
-            "findByClientId",
-            String::class.java,
-        )
         assertReadOnly(
             JtiDenylistRepository::class.java,
             "existsByJtiAndExpiresAtAfter",
@@ -76,6 +70,7 @@ class TransactionMetadataTests {
         assertReadWrite(
             RegisteredClientConfigurationSynchronizer::class.java,
             "synchronize",
+            Map::class.java,
             Map::class.java,
         )
     }

@@ -2,7 +2,8 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.audit.AuditLogRepository
 import dev.usbharu.toloidp.client.ClientPolicy
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.savePolicy
+import dev.usbharu.toloidp.client.clearPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
@@ -52,7 +53,6 @@ class TokenRevocationEndpointTests(
     @Autowired private val authorizationService: OAuth2AuthorizationService,
     @Autowired private val registeredClientRepository: RegisteredClientRepository,
     @Autowired private val passwordEncoder: PasswordEncoder,
-    @Autowired private val clientPolicyRepository: ClientPolicyRepository,
     @Autowired private val jtiDenylistRepository: JtiDenylistRepository,
     @Autowired private val auditLogRepository: AuditLogRepository,
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
@@ -343,8 +343,8 @@ class TokenRevocationEndpointTests(
                     .build(),
             )
         }
-        clientPolicyRepository.deleteById(clientId)
-        clientPolicyRepository.save(
+        registeredClientRepository.clearPolicy(clientId)
+        registeredClientRepository.savePolicy(
             ClientPolicy(
                 clientId = clientId,
                 clientType = clientType,
