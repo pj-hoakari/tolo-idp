@@ -407,7 +407,7 @@ class SecurityConfig {
         jtiDenylistRepository: JtiDenylistRepository,
         auditService: AuditService,
         clock: Clock,
-    ): AuthenticationProvider =
+    ): SpecTokenExchangeAuthenticationProvider =
         SpecTokenExchangeAuthenticationProvider(
             authorizationService,
             tokenGenerator,

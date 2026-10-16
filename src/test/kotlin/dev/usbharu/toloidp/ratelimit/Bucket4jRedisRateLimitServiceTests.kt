@@ -2,17 +2,19 @@ package dev.usbharu.toloidp.ratelimit
 
 import dev.usbharu.toloidp.config.IdpProperties
 import io.github.bucket4j.Bucket
+import io.github.bucket4j.BucketListener
 import io.github.bucket4j.BucketConfiguration
 import io.github.bucket4j.ConsumptionProbe
 import io.github.bucket4j.EstimationProbe
 import io.github.bucket4j.TimeMeter
 import io.github.bucket4j.distributed.BucketProxy
+import io.github.bucket4j.distributed.OptimizationController
+import io.github.bucket4j.distributed.proxy.AsyncProxyManager
+import io.github.bucket4j.distributed.proxy.RemoteBucketBuilder
 import io.github.bucket4j.distributed.proxy.ProxyManager
 import org.junit.jupiter.api.Test
-import org.mockito.AdditionalAnswers.delegatesTo
-import org.mockito.Mockito.mock
-import org.mockito.stubbing.Answer
 import java.time.Duration
+import java.util.Optional
 import java.util.function.Supplier
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -94,14 +96,13 @@ class Bucket4jRedisRateLimitServiceTests {
 
     @Test
     fun consumptionRaceReturnsRejectionEvenWhenEstimationSucceeded() {
-        val bucket = mock(BucketProxy::class.java, Answer { invocation ->
-            when (invocation.method.name) {
-                "estimateAbilityToConsume" -> EstimationProbe.canBeConsumed(1)
-                "tryConsumeAndReturnRemaining" -> ConsumptionProbe.rejected(0, 123, 123)
-                else -> throw UnsupportedOperationException(invocation.method.name)
-            }
-        })
-        val manager = proxyManager(Answer { bucket })
+        val bucket = object : LocalBucketProxy(Bucket.builder().addLimit {
+            it.capacity(1).refillGreedy(1, Duration.ofMinutes(1))
+        }.build()) {
+            override fun estimateAbilityToConsume(tokens: Long): EstimationProbe = EstimationProbe.canBeConsumed(1)
+            override fun tryConsumeAndReturnRemaining(tokens: Long): ConsumptionProbe = ConsumptionProbe.rejected(0, 123, 123)
+        }
+        val manager = proxyManager { _, _ -> bucket }
         val service = Bucket4jRedisRateLimitService(manager, IdpProperties())
 
         assertEquals(
@@ -113,7 +114,7 @@ class Bucket4jRedisRateLimitServiceTests {
     @Test
     fun backendFailureIsReportedAsUnavailableWithItsOriginalCause() {
         val cause = IllegalStateException("backend unavailable")
-        val manager = proxyManager(Answer { throw cause })
+        val manager = proxyManager { _, _ -> throw cause }
         val service = Bucket4jRedisRateLimitService(manager, IdpProperties())
 
         val error = assertFailsWith<RateLimitUnavailableException> {
@@ -136,18 +137,17 @@ class Bucket4jRedisRateLimitServiceTests {
             override fun currentTimeNanos(): Long = nowNanos
             override fun isWallClockBased(): Boolean = false
         }
-        private val manager = proxyManager(Answer { invocation ->
-            check(invocation.method.name == "getProxy")
-            val key = String(invocation.getArgument<ByteArray>(0), Charsets.UTF_8)
-            val configuration = invocation.getArgument<Supplier<BucketConfiguration>>(1).get()
+        private val manager = proxyManager { rawKey, configurationSupplier ->
+            val key = String(rawKey, Charsets.UTF_8)
+            val configuration = configurationSupplier.get()
             proxies.getOrPut(key) {
                 val builder = Bucket.builder().withCustomTimePrecision(timeMeter)
                 configuration.bandwidths.forEach { builder.addLimit(it) }
                 val bucket = builder.build()
                 buckets[key] = bucket
-                mock(BucketProxy::class.java, delegatesTo<BucketProxy>(bucket))
+                LocalBucketProxy(bucket)
             }
-        })
+        }
         val service = Bucket4jRedisRateLimitService(
             manager,
             IdpProperties(
@@ -161,11 +161,26 @@ class Bucket4jRedisRateLimitServiceTests {
         )
     }
 
+    /** Static adapters keep the real bucket behavior available in Native tests. */
+    private open class LocalBucketProxy(private val bucket: Bucket) : BucketProxy, Bucket by bucket {
+        override fun toListenable(listener: BucketListener): BucketProxy = LocalBucketProxy(bucket.toListenable(listener))
+        override fun getOptimizationController(): OptimizationController = throw UnsupportedOperationException()
+    }
+
     companion object {
         private fun limit(capacity: Long) = IdpProperties.RateLimit.Limit(capacity, Duration.ofMinutes(1))
 
-        @Suppress("UNCHECKED_CAST")
-        private fun proxyManager(answer: Answer<Any>): ProxyManager<ByteArray> =
-            mock(ProxyManager::class.java, answer) as ProxyManager<ByteArray>
+        private fun proxyManager(
+            getProxy: (ByteArray, Supplier<BucketConfiguration>) -> BucketProxy,
+        ): ProxyManager<ByteArray> = object : ProxyManager<ByteArray> {
+            override fun getProxy(key: ByteArray, configurationSupplier: Supplier<BucketConfiguration>): BucketProxy =
+                getProxy(key, configurationSupplier)
+
+            override fun builder(): RemoteBucketBuilder<ByteArray> = throw UnsupportedOperationException()
+            override fun getProxyConfiguration(key: ByteArray): Optional<BucketConfiguration> = throw UnsupportedOperationException()
+            override fun removeProxy(key: ByteArray) = throw UnsupportedOperationException()
+            override fun isAsyncModeSupported(): Boolean = false
+            override fun asAsync(): AsyncProxyManager<ByteArray> = throw UnsupportedOperationException()
+        }
     }
 }

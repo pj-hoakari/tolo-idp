@@ -33,6 +33,13 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
         )
         reflection.registerType<SignatureAlgorithm>()
         reflection.registerType<Duration>()
+        // Jackson's Kotlin introspector also inspects concrete collection types.
+        reflection.registerType(
+            emptyList<Any>().javaClass,
+            MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+            MemberCategory.INVOKE_PUBLIC_METHODS,
+            MemberCategory.DECLARED_FIELDS,
+        )
         reflection.registerType<TokenAuditEvent>(
             MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
             MemberCategory.INVOKE_PUBLIC_METHODS,

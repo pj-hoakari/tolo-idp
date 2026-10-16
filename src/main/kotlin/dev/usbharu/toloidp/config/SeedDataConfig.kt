@@ -16,7 +16,7 @@ class SeedDataConfig {
         properties: IdpProperties,
         passwordEncoder: PasswordEncoder,
         userDetailsManager: UserDetailsManager,
-    ): ApplicationRunner =
+    ): SeedDataRunner =
         SeedDataRunner(
             properties,
             passwordEncoder,
