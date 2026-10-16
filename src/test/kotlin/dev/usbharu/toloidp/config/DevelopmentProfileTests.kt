@@ -20,6 +20,24 @@ class DevelopmentProfileTests {
     }
 
     @Test
+    fun localProfileDefinesDevelopmentClient() {
+        val environment = loadProfile("local")
+
+        assertEquals(
+            "client-123",
+            environment.getProperty(
+                "spring.security.oauth2.authorizationserver.client.client-123.registration.client-id",
+            ),
+        )
+        assertEquals(
+            "15m",
+            environment.getProperty(
+                "spring.security.oauth2.authorizationserver.client.client-123.token.access-token-time-to-live",
+            ),
+        )
+    }
+
+    @Test
     fun jvmProfileLoadsSharedDevelopmentSettingsAndHostEndpoints() {
         val environment = loadProfile("dev.jvm")
 
@@ -61,6 +79,18 @@ class DevelopmentProfileTests {
         assertTrue("dev" in environment.activeProfiles)
         assertEquals("http://localhost:18080", environment.getProperty("tolo-idp.issuer"))
         assertEquals("true", environment.getProperty("tolo-idp.seed.enabled"))
+        assertEquals(
+            "client-123",
+            environment.getProperty(
+                "spring.security.oauth2.authorizationserver.client.client-123.registration.client-id",
+            ),
+        )
+        assertEquals(
+            "15m",
+            environment.getProperty(
+                "spring.security.oauth2.authorizationserver.client.client-123.token.access-token-time-to-live",
+            ),
+        )
         assertEquals("true", environment.getProperty("tolo-idp.jwk.allow-ephemeral"))
         assertEquals("org.postgresql.Driver", environment.getProperty("spring.datasource.driver-class-name"))
         assertEquals("classpath:db/postgresql", environment.getProperty("spring.flyway.locations"))

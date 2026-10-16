@@ -6,7 +6,6 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet
 import com.nimbusds.jose.jwk.source.JWKSource
 import com.nimbusds.jose.proc.SecurityContext
 import dev.usbharu.toloidp.audit.AuditService
-import dev.usbharu.toloidp.client.ClientPolicyRepository
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
@@ -154,7 +153,6 @@ class SecurityConfig {
         authorizationService: OAuth2AuthorizationService,
         authorizationConsentService: OAuth2AuthorizationConsentService,
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
-        clientPolicyRepository: ClientPolicyRepository,
         resourceParser: ResourceParser,
         relationService: RelationService,
         scopePolicy: ScopePolicy,
@@ -195,7 +193,6 @@ class SecurityConfig {
                         .forEach {
                             it.setAuthenticationValidator(
                                 TenantAuthorizationValidator(
-                                    clientPolicyRepository,
                                     resourceParser,
                                     relationService,
                                     scopePolicy,
@@ -303,6 +300,7 @@ class SecurityConfig {
 
     private fun registeredClientJsonMapper(): JsonMapper {
         val typeValidatorBuilder = BasicPolymorphicTypeValidator.builder()
+            .allowIfSubType(Long::class.javaObjectType)
             .allowIfSubType("java.util.")
             .allowIfSubType("java.time.")
             .allowIfSubType("org.springframework.security.oauth2.")
@@ -403,18 +401,16 @@ class SecurityConfig {
     fun specTokenExchangeAuthenticationProvider(
         authorizationService: OAuth2AuthorizationService,
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
-        clientPolicyRepository: ClientPolicyRepository,
         resourceParser: ResourceParser,
         relationService: RelationService,
         scopePolicy: ScopePolicy,
         jtiDenylistRepository: JtiDenylistRepository,
         auditService: AuditService,
         clock: Clock,
-    ): AuthenticationProvider =
+    ): SpecTokenExchangeAuthenticationProvider =
         SpecTokenExchangeAuthenticationProvider(
             authorizationService,
             tokenGenerator,
-            clientPolicyRepository,
             resourceParser,
             relationService,
             scopePolicy,
@@ -429,14 +425,12 @@ class SecurityConfig {
     @Bean
     fun specTokenRevocationAuthenticationProvider(
         authorizationService: OAuth2AuthorizationService,
-        clientPolicyRepository: ClientPolicyRepository,
         jtiDenylistRepository: JtiDenylistRepository,
         auditService: AuditService,
         clock: Clock,
     ): AuthenticationProvider =
         SpecTokenRevocationAuthenticationProvider(
             authorizationService,
-            clientPolicyRepository,
             jtiDenylistRepository,
             auditService,
             clock,

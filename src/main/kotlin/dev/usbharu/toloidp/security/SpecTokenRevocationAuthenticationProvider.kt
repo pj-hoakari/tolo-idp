@@ -2,13 +2,14 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.audit.TokenAuditEvent
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.core.AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2AccessToken
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes
@@ -27,7 +28,6 @@ import java.time.Instant
  */
 class SpecTokenRevocationAuthenticationProvider(
     private val authorizationService: OAuth2AuthorizationService,
-    private val clientPolicyRepository: ClientPolicyRepository,
     private val jtiDenylistRepository: JtiDenylistRepository,
     private val auditService: AuditService,
     private val clock: Clock,
@@ -48,9 +48,11 @@ class SpecTokenRevocationAuthenticationProvider(
                 fail(OAuth2ErrorCodes.UNSUPPORTED_TOKEN_TYPE, "unsupported_token_type")
             }
 
-            val policy = clientPolicyRepository.findByClientId(registeredClient.clientId)
+            val policy = ClientPolicy.from(registeredClient)
                 ?: fail(OAuth2ErrorCodes.INVALID_CLIENT, "client_not_allowed")
-            if (policy.clientType != ClientType.CONFIDENTIAL) {
+            if (policy.clientType != ClientType.CONFIDENTIAL ||
+                clientPrincipal.clientAuthenticationMethod == ClientAuthenticationMethod.NONE
+            ) {
                 fail(OAuth2ErrorCodes.INVALID_CLIENT, "client_not_allowed")
             }
 

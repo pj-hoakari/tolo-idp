@@ -1,19 +1,20 @@
 package dev.usbharu.toloidp.config
 
+import dev.usbharu.toloidp.client.ClientPolicyConfig
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.core.io.Resource as SpringResource
 import java.time.Duration
 
-@ConfigurationProperties(prefix = "tolo-idp")
+@ConfigurationProperties(prefix = "tolo-idp", ignoreUnknownFields = false)
 data class IdpProperties(
     val issuer: String = "http://localhost:8080",
     val resource: Resource = Resource(),
     val relation: Relation = Relation(),
-    val token: Token = Token(),
     val seed: Seed = Seed(),
     val jwk: Jwk = Jwk(),
     val rateLimit: RateLimit = RateLimit(),
     val cors: Cors = Cors(),
+    val clients: Map<String, ClientPolicyConfig> = emptyMap(),
 ) {
     data class Cors(
         val allowedOrigins: Set<String> = emptySet(),
@@ -33,11 +34,6 @@ data class IdpProperties(
             val adminSubjects: Set<String> = emptySet(),
         )
     }
-
-    data class Token(
-        val tenantAccessTtl: Duration = Duration.ofMinutes(15),
-        val eventAccessTtl: Duration = Duration.ofMinutes(10),
-    )
 
     data class Seed(
         val enabled: Boolean = false,

@@ -1,6 +1,6 @@
 package dev.usbharu.toloidp.security
 
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
 import dev.usbharu.toloidp.logging.structuredWarn
@@ -27,7 +27,6 @@ import java.util.function.Consumer
  * client policy / tenant resource / audience / relation membership / scope を検証する。
  */
 class TenantAuthorizationValidator(
-    private val clientPolicyRepository: ClientPolicyRepository,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
@@ -42,7 +41,7 @@ class TenantAuthorizationValidator(
         defaultValidator.accept(context)
         val authentication = context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
         val clientId = context.registeredClient.clientId
-        val policy = clientPolicyRepository.findByClientId(clientId)
+        val policy = ClientPolicy.from(context.registeredClient)
             ?: throwAuthorizationError(OAuth2ErrorCodes.INVALID_REQUEST, "client_id")
         log.structuredDebug(
             "Authorization request client policy loaded",
