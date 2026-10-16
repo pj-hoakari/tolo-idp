@@ -103,6 +103,63 @@ class TokenIntrospectionClientRemovalTests(
     }
 
     @Test
+    fun changingClientIdUnderTheSameKeyCleansUpOldTokensAndConsent() {
+        val initial = replacementConfiguration("old-client")
+        synchronizer.synchronizeTestClients(properties.client + (REGISTRATION_ID to initial))
+        val old = checkNotNull(clients.findByClientId("old-client"))
+        assertEquals(REGISTRATION_ID, old.id)
+        val retained = checkNotNull(clients.findByClientId("client-123"))
+        saveAuthorization(old, "renamed-token", Instant.now().plusSeconds(900))
+        saveAuthorization(retained, "retained-token", Instant.now().plusSeconds(900))
+        listOf(old, retained).forEach { client ->
+            consents.save(OAuth2AuthorizationConsent.withId(client.id, "fixture-user").scope("tenant.read").build())
+        }
+        assertActive("renamed-token")
+
+        synchronizer.synchronizeTestClients(properties.client + (REGISTRATION_ID to replacementConfiguration("new-client")))
+
+        assertNull(clients.findByClientId("old-client"))
+        val replacement = checkNotNull(clients.findByClientId("new-client"))
+        assertEquals(REGISTRATION_ID, replacement.id)
+        assertNull(authorizations.findByToken("renamed-token", OAuth2TokenType.ACCESS_TOKEN))
+        assertNull(consents.findById(replacement.id, "fixture-user"))
+        assertInactive("renamed-token")
+        assertNotNull(consents.findById(retained.id, "fixture-user"))
+        assertActive("retained-token")
+    }
+
+    @Test
+    fun failedReplacementRollsBackClientAuthorizationAndConsentDeletion() {
+        synchronizer.synchronizeTestClients(properties.client + (REGISTRATION_ID to replacementConfiguration("old-client")))
+        val old = checkNotNull(clients.findByClientId("old-client"))
+        saveAuthorization(old, "replacement-rollback-token", Instant.now().plusSeconds(900))
+        consents.save(OAuth2AuthorizationConsent.withId(old.id, "fixture-user").scope("tenant.read").build())
+        val invalid = replacementConfiguration("new-client").apply {
+            registration.authorizationGrantTypes = linkedSetOf("authorization_code")
+            // RegisteredClient requires a redirect URI for the authorization code grant.
+            registration.redirectUris = linkedSetOf()
+        }
+
+        assertFailsWith<IllegalArgumentException> {
+            synchronizer.synchronizeTestClients(properties.client + (REGISTRATION_ID to invalid))
+        }
+
+        assertEquals(old, clients.findByClientId("old-client"))
+        assertNull(clients.findByClientId("new-client"))
+        assertNotNull(consents.findById(old.id, "fixture-user"))
+        assertActive("replacement-rollback-token")
+    }
+
+    private fun replacementConfiguration(clientId: String): OAuth2AuthorizationServerProperties.Client =
+        OAuth2AuthorizationServerProperties.Client().apply {
+            registration.clientId = clientId
+            registration.clientSecret = "dummy-secret"
+            registration.clientAuthenticationMethods = linkedSetOf("client_secret_basic")
+            registration.authorizationGrantTypes = linkedSetOf("client_credentials")
+            registration.scopes = linkedSetOf("tenant.read")
+        }
+
+    @Test
     fun deletionFailureRollsBackAuthorizationAndConsentCleanup() {
         val removed = managedClient()
         saveAuthorization(removed, "rollback-token", Instant.now().plusSeconds(900))

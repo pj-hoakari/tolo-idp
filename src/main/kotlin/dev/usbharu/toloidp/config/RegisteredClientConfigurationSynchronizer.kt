@@ -98,29 +98,12 @@ open class RegisteredClientConfigurationSynchronizer(
             throw ex
         }
         val existingByClientId = desired.associate { it.clientId to registeredClientRepository.findByClientId(it.clientId) }
-        rejectRegistrationIdCollisions(desired, existingByClientId)
-
-        var created = 0
-        var updated = 0
-        desired.forEach { item ->
-            val existing = existingByClientId[item.clientId]
-            registeredClientRepository.save(clientPolicies.getValue(item.clientId).toRegisteredClient(toRegisteredClient(item, existing)))
-            markConfigurationManaged(item.clientId)
-            if (existing == null) {
-                created += 1
-            } else {
-                updated += 1
-            }
-            log.structuredDebug(
-                "Registered client configuration applied",
-                "event" to "registered_client_configuration_applied",
-                "client_id" to item.clientId,
-                "action" to if (existing == null) "created" else "updated",
-            )
-        }
-
         val configuredClientIds = desired.map { it.clientId }.toSet()
-        val deletedClientIds = managedClientIds().filter { it !in configuredClientIds }
+        val deletedClientIds = managedClientIds().filter { it !in configuredClientIds }.toSet()
+        rejectRegistrationIdCollisions(desired, existingByClientId, deletedClientIds)
+
+        // Remove obsolete managed clients before reusing their registration keys.
+        // The transaction also rolls back this cleanup if a replacement cannot be saved.
         deletedClientIds.forEach { clientId ->
             // Authorization と consent は RegisteredClient の内部 ID を参照する。
             // 親行の削除前に整理し、照会時の参照切れや再登録時の同意の引き継ぎを防ぐ。
@@ -144,6 +127,26 @@ open class RegisteredClientConfigurationSynchronizer(
                 "client_id" to clientId,
             )
         }
+
+        var created = 0
+        var updated = 0
+        desired.forEach { item ->
+            val existing = existingByClientId[item.clientId]
+            registeredClientRepository.save(clientPolicies.getValue(item.clientId).toRegisteredClient(toRegisteredClient(item, existing)))
+            markConfigurationManaged(item.clientId)
+            if (existing == null) {
+                created += 1
+            } else {
+                updated += 1
+            }
+            log.structuredDebug(
+                "Registered client configuration applied",
+                "event" to "registered_client_configuration_applied",
+                "client_id" to item.clientId,
+                "action" to if (existing == null) "created" else "updated",
+            )
+        }
+
         log.structuredInfo(
             "Registered client configuration synced",
             "event" to "registered_client_configuration_synced",
@@ -207,13 +210,14 @@ open class RegisteredClientConfigurationSynchronizer(
     private fun rejectRegistrationIdCollisions(
         desired: List<DesiredClient>,
         existingByClientId: Map<String, RegisteredClient?>,
+        deletedClientIds: Set<String>,
     ) {
         desired.forEach { item ->
             if (existingByClientId[item.clientId] != null) {
                 return@forEach
             }
             val existingById = registeredClientRepository.findById(item.registrationId) ?: return@forEach
-            if (existingById.clientId == item.clientId) {
+            if (existingById.clientId == item.clientId || existingById.clientId in deletedClientIds) {
                 return@forEach
             }
             log.structuredWarn(

@@ -264,6 +264,40 @@ class RegisteredClientConfigurationSynchronizerTests(
     }
 
     @Test
+    fun replacesClientIdUnderTheSameRegistrationKey() {
+        synchronizer.synchronizeTestClients(properties.client + ("web-app" to configuredClient("old-client")))
+        val old = checkNotNull(registeredClientRepository.findByClientId("old-client"))
+        assertEquals("web-app", old.id)
+
+        val replacement = properties.client + ("web-app" to configuredClient("new-client"))
+        synchronizer.synchronizeTestClients(replacement)
+
+        assertNull(registeredClientRepository.findByClientId("old-client"))
+        val new = checkNotNull(registeredClientRepository.findByClientId("new-client"))
+        assertEquals("web-app", new.id)
+        assertTrue(isConfigurationManaged("new-client"))
+        synchronizer.synchronizeTestClients(replacement)
+        assertEquals(new, registeredClientRepository.findByClientId("new-client"))
+        assertNotNull(registeredClientRepository.findByClientId("client-123"))
+    }
+
+    @Test
+    fun rejectsCollisionWithAManagedClientStillInConfiguration() {
+        synchronizer.synchronizeTestClients(properties.client + ("taken-key" to configuredClient("retained-client")))
+        val before = checkNotNull(registeredClientRepository.findByClientId("retained-client"))
+
+        assertFailsWith<IllegalStateException> {
+            synchronizer.synchronizeTestClients(properties.client + linkedMapOf(
+                "moved-key" to configuredClient("retained-client"),
+                "taken-key" to configuredClient("new-client"),
+            ))
+        }
+
+        assertEquals(before, registeredClientRepository.findByClientId("retained-client"))
+        assertNull(registeredClientRepository.findByClientId("new-client"))
+    }
+
+    @Test
     fun registrationIdCollisionIsRejectedWithoutSaving() {
         registeredClientRepository.save(
             RegisteredClient.withId("taken-id")
