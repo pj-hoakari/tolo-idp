@@ -24,7 +24,7 @@ import java.time.Clock
 import java.time.Instant
 
 /**
- * RFC 7009 の revocation request を、JWT access token の jti denylist 登録として処理する。
+ * RFC 7009 に従い Refresh Token を無効化し、JWT access token を jti denylist に登録する。
  */
 class SpecTokenRevocationAuthenticationProvider(
     private val authorizationService: OAuth2AuthorizationService,
@@ -44,7 +44,7 @@ class SpecTokenRevocationAuthenticationProvider(
 
         try {
             val tokenTypeHint = revocation.tokenTypeHint
-            if (tokenTypeHint != null && tokenTypeHint != OAuth2ParameterNames.ACCESS_TOKEN) {
+            if (tokenTypeHint != null && tokenTypeHint !in setOf(OAuth2ParameterNames.ACCESS_TOKEN, OAuth2ParameterNames.REFRESH_TOKEN)) {
                 fail(OAuth2ErrorCodes.UNSUPPORTED_TOKEN_TYPE, "unsupported_token_type")
             }
 
@@ -56,14 +56,30 @@ class SpecTokenRevocationAuthenticationProvider(
                 fail(OAuth2ErrorCodes.INVALID_CLIENT, "client_not_allowed")
             }
 
-            val authorization = authorizationService.findByToken(revocation.token, OAuth2TokenType.ACCESS_TOKEN)
+            val preferredType = if (tokenTypeHint == OAuth2ParameterNames.REFRESH_TOKEN) {
+                OAuth2TokenType.REFRESH_TOKEN
+            } else {
+                OAuth2TokenType.ACCESS_TOKEN
+            }
+            val fallbackType = if (preferredType == OAuth2TokenType.ACCESS_TOKEN) {
+                OAuth2TokenType.REFRESH_TOKEN
+            } else {
+                OAuth2TokenType.ACCESS_TOKEN
+            }
+            // hint は検索順の指定であり、別の対応済み token 種別への検索を省略しない。
+            val authorization = authorizationService.findByToken(revocation.token, preferredType)
+                ?: authorizationService.findByToken(revocation.token, fallbackType)
                 ?: return success(revocation, audit)
             if (authorization.registeredClientId != registeredClient.id) {
                 fail(OAuth2ErrorCodes.INVALID_CLIENT, "subject_token_client_mismatch")
             }
 
-            val accessToken = authorization.getToken<OAuth2AccessToken>(revocation.token)
-                ?: fail(OAuth2ErrorCodes.INVALID_REQUEST, "token_not_access_token")
+            val refreshToken = authorization.refreshToken?.takeIf { it.token.tokenValue == revocation.token }
+            val accessToken = if (refreshToken != null) {
+                authorization.accessToken
+            } else {
+                authorization.getToken<OAuth2AccessToken>(revocation.token)
+            } ?: fail(OAuth2ErrorCodes.INVALID_REQUEST, "token_not_access_token")
             val claims = accessToken.claims
                 ?: fail(OAuth2ErrorCodes.INVALID_REQUEST, "token_invalid_claims")
             val jti = claims["jti"] as? String
@@ -81,18 +97,25 @@ class SpecTokenRevocationAuthenticationProvider(
             if (expiresAt.isAfter(now)) {
                 saveDenylistEntry(jti, expiresAt)
             }
-            authorizationService.save(OAuth2Authorization.from(authorization).invalidate(accessToken.token).build())
+            val builder = OAuth2Authorization.from(authorization)
+            if (refreshToken != null) {
+                // Spring の invalidate は同じ authorization の access token も無効化する。
+                builder.invalidate(refreshToken.token)
+            } else {
+                builder.invalidate(accessToken.token)
+            }
+            authorizationService.save(builder.build())
 
             return success(
                 revocation,
                 audit.copy(
                     subject = claims["sub"] as? String ?: authorization.principalName,
-                    sourceTokenUse = tokenUse,
+                    sourceTokenUse = if (refreshToken != null) OAuth2ParameterNames.REFRESH_TOKEN else tokenUse,
                     requestedResource = claims["resource"] as? String,
-                    requestedScope = scopeList(claims["scope"]),
+                    requestedScope = if (refreshToken != null) authorization.authorizedScopes.toList() else scopeList(claims["scope"]),
                     tenantId = claims["tenant_id"] as? String,
                     eventId = claims["event_id"] as? String,
-                    issuedJti = jti,
+                    issuedJti = if (refreshToken != null) null else jti,
                 ),
             )
         } catch (ex: SpecRevocationFailure) {

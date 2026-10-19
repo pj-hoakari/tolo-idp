@@ -1,6 +1,7 @@
 package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
 import dev.usbharu.toloidp.logging.structuredWarn
@@ -26,7 +27,7 @@ import java.util.UUID
 /**
  * access token JWT に仕様で定義した claim を追加する customizer。
  *
- * Authorization Code grant では tenant access token、Token Exchange grant では event access
+ * Authorization Code / Refresh Token grant では tenant access token、Token Exchange grant では event access
  * token を生成する。role claim は意図的に入れず、Resource Server が token context と自身の
  * policy から最終認可を行う。
  */
@@ -44,7 +45,7 @@ class ToloJwtCustomizer(
             return
         }
         when (context.authorizationGrantType) {
-            AuthorizationGrantType.AUTHORIZATION_CODE -> customizeTenantAccess(context)
+            AuthorizationGrantType.AUTHORIZATION_CODE, AuthorizationGrantType.REFRESH_TOKEN -> customizeTenantAccess(context)
             AuthorizationGrantType.TOKEN_EXCHANGE -> customizeEventAccess(context)
         }
     }
@@ -59,7 +60,12 @@ class ToloJwtCustomizer(
         )
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throw OAuth2AuthenticationException("invalid_request")
-        if (AuthorizationGrantType.AUTHORIZATION_CODE.value !in policy.allowedGrantTypes) {
+        if (context.authorizationGrantType.value !in policy.allowedGrantTypes) {
+            throw OAuth2AuthenticationException(OAuth2Error("unauthorized_client"))
+        }
+        if (context.authorizationGrantType == AuthorizationGrantType.REFRESH_TOKEN &&
+            policy.clientType != ClientType.CONFIDENTIAL
+        ) {
             throw OAuth2AuthenticationException(OAuth2Error("unauthorized_client"))
         }
         log.structuredDebug(

@@ -64,6 +64,7 @@ import org.springframework.security.oauth2.server.authorization.http.converter.O
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings
 import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.token.JwtGenerator
+import org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.authentication.AuthenticationProvider
@@ -235,6 +236,7 @@ class SecurityConfig {
         Consumer { claims ->
             claims[OAuth2AuthorizationServerMetadataClaimNames.GRANT_TYPES_SUPPORTED] = listOf(
                 AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                AuthorizationGrantType.REFRESH_TOKEN.value,
                 AuthorizationGrantType.TOKEN_EXCHANGE.value,
             )
             claims[OAuth2AuthorizationServerMetadataClaimNames.SCOPES_SUPPORTED] = IdpScopes.SUPPORTED.toList()
@@ -420,7 +422,7 @@ class SecurityConfig {
         )
 
     /**
-     * RFC 7009 revocation endpoint を、JWT access token の jti denylist 登録口として扱う provider。
+     * RFC 7009 endpoint で Refresh Token の無効化と JWT access token の jti denylist 登録を行う。
      */
     @Bean
     fun specTokenRevocationAuthenticationProvider(
@@ -546,7 +548,7 @@ class SecurityConfig {
         OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource)
 
     /**
-     * JWT を発行し、[ToloJwtCustomizer] で tenant / event claim を付与する access token generator。
+     * [ToloJwtCustomizer] で claim を付与する JWT と、Refresh Token を発行する generator。
      */
     @Bean
     fun tokenGenerator(
@@ -555,7 +557,7 @@ class SecurityConfig {
     ): OAuth2TokenGenerator<OAuth2Token> {
         val jwtGenerator = JwtGenerator(jwtEncoder)
         jwtGenerator.setJwtCustomizer(jwtCustomizer)
-        return DelegatingOAuth2TokenGenerator(jwtGenerator)
+        return DelegatingOAuth2TokenGenerator(jwtGenerator, OAuth2RefreshTokenGenerator())
     }
 
     /**

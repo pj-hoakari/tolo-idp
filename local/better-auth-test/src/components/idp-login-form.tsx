@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
-const idpUrl = process.env.NEXT_PUBLIC_TOLO_IDP_URL ?? "http://localhost:8080";
+const idpUrl = process.env.NEXT_PUBLIC_TOLO_IDP_URL ?? "http://localhost:18080";
 
 type LoginResponse = {
   username: string;
@@ -55,10 +55,11 @@ export function IdpLoginForm() {
     setError(null);
     setOidcLoading(true);
     try {
-      await authClient.signIn.social({
+      const response = await authClient.signIn.social({
         provider: "tolo-idp",
         callbackURL: "/dashboard",
       });
+      if (response.error) throw new Error(response.error.message ?? "OIDC sign-in failed");
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : "OIDC sign-in failed");
       setOidcLoading(false);

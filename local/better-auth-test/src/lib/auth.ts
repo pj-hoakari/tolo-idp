@@ -1,10 +1,10 @@
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { genericOAuth } from "better-auth/plugins";
 import Database from "better-sqlite3";
 
-const toloIdpUrl = process.env.TOLO_IDP_URL ?? "http://localhost:8080";
+const toloIdpUrl = process.env.TOLO_IDP_URL ?? "http://localhost:18080";
 
-export const auth = betterAuth({
+const authOptions: BetterAuthOptions = {
   database: new Database("sqlite.db"),
   plugins: [
     genericOAuth({
@@ -19,14 +19,25 @@ export const auth = betterAuth({
           discoveryUrl: `${toloIdpUrl}/.well-known/openid-configuration`,
           scopes: ["openid", "tenant.read", "events.read"],
           pkce: true,
-          authentication: "post",
-          mapProfileToUser: (profile) => ({
-            email: `${String(profile.id)}@tolo-idp.local`,
-            emailVerified: true,
-            name: String(profile.id),
-          }),
+          tokenEndpointAuth: { method: "client_secret_post" },
+          requireIdTokenVerification: true,
+          disableProviderLogout: true,
+          overrideUserInfo: true,
+          authorizationUrlParams: { audience: "backend-api" },
+          mapProfileToUser: (profile) => {
+            if (typeof profile.sub !== "string" || !profile.sub) {
+              throw new Error("OIDC profile is missing sub");
+            }
+            return {
+              email: `${profile.sub}@tolo-idp.local`,
+              emailVerified: false,
+              name: profile.sub,
+            };
+          },
         },
       ],
     }),
   ],
-});
+};
+
+export const auth = betterAuth(authOptions);

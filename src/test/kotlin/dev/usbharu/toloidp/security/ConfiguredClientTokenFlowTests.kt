@@ -7,6 +7,8 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -26,6 +28,8 @@ import java.time.Duration
 import java.time.Instant
 import java.util.Base64
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertFalse
 
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -35,10 +39,12 @@ import kotlin.test.assertEquals
         "spring.security.oauth2.authorizationserver.client.web-app.registration.client-id=configured-web-client",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.client-secret=dummy-web-secret",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.client-authentication-methods=client_secret_basic",
-        "spring.security.oauth2.authorizationserver.client.web-app.registration.authorization-grant-types=authorization_code,urn:ietf:params:oauth:grant-type:token-exchange",
+        "spring.security.oauth2.authorizationserver.client.web-app.registration.authorization-grant-types=authorization_code,refresh_token,urn:ietf:params:oauth:grant-type:token-exchange",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.redirect-uris=https://example.invalid/callback",
-        "spring.security.oauth2.authorizationserver.client.web-app.registration.scopes=openid,tenant.read,events.read",
+        "spring.security.oauth2.authorizationserver.client.web-app.registration.scopes=openid,tenant.read,tenant.write,events.read",
         "spring.security.oauth2.authorizationserver.client.web-app.require-proof-key=true",
+        "spring.security.oauth2.authorizationserver.client.web-app.token.reuse-refresh-tokens=false",
+        "spring.security.oauth2.authorizationserver.client.web-app.token.refresh-token-time-to-live=1h",
         "tolo-idp.clients.web-app.allowed-audiences=configured-api",
         "tolo-idp.clients.web-app.allowed-token-exchange-transitions=tenant_access:event_access",
         "tolo-idp.clients.web-app.tenant-access-ttl=123s",
@@ -113,10 +119,161 @@ class ConfiguredClientTokenFlowTests(
         }
     }
 
-    private fun send(http: HttpClient, path: String, body: String? = null, contentType: String = "application/x-www-form-urlencoded", authenticate: Boolean = false): HttpResponse<String> {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun refreshRotatesWithoutSessionAndPreservesTenantClaims(oidc: Boolean) {
+        seedMembership(RelationRole.OWNER)
+        val http = HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build()
+        http.use {
+            val scope = if (oidc) "openid tenant.read events.read" else "tenant.read events.read"
+            val initial = issueTokens(http, scope)
+            val original = decoder.decode(initial.getValue("access_token") as String)
+            val refresh = initial.getValue("refresh_token") as String
+            assertEquals(oidc, initial.containsKey("id_token"))
+            assertEquals(204, send(http, "/api/logout", "").statusCode())
+            val expanded = refresh(http, refresh, "tenant.write")
+            assertEquals(400, expanded.statusCode())
+            assertEquals("invalid_scope", json(expanded)["error"])
+            val wrongClient = send(http, "/oauth2/token", form(mapOf("grant_type" to "refresh_token", "refresh_token" to refresh)),
+                basicCredentials = "client-123:secret")
+            assertEquals(400, wrongClient.statusCode())
+            assertEquals("invalid_grant", json(wrongClient)["error"])
+            val updated = refresh(http, refresh)
+            assertEquals(200, updated.statusCode())
+            val tokens = json(updated)
+            val rotated = tokens.getValue("refresh_token") as String
+            assertNotEquals(refresh, rotated)
+            assertEquals(oidc, tokens.containsKey("id_token"))
+            if (oidc) {
+                val idToken = decoder.decode(tokens.getValue("id_token") as String)
+                assertEquals(original.subject, idToken.subject)
+                assertEquals(listOf("configured-web-client"), idToken.audience)
+            }
+            val access = decoder.decode(tokens.getValue("access_token") as String)
+            for (claim in listOf("sub", "aud", "client_id", "token_use", "tenant_id", "resource")) {
+                assertEquals(original.claims[claim], access.claims[claim], claim)
+            }
+            assertNotEquals(original.id, access.id)
+            assertEquals(123, Duration.between(access.issuedAt, access.expiresAt).seconds.toInt())
+            assertEquals(scope.split(" ").toSet(), (tokens["scope"] as String).split(" ").toSet())
+            for (claim in listOf("role", "tenant_role", "event_role", "event_id")) assertFalse(access.hasClaim(claim))
+            val reused = refresh(http, refresh)
+            assertEquals(400, reused.statusCode())
+            assertEquals("invalid_grant", json(reused)["error"])
+            val narrowed = refresh(http, rotated, "tenant.read")
+            assertEquals(200, narrowed.statusCode())
+            assertEquals("tenant.read", json(narrowed)["scope"])
+            val next = json(narrowed).getValue("refresh_token") as String
+            // Check actual expiry handling without waiting an hour.
+            jdbc.update("UPDATE oauth2_authorization SET refresh_token_issued_at = ?, refresh_token_expires_at = ? WHERE registered_client_id = ?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(7200)),
+                java.sql.Timestamp.from(Instant.now().minusSeconds(10)), "web-app")
+            val expired = refresh(http, next)
+            assertEquals(400, expired.statusCode())
+            assertEquals("invalid_grant", json(expired)["error"])
+        }
+    }
+
+    @Test
+    fun refreshRechecksCurrentRoleRatherThanReusingPreviouslyGrantedScopes() {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val initial = issueTokens(http, "tenant.write")
+            try {
+                seedMembership(RelationRole.STAFF)
+                val rejected = refresh(http, initial.getValue("refresh_token") as String)
+                assertEquals(400, rejected.statusCode())
+                assertEquals("invalid_scope", json(rejected)["error"])
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["refresh_token", "access_token", ""])
+    fun revokedRefreshTokenCannotRefreshOrExchangeAndIntrospectionIsInactive(hint: String) {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val initial = issueTokens(http, "openid tenant.read events.read")
+            try {
+                val refresh = initial.getValue("refresh_token") as String
+                // Revoke the current token after rotation, rather than just the initial token.
+                val refreshed = refresh(http, refresh)
+                assertEquals(200, refreshed.statusCode())
+                val current = json(refreshed)
+                val currentRefresh = current.getValue("refresh_token") as String
+                val access = current.getValue("access_token") as String
+                val params = mutableMapOf("token" to currentRefresh)
+                if (hint.isNotEmpty()) params["token_type_hint"] = hint
+                val revoked = send(http, "/oauth2/revoke", form(params), authenticate = true)
+                assertEquals(200, revoked.statusCode())
+                assertEquals("", revoked.body())
+                val rejected = refresh(http, currentRefresh)
+                assertEquals(400, rejected.statusCode())
+                assertEquals("invalid_grant", json(rejected)["error"])
+                for (token in listOf(currentRefresh, access)) {
+                    val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to token)), authenticate = true)
+                    assertEquals(200, introspection.statusCode())
+                    assertEquals(mapOf("active" to false), json(introspection))
+                }
+                val exchange = send(http, "/oauth2/token", form(mapOf(
+                    "grant_type" to "urn:ietf:params:oauth:grant-type:token-exchange",
+                    "subject_token" to access, "subject_token_type" to "urn:ietf:params:oauth:token-type:access_token",
+                    "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a/events/event-1",
+                    "scope" to "events.read",
+                )), authenticate = true)
+                assertEquals(400, exchange.statusCode())
+                assertEquals("invalid_grant", json(exchange)["error"])
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
+    private fun seedMembership(role: RelationRole) {
+        memberships.deleteAll()
+        memberships.save(RelationMembershipCache(
+            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+            membership = TenantMembership("tenant-a", role, listOf(EventMembership("event-1", RelationRole.OWNER))),
+            cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
+        ))
+    }
+
+    private fun issueTokens(http: HttpClient, scope: String): Map<String, Any> {
+        assertEquals(200, send(http, "/api/login", body = """{"username":"user-123","password":"password","tenantId":"tenant-a"}""", contentType = "application/json").statusCode())
+        val redirect = "https://example.invalid/callback"
+        val query = form(mapOf(
+            "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
+            "scope" to scope, "audience" to "configured-api", "nonce" to "refresh-test-nonce",
+            "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
+        ))
+        val authorize = send(http, "/oauth2/authorize?$query")
+        assertEquals(302, authorize.statusCode())
+        val location = URI.create(authorize.headers().firstValue("Location").orElseThrow())
+        val params = location.rawQuery.split('&').associate {
+            val pair = it.split('=', limit = 2)
+            pair[0] to URLDecoder.decode(pair[1], Charsets.UTF_8)
+        }
+        val response = send(http, "/oauth2/token", form(mapOf(
+            "grant_type" to "authorization_code", "code" to params.getValue("code"), "redirect_uri" to redirect,
+            "code_verifier" to "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        )), authenticate = true)
+        assertEquals(200, response.statusCode())
+        return json(response)
+    }
+
+    private fun refresh(http: HttpClient, token: String, scope: String? = null): HttpResponse<String> {
+        val params = mutableMapOf("grant_type" to "refresh_token", "refresh_token" to token)
+        if (scope != null) params["scope"] = scope
+        return send(http, "/oauth2/token", form(params), authenticate = true)
+    }
+
+    private fun send(http: HttpClient, path: String, body: String? = null, contentType: String = "application/x-www-form-urlencoded", authenticate: Boolean = false, basicCredentials: String? = null): HttpResponse<String> {
         val builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port$path")).timeout(Duration.ofSeconds(10))
         if (body != null) builder.header("Content-Type", contentType).POST(HttpRequest.BodyPublishers.ofString(body))
-        if (authenticate) builder.header("Authorization", "Basic " + Base64.getEncoder().encodeToString("configured-web-client:dummy-web-secret".toByteArray()))
+        val credentials = basicCredentials ?: if (authenticate) "configured-web-client:dummy-web-secret" else null
+        if (credentials != null) builder.header("Authorization", "Basic " + Base64.getEncoder().encodeToString(credentials.toByteArray()))
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
     }
 
