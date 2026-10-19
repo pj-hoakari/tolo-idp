@@ -37,7 +37,13 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [native, jvm]
     env:
+      IMAGE_RUNTIME: ${{ matrix.runtime }}
+      IMAGE_SUFFIX: ${{ matrix.runtime == 'jvm' && '-jvm' || '' }}
       REPOSITORY: ${{ github.repository }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -48,12 +54,12 @@ jobs:
 
       - name: Resolve image name
         id: image
-        run: echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${REPOSITORY,,}$IMAGE_SUFFIX" >> "$GITHUB_OUTPUT"
 
-      - name: Download tested Native images
+      - name: Download tested application images
         uses: actions/download-artifact@v4
         with:
-          pattern: native-*
+          pattern: ${{ matrix.runtime }}-*
           path: build/ci-images
 
       - name: Set up Docker Buildx
@@ -66,7 +72,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish tested Native images and multi-arch manifest
+      - name: Publish tested images and multi-arch manifest
         env:
           IMAGE: ${{ steps.image.outputs.name }}
         run: |
@@ -74,9 +80,9 @@ jobs:
           run_tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           sources=()
           for arch in amd64 arm64; do
-            docker image load --input "build/ci-images/native-${arch}/image.tar"
+            docker image load --input "build/ci-images/${IMAGE_RUNTIME}-${arch}/image.tar"
             source="$IMAGE:$run_tag-$arch"
-            docker image tag "tolo-idp-ci:native-$arch" "$source"
+            docker image tag "tolo-idp-ci:$IMAGE_RUNTIME-$arch" "$source"
             docker image push "$source"
             digest=$(docker buildx imagetools inspect "$source" --format '{{.Manifest.Digest}}')
             sources+=("$IMAGE@$digest")

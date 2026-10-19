@@ -10,7 +10,7 @@ Spring 設定は `src/main/resources/application.yaml` に集約しています�
 |---|---|---|
 | dev-jvm | `docker-compose.dev-jvm.yaml` | Docker 内でソースから JAR をビルドし、Java 24 で実行 |
 | dev-native | `docker-compose.dev-native.yaml` | Gradle Buildpacks で Native イメージを作成して実行 |
-| production | `docker-compose.production.yaml` | 検証済みの Native イメージを実行 |
+| production | `docker-compose.production.yaml` | 検証済みの Native または JVM イメージを実行 |
 
 開発環境には PostgreSQL・Redis・relation-stub が含まれます。IdP は `http://localhost:18080`、PostgreSQL は `localhost:15432`、Redis は `localhost:16379`、relation-stub は `http://localhost:18081` で利用できます。seed user は `user-123` / `password`、client は `client-123` / `secret` です。
 
@@ -51,11 +51,11 @@ AOT は `production` プロファイルと PostgreSQL を使います。接続�
 
 ### production
 
-公開されるイメージは Native のみです。次の環境変数を設定してください。
+Native は `ghcr.io/pj-hoakari/tolo-idp`、JVM は `ghcr.io/pj-hoakari/tolo-idp-jvm` に公開します。既定は Native で、`TOLO_IDP_IMAGE` に JVM イメージを指定すると同じ本番 Compose で JVM 版を起動できます。次の環境変数を設定してください。
 
 | 環境変数 | 内容 |
 |---|---|
-| `TOLO_IDP_IMAGE` | 使用する Native イメージ。例: `ghcr.io/pj-hoakari/tolo-idp:1.2.3` |
+| `TOLO_IDP_IMAGE` | 使用するイメージ。例: `ghcr.io/pj-hoakari/tolo-idp:1.2.3` または `ghcr.io/pj-hoakari/tolo-idp-jvm:1.2.3` |
 | `TOLO_IDP_POSTGRES_PASSWORD` | PostgreSQL パスワード。必須 |
 | `TOLO_IDP_POSTGRES_USER` | PostgreSQL ユーザー。既定値 `tolo_idp` |
 | `TOLO_IDP_ISSUER` | 外部に公開する issuer URL。必須 |

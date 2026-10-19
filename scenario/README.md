@@ -62,11 +62,11 @@ password、client secret、認可コード、token、セッション cookie は 
 
 GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。JVM／Native と amd64／arm64 の4通りで Gradle build と同じ runbook を実行します。JVM は Dockerfile から、Native は `bootBuildImage` からイメージを作成し、`TOLO_IDP_IMAGE` で Compose に渡します。
 
-Native イメージは `docker-compose.production.yaml` の別プロジェクトでも起動し、`production/startup.yml` で Health と Discovery の issuer を検証します。新規 DB と一時署名鍵を用意し、seed は無効のまま実行します。終了時は CI 専用 volume と署名鍵を削除します。本番 Compose には任意の `scenario` profile として runn が含まれています。
+両 runtime のイメージは `docker-compose.production.yaml` の別プロジェクトでも起動し、`production/startup.yml` で Health と Discovery の issuer を検証します。新規 DB と一時署名鍵を用意し、seed は無効のまま実行します。終了時は CI 専用 volume と署名鍵を削除します。本番 Compose には任意の `scenario` profile として runn が含まれています。
 
 ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
 
-CI は実行 ID・runtime・architecture ごとの Compose project を使います。Native のシナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+CI は実行 ID・runtime・architecture ごとの Compose project を使います。各 runtime のシナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
 
 バージョンタグのリリース CI も同じ再利用ワークフローを呼びます。イメージのビルドと公開については [CI とリリース手順](../CI.md) を参照してください。
 
