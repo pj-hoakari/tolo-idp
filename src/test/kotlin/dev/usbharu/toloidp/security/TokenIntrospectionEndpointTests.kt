@@ -1,7 +1,8 @@
 package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.client.ClientPolicy
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.savePolicy
+import dev.usbharu.toloidp.client.clearPolicy
 import dev.usbharu.toloidp.client.ClientType
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
@@ -38,7 +39,6 @@ class TokenIntrospectionEndpointTests(
     @Autowired private val authorizationService: OAuth2AuthorizationService,
     @Autowired private val registeredClientRepository: RegisteredClientRepository,
     @Autowired private val passwordEncoder: PasswordEncoder,
-    @Autowired private val clientPolicyRepository: ClientPolicyRepository,
     @Autowired private val jdbcClient: JdbcClient,
 ) {
     @BeforeEach
@@ -338,8 +338,8 @@ class TokenIntrospectionEndpointTests(
             )
         }
 
-        clientPolicyRepository.deleteById(PUBLIC_POLICY_CLIENT_ID)
-        clientPolicyRepository.save(
+        registeredClientRepository.clearPolicy(PUBLIC_POLICY_CLIENT_ID)
+        registeredClientRepository.savePolicy(
             ClientPolicy(
                 clientId = PUBLIC_POLICY_CLIENT_ID,
                 clientType = ClientType.PUBLIC,

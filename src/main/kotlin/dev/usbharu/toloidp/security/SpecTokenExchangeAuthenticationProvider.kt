@@ -2,7 +2,7 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.audit.TokenAuditEvent
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredInfo
@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AccessToken
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
@@ -49,7 +50,6 @@ import java.time.Instant
 open class SpecTokenExchangeAuthenticationProvider(
     private val authorizationService: OAuth2AuthorizationService,
     private val tokenGenerator: OAuth2TokenGenerator<out OAuth2Token>,
-    private val clientPolicyRepository: ClientPolicyRepository,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
@@ -91,7 +91,7 @@ open class SpecTokenExchangeAuthenticationProvider(
         )
 
         try {
-            val policy = clientPolicyRepository.findByClientId(registeredClient.clientId)
+            val policy = ClientPolicy.from(registeredClient)
                 ?: fail("invalid_request", "client_not_allowed")
             log.structuredDebug(
                 "Client policy lookup completed",
@@ -101,7 +101,9 @@ open class SpecTokenExchangeAuthenticationProvider(
                 "allowed_audience_count" to policy.allowedAudiences.size,
                 "allowed_scope_count" to policy.allowedScopes.size,
             )
-            if (policy.clientType != ClientType.CONFIDENTIAL) {
+            if (policy.clientType != ClientType.CONFIDENTIAL ||
+                clientPrincipal.clientAuthenticationMethod == ClientAuthenticationMethod.NONE
+            ) {
                 fail("invalid_grant", "client_not_allowed")
             }
             if (AuthorizationGrantType.TOKEN_EXCHANGE.value !in policy.allowedGrantTypes ||

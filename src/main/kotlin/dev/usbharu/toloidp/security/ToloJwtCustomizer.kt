@@ -1,6 +1,6 @@
 package dev.usbharu.toloidp.security
 
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
 import dev.usbharu.toloidp.logging.structuredWarn
@@ -32,7 +32,6 @@ import java.util.UUID
  */
 @Component
 class ToloJwtCustomizer(
-    private val clientPolicyRepository: ClientPolicyRepository,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
@@ -58,7 +57,7 @@ class ToloJwtCustomizer(
             "client_id" to clientId,
             "scope_count" to context.authorizedScopes.size,
         )
-        val policy = clientPolicyRepository.findByClientId(clientId)
+        val policy = ClientPolicy.from(context.registeredClient)
             ?: throw OAuth2AuthenticationException("invalid_request")
         if (AuthorizationGrantType.AUTHORIZATION_CODE.value !in policy.allowedGrantTypes) {
             throw OAuth2AuthenticationException(OAuth2Error("unauthorized_client"))
@@ -166,7 +165,7 @@ class ToloJwtCustomizer(
             "scope_count" to context.authorizedScopes.size,
         )
         val tokenExchange = context.getAuthorizationGrant<OAuth2TokenExchangeAuthenticationToken>()
-        val policy = clientPolicyRepository.findByClientId(context.registeredClient.clientId)
+        val policy = ClientPolicy.from(context.registeredClient)
             ?: throw OAuth2AuthenticationException("invalid_request")
         val resource = tokenExchange.resources.singleOrNull()
             ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))

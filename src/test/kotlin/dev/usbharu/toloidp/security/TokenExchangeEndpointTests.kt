@@ -2,7 +2,8 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.audit.AuditLogRepository
 import dev.usbharu.toloidp.client.ClientPolicy
-import dev.usbharu.toloidp.client.ClientPolicyRepository
+import dev.usbharu.toloidp.client.savePolicy
+import dev.usbharu.toloidp.client.clearPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
@@ -58,7 +59,6 @@ class TokenExchangeEndpointTests(
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
     @Autowired private val auditLogRepository: AuditLogRepository,
     @Autowired private val jtiDenylistRepository: JtiDenylistRepository,
-    @Autowired private val clientPolicyRepository: ClientPolicyRepository,
     @Autowired private val jdbcClient: JdbcClient,
     @Autowired private val jwtDecoder: JwtDecoder,
 ) {
@@ -796,8 +796,8 @@ class TokenExchangeEndpointTests(
         allowedAudiences: Set<String> = setOf("backend-api"),
         allowedScopes: Set<String> = IdpScopes.SUPPORTED,
     ) {
-        clientPolicyRepository.deleteById("client-123")
-        clientPolicyRepository.save(
+        registeredClientRepository.clearPolicy("client-123")
+        registeredClientRepository.savePolicy(
             ClientPolicy(
                 clientId = "client-123",
                 clientType = clientType,
@@ -824,8 +824,8 @@ class TokenExchangeEndpointTests(
                     .build(),
             )
         }
-        clientPolicyRepository.deleteById(PUBLIC_POLICY_CLIENT_ID)
-        clientPolicyRepository.save(
+        registeredClientRepository.clearPolicy(PUBLIC_POLICY_CLIENT_ID)
+        registeredClientRepository.savePolicy(
             ClientPolicy(
                 clientId = PUBLIC_POLICY_CLIENT_ID,
                 clientType = ClientType.PUBLIC,
@@ -852,8 +852,8 @@ class TokenExchangeEndpointTests(
                     .build(),
             )
         }
-        clientPolicyRepository.deleteById(OTHER_CONFIDENTIAL_CLIENT_ID)
-        clientPolicyRepository.save(
+        registeredClientRepository.clearPolicy(OTHER_CONFIDENTIAL_CLIENT_ID)
+        registeredClientRepository.savePolicy(
             ClientPolicy(
                 clientId = OTHER_CONFIDENTIAL_CLIENT_ID,
                 clientType = ClientType.CONFIDENTIAL,
