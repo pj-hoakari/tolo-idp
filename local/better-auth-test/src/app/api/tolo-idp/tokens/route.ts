@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const accounts = await context.internalAdapter.findAccounts(session.user.id);
     const account = accounts.find((candidate) => candidate.providerId === TOLO_IDP_PROVIDER_ID);
     if (!account?.refreshToken) {
-      throw new ToloIdpSessionError(400, "Refresh Token がありません。OIDC でログインし直してください。");
+      throw new ToloIdpSessionError(400, "Refresh token not found. Complete OIDC sign-in again.");
     }
     const previousRefresh = await decryptOAuthToken(account.refreshToken, context);
     if (action === "refresh") {
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
         headers: request.headers,
         body: { accountId: account.id },
       });
-      if (!tokens.accessToken) throw new ToloIdpSessionError(502, "更新レスポンスに Access Token がありません。");
+      if (!tokens.accessToken) throw new ToloIdpSessionError(502, "Refresh response did not include an access token.");
       const saved = (await context.internalAdapter.findAccounts(session.user.id)).find((item) => item.id === account.id);
       const persistedRefresh = saved?.refreshToken ? await decryptOAuthToken(saved.refreshToken, context) : null;
       return NextResponse.json({
