@@ -422,7 +422,7 @@ class SecurityConfig {
         )
 
     /**
-     * RFC 7009 revocation endpoint を、JWT access token の jti denylist 登録口として扱う provider。
+     * RFC 7009 endpoint で Refresh Token の無効化と JWT access token の jti denylist 登録を行う。
      */
     @Bean
     fun specTokenRevocationAuthenticationProvider(

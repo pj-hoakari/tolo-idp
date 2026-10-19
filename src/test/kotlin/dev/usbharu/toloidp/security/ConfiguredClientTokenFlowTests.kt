@@ -190,6 +190,47 @@ class ConfiguredClientTokenFlowTests(
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["refresh_token", "access_token", ""])
+    fun revokedRefreshTokenCannotRefreshOrExchangeAndIntrospectionIsInactive(hint: String) {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val initial = issueTokens(http, "openid tenant.read events.read")
+            try {
+                val refresh = initial.getValue("refresh_token") as String
+                // Revoke the current token after rotation, rather than just the initial token.
+                val refreshed = refresh(http, refresh)
+                assertEquals(200, refreshed.statusCode())
+                val current = json(refreshed)
+                val currentRefresh = current.getValue("refresh_token") as String
+                val access = current.getValue("access_token") as String
+                val params = mutableMapOf("token" to currentRefresh)
+                if (hint.isNotEmpty()) params["token_type_hint"] = hint
+                val revoked = send(http, "/oauth2/revoke", form(params), authenticate = true)
+                assertEquals(200, revoked.statusCode())
+                assertEquals("", revoked.body())
+                val rejected = refresh(http, currentRefresh)
+                assertEquals(400, rejected.statusCode())
+                assertEquals("invalid_grant", json(rejected)["error"])
+                for (token in listOf(currentRefresh, access)) {
+                    val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to token)), authenticate = true)
+                    assertEquals(200, introspection.statusCode())
+                    assertEquals(mapOf("active" to false), json(introspection))
+                }
+                val exchange = send(http, "/oauth2/token", form(mapOf(
+                    "grant_type" to "urn:ietf:params:oauth:grant-type:token-exchange",
+                    "subject_token" to access, "subject_token_type" to "urn:ietf:params:oauth:token-type:access_token",
+                    "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a/events/event-1",
+                    "scope" to "events.read",
+                )), authenticate = true)
+                assertEquals(400, exchange.statusCode())
+                assertEquals("invalid_grant", json(exchange)["error"])
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
     private fun seedMembership(role: RelationRole) {
         memberships.deleteAll()
         memberships.save(RelationMembershipCache(

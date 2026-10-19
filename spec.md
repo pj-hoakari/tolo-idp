@@ -147,7 +147,7 @@ POST /api/logout
 
 開発用 client は Refresh Token の TTL を1時間、`reuse-refresh-tokens=false` とし、更新成功ごとに新しい Refresh Token を発行する。置き換え済み・期限切れ・未知の Refresh Token は `invalid_grant` とする。旧 token の再利用による token family 全体の失効は行わない。
 
-`offline_access` scope、Refresh Token の revocation、およびログアウトに連動した Refresh Token の失効は現時点では提供しない。既存の access token revocation は17節に従う。Token Exchange では Refresh Token を発行せず、event_access の再取得には有効な tenant_access を使う。
+`offline_access` scope、およびログアウトに連動した Refresh Token の失効は現時点では提供しない。Refresh Token と access token の明示的な revocation は17節に従う。Token Exchange では Refresh Token を発行せず、event_access の再取得には有効な tenant_access を使う。
 
 ### 5.2 event_access token
 
@@ -816,23 +816,27 @@ token=...
 token_type_hint=access_token
 ```
 
-`token_type_hint` は未指定、または `access_token` のみ許可する。
-`refresh_token` など access token 以外の hint は `unsupported_token_type` を返す。
+`token_type_hint` は未指定、`access_token`、`refresh_token` を許可する。それ以外は `unsupported_token_type` を返す。
+hint は検索順の指定とし、指定種別で見つからない場合は、もう一方の対応済み種別も検索する。Authorization Code や ID Token は検索しない。
 
-Revocation 対象は `tenant_access` / `event_access` の JWT access token のみとする。
+Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。
 
 Authorization Server は以下を確認する。
 
 ```text
 - client が認証済みである
 - client が confidential client である
-- token が access token として保存されている場合、発行先 client と revocation 要求 client が一致する
-- token の JWT claim に jti / exp / token_use が存在する
+- 保存済み token の発行先 client と revocation 要求 client が一致する
+- 対象 access token（Refresh Token の場合は同じ authorization の現在の access token）の JWT claim に jti / exp / token_use が存在する
 ```
 
 有効な対象 token の revocation では、Authorization Server は token の `jti` を
 `idp_jti_denylist` に登録し、`expires_at` には token の `exp` を設定する。
 `exp` が現在時刻以前の場合は denylist へ登録しない。
+
+Refresh Token の revocation では保存済み token を無効化し、その後の更新要求を `invalid_grant` とする。同じ authorization に保存された現在の access token も無効化し、有効期限内ならその `jti` を denylist に登録する。access token の revocation だけでは Refresh Token を無効化しない。
+
+別の authorization に保存された event_access、更新前の古い access token、別ログインの token はこの連動失効の対象外とする。ローテーションで置き換え済みの Refresh Token は保存されていないため、未知 token と同じ扱いとし、現在の Refresh Token へ遡及しない。
 
 Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスとする。
 
@@ -844,7 +848,7 @@ Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスと�
 ```
 
 別 client が発行した token の revocation、client 認証不正、public client からの
-revocation、access token 以外の hint は OAuth2 error とする。
+revocation、未対応の hint は OAuth2 error とする。
 
 Revocation endpoint は token 本体、client secret、authorization code、password を
 レスポンスおよびログへ出力してはならない。
@@ -952,7 +956,7 @@ issued_jti
 現行実装では Token Exchange の監査ログを DB の `idp_audit_log` と logger `audit.token` に記録する。
 Token Revocation も同じ `idp_audit_log` と logger `audit.token` に記録する。
 Revocation の場合、`requested_token_use` は `revocation`、`issued_jti` は失効対象の
-`jti` とする。
+`jti` とする。Refresh Token の revocation では `source_token_use=refresh_token`、`issued_jti=null` とし、token 本体を含めない。
 
 `request_id`、`source_ip`、`user_agent` は項目として保持するが、現行実装では request からの自動設定は行わない。
 

@@ -15,6 +15,9 @@ import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.NullSource
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -26,9 +29,11 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AccessToken
+import org.springframework.security.oauth2.core.OAuth2RefreshToken
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings
@@ -225,7 +230,7 @@ class TokenRevocationEndpointTests(
 
         mockMvc.perform(
             revocationRequest(token)
-                .param(OAuth2ParameterNames.TOKEN_TYPE_HINT, OAuth2ParameterNames.REFRESH_TOKEN),
+                .param(OAuth2ParameterNames.TOKEN_TYPE_HINT, "id_token"),
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("unsupported_token_type"))
@@ -233,6 +238,96 @@ class TokenRevocationEndpointTests(
 
         assertFalse(jtiDenylistRepository.existsById("unsupported-hint-jti"))
         assertEquals("unsupported_token_type", latestAudit().failureReason)
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = ["refresh_token", "access_token"])
+    fun revokesRefreshTokenAndCurrentAccessTokenWithOptionalOrDifferentHint(hint: String?) {
+        val refresh = "refresh-${UUID.randomUUID()}"
+        val access = saveAuthorization(jti = "refresh-associated-jti", refreshTokenValue = refresh)
+        val unrelatedRefresh = "other-refresh-${UUID.randomUUID()}"
+        val unrelatedAccess = saveAuthorization(jti = "unrelated-jti", refreshTokenValue = unrelatedRefresh)
+        val request = revocationRequest(refresh, useClientSecretPost = hint == "access_token")
+        if (hint != null) request.param(OAuth2ParameterNames.TOKEN_TYPE_HINT, hint)
+        mockMvc.perform(request).andExpect(status().isOk).andExpect(content().string(""))
+
+        val saved = authorizationService.findByToken(refresh, OAuth2TokenType.REFRESH_TOKEN)!!
+        assertTrue(saved.refreshToken!!.isInvalidated)
+        assertTrue(saved.accessToken!!.isInvalidated)
+        assertTrue(jtiDenylistRepository.existsById("refresh-associated-jti"))
+        assertFalse(jtiDenylistRepository.existsById("unrelated-jti"))
+        assertTrue(authorizationService.findByToken(unrelatedRefresh, OAuth2TokenType.REFRESH_TOKEN)!!.refreshToken!!.isActive)
+        assertTrue(authorizationService.findByToken(unrelatedAccess, OAuth2TokenType.ACCESS_TOKEN)!!.accessToken!!.isActive)
+        val audit = latestAudit()
+        assertEquals("success", audit.result)
+        assertEquals("user-123", audit.subject)
+        assertEquals("refresh_token", audit.sourceTokenUse)
+        assertEquals(null, audit.issuedJti)
+        assertFalse(audit.payload.contains(refresh))
+        assertFalse(audit.payload.contains(access))
+        mockMvc.perform(tokenExchangeRequest(access))
+            .andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_grant"))
+        mockMvc.perform(revocationRequest(refresh))
+            .andExpect(status().isOk).andExpect(content().string(""))
+    }
+
+    @Test
+    fun accessTokenRevocationDoesNotInvalidateRefreshTokenEvenWithRefreshHint() {
+        val refresh = "refresh-${UUID.randomUUID()}"
+        val access = saveAuthorization(jti = "access-only-jti", refreshTokenValue = refresh)
+        mockMvc.perform(revocationRequest(access).param(OAuth2ParameterNames.TOKEN_TYPE_HINT, "refresh_token"))
+            .andExpect(status().isOk)
+        val saved = authorizationService.findByToken(refresh, OAuth2TokenType.REFRESH_TOKEN)!!
+        assertTrue(saved.refreshToken!!.isActive)
+        assertTrue(saved.accessToken!!.isInvalidated)
+        assertTrue(jtiDenylistRepository.existsById("access-only-jti"))
+    }
+
+    @Test
+    fun refreshRevocationRejectsDifferentClientAndPublicClientWithoutChangingTokens() {
+        val refresh = "refresh-${UUID.randomUUID()}"
+        saveAuthorization(jti = "forbidden-refresh-jti", refreshTokenValue = refresh)
+        for ((clientId, secret) in listOf(
+            OTHER_CONFIDENTIAL_CLIENT_ID to OTHER_CONFIDENTIAL_CLIENT_SECRET,
+            PUBLIC_POLICY_CLIENT_ID to PUBLIC_POLICY_CLIENT_SECRET,
+        )) {
+            mockMvc.perform(revocationRequest(refresh, clientId, secret).param(OAuth2ParameterNames.TOKEN_TYPE_HINT, "refresh_token"))
+                .andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_client"))
+                .andExpect(content().string(not(containsString(refresh))))
+            assertTrue(authorizationService.findByToken(refresh, OAuth2TokenType.REFRESH_TOKEN)!!.refreshToken!!.isActive)
+            assertFalse(jtiDenylistRepository.existsById("forbidden-refresh-jti"))
+            assertEquals("failure", latestAudit().result)
+            assertFalse(latestAudit().payload.contains(refresh))
+        }
+    }
+
+    @Test
+    fun expiredRefreshAndUnknownRefreshReturnOkAndDoNotDiscloseToken() {
+        val refresh = "expired-refresh-${UUID.randomUUID()}"
+        saveAuthorization(
+            jti = "expired-refresh-access-jti", refreshTokenValue = refresh,
+            expiresAt = Instant.now().minusSeconds(60), refreshExpiresAt = Instant.now().minusSeconds(60),
+        )
+        for (token in listOf(refresh, "unknown-refresh-${UUID.randomUUID()}")) {
+            mockMvc.perform(revocationRequest(token).param(OAuth2ParameterNames.TOKEN_TYPE_HINT, "refresh_token"))
+                .andExpect(status().isOk).andExpect(content().string(""))
+        }
+        assertTrue(authorizationService.findByToken(refresh, OAuth2TokenType.REFRESH_TOKEN)!!.refreshToken!!.isInvalidated)
+        assertFalse(jtiDenylistRepository.existsById("expired-refresh-access-jti"))
+    }
+
+    @Test
+    fun revokesRefreshTokenWhenAssociatedAccessTokenIsExpired() {
+        val refresh = "refresh-${UUID.randomUUID()}"
+        saveAuthorization(
+            jti = "expired-associated-access-jti", refreshTokenValue = refresh,
+            expiresAt = Instant.now().minusSeconds(60),
+        )
+        mockMvc.perform(revocationRequest(refresh).param(OAuth2ParameterNames.TOKEN_TYPE_HINT, "refresh_token"))
+            .andExpect(status().isOk)
+        assertTrue(authorizationService.findByToken(refresh, OAuth2TokenType.REFRESH_TOKEN)!!.refreshToken!!.isInvalidated)
+        assertFalse(jtiDenylistRepository.existsById("expired-associated-access-jti"))
     }
 
     private fun revocationRequest(
@@ -273,6 +368,8 @@ class TokenRevocationEndpointTests(
         eventId: String? = null,
         jti: String = "jti-${UUID.randomUUID()}",
         expiresAt: Instant = Instant.now().plusSeconds(3600),
+        refreshTokenValue: String? = null,
+        refreshExpiresAt: Instant = Instant.now().plusSeconds(3600),
     ): String {
         val tokenValue = "revocation-token-${UUID.randomUUID()}"
         val registeredClient = registeredClientRepository.findByClientId(clientId)
@@ -317,7 +414,12 @@ class TokenRevocationEndpointTests(
                 metadata[OAuth2Authorization.Token.CLAIMS_METADATA_NAME] = claims
             }
             .build()
-        authorizationService.save(authorization)
+        val saved = if (refreshTokenValue != null) {
+            OAuth2Authorization.from(authorization).refreshToken(
+                OAuth2RefreshToken(refreshTokenValue, refreshExpiresAt.minusSeconds(3600), refreshExpiresAt),
+            ).build()
+        } else authorization
+        authorizationService.save(saved)
         return tokenValue
     }
 
@@ -350,6 +452,7 @@ class TokenRevocationEndpointTests(
                 clientType = clientType,
                 allowedGrantTypes = setOf(
                     AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                    AuthorizationGrantType.REFRESH_TOKEN.value,
                     AuthorizationGrantType.TOKEN_EXCHANGE.value,
                 ),
                 allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),

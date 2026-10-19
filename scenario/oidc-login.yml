@@ -43,6 +43,8 @@ secrets:
   - event_access_token
   - refresh_token
   - rotated_refresh_token
+  - final_refresh_token
+  - final_access_token
   - 'split(event_access_token, ".")[1]'
   - current.res.body.access_token
   - current.res.body.id_token
@@ -387,6 +389,50 @@ steps:
       current.res.status == 200
       && current.res.body.scope == "tenant.read"
       && current.res.body.refresh_token != rotated_refresh_token
+    bind:
+      final_refresh_token: current.res.body.refresh_token
+      final_access_token: current.res.body.access_token
+
+  revoke_refresh_token:
+    desc: Refresh Token を明示的に失効する
+    idp:
+      /oauth2/revoke:
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              token: "{{ final_refresh_token }}"
+              token_type_hint: refresh_token
+    test: current.res.status == 200
+
+  reject_revoked_refresh:
+    desc: 失効済み Refresh Token での更新を拒否する
+    idp:
+      "{{ token_path }}":
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              grant_type: refresh_token
+              refresh_token: "{{ final_refresh_token }}"
+    test: current.res.status == 400 && current.res.body == {"error":"invalid_grant"}
+
+  inspect_revoked_access:
+    desc: 同じ認可の現在の Access Token も失効する
+    idp:
+      "{{ introspection_path }}":
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              token: "{{ final_access_token }}"
+    test: current.res.status == 200 && current.res.body == {"active":false}
 
   logout:
     desc: 作成したセッションを破棄する
