@@ -65,7 +65,7 @@ class RegisteredClientConfigurationSynchronizerTests(
             client.clientAuthenticationMethods,
         )
         assertEquals(
-            setOf(AuthorizationGrantType.AUTHORIZATION_CODE, AuthorizationGrantType.TOKEN_EXCHANGE),
+            setOf(AuthorizationGrantType.AUTHORIZATION_CODE, AuthorizationGrantType.REFRESH_TOKEN, AuthorizationGrantType.TOKEN_EXCHANGE),
             client.authorizationGrantTypes,
         )
         assertEquals(Duration.ofMinutes(15), client.tokenSettings.accessTokenTimeToLive)

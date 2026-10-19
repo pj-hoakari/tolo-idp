@@ -139,6 +139,16 @@ POST /api/logout
 }
 ```
 
+### 5.1.1 Refresh Token
+
+`refresh_token` grant を登録した confidential client には、Authorization Code フローで Refresh Token も発行する。OAuth2 と OIDC の両方を対象とし、更新時のブラウザセッションは不要とする。OIDC の場合は更新レスポンスに ID Token も含める。
+
+更新には発行先 client の認証を必須とする。元の認可リクエストの tenant resource と audience を維持し、client policy、relation membership、要求 scope を再検証する。relation の参照には 10.6 のキャッシュ方針を適用する。scope 省略時は元の認可 scope、指定時は元の scope の部分集合のみ許可する。許可外 scope は `invalid_scope` とし、暗黙に縮小しない。
+
+開発用 client は Refresh Token の TTL を1時間、`reuse-refresh-tokens=false` とし、更新成功ごとに新しい Refresh Token を発行する。置き換え済み・期限切れ・未知の Refresh Token は `invalid_grant` とする。旧 token の再利用による token family 全体の失効は行わない。
+
+`offline_access` scope、Refresh Token の revocation、およびログアウトに連動した Refresh Token の失効は現時点では提供しない。既存の access token revocation は17節に従う。Token Exchange では Refresh Token を発行せず、event_access の再取得には有効な tenant_access を使う。
+
 ### 5.2 event_access token
 
 `event_access` token は、`tenant_access` token から Token Exchange により発行される、特定 event 文脈を持つ JWT access token である。

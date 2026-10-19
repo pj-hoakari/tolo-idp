@@ -41,6 +41,8 @@ secrets:
   - tenant_access_token
   - 'split(tenant_access_token, ".")[1]'
   - event_access_token
+  - refresh_token
+  - rotated_refresh_token
   - 'split(event_access_token, ".")[1]'
   - current.res.body.access_token
   - current.res.body.id_token
@@ -142,6 +144,8 @@ steps:
     test: |
       current.res.status == 200
       && current.res.body.token_type == "Bearer"
+      && type(current.res.body.refresh_token) == "string"
+      && current.res.body.refresh_token != ""
       && current.res.body.expires_in > 0
       && current.res.body.access_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
       && current.res.body.id_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
@@ -151,6 +155,7 @@ steps:
   read_tenant_token:
     desc: 成功したレスポンスから tenant_access を取得する
     bind:
+      refresh_token: steps.tenant_token.res.body.refresh_token
       tenant_access_token: steps.tenant_token.res.body.access_token
       # Decode the Base64URL payload; signature verification is covered by Kotlin tests.
       tenant_access_claims: fromJSON(fromBase64(replace(replace(split(steps.tenant_token.res.body.access_token, ".")[1], "-", "+"), "_", "/") + repeat("=", (4 - len(split(steps.tenant_token.res.body.access_token, ".")[1]) % 4) % 4)))
@@ -327,6 +332,61 @@ steps:
               resource: "{{ vars.event_resource }}"
               scope: events.read
     test: current.res.status == 400 && current.res.body == {"error":"invalid_target"}
+
+  refresh:
+    desc: Refresh Token で tenant_access と ID Token を更新する
+    idp:
+      "{{ token_path }}":
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              grant_type: refresh_token
+              refresh_token: "{{ refresh_token }}"
+    test: |
+      current.res.status == 200
+      && current.res.body.access_token != tenant_access_token
+      && current.res.body.id_token != steps.tenant_token.res.body.id_token
+      && current.res.body.refresh_token != refresh_token
+      && current.res.body.expires_in > 0
+      && len(split(current.res.body.scope, " ")) == len(split(vars.scope, " "))
+      && all(split(vars.scope, " "), {# in split(current.res.body.scope, " ")})
+    bind:
+      rotated_refresh_token: current.res.body.refresh_token
+
+  reject_used_refresh_token:
+    desc: 置き換え済み Refresh Token の再利用を拒否する
+    idp:
+      "{{ token_path }}":
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              grant_type: refresh_token
+              refresh_token: "{{ refresh_token }}"
+    test: current.res.status == 400 && current.res.body == {"error":"invalid_grant"}
+
+  refresh_again:
+    desc: 新しい Refresh Token で次の更新ができる
+    idp:
+      "{{ token_path }}":
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              grant_type: refresh_token
+              refresh_token: "{{ rotated_refresh_token }}"
+              scope: tenant.read
+    test: |
+      current.res.status == 200
+      && current.res.body.scope == "tenant.read"
+      && current.res.body.refresh_token != rotated_refresh_token
 
   logout:
     desc: 作成したセッションを破棄する

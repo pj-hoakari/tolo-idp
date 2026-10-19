@@ -35,6 +35,7 @@ class AuthorizationServerSurfaceTests(
                     "$.grant_types_supported",
                     containsInAnyOrder(
                         AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                        AuthorizationGrantType.REFRESH_TOKEN.value,
                         AuthorizationGrantType.TOKEN_EXCHANGE.value,
                     ),
                 ),
@@ -96,12 +97,12 @@ class AuthorizationServerSurfaceTests(
                     "$.grant_types_supported",
                     containsInAnyOrder(
                         AuthorizationGrantType.AUTHORIZATION_CODE.value,
+                        AuthorizationGrantType.REFRESH_TOKEN.value,
                         AuthorizationGrantType.TOKEN_EXCHANGE.value,
                     ),
                 ),
             )
             .andExpect(jsonPath("$.grant_types_supported", not(hasItem("client_credentials"))))
-            .andExpect(jsonPath("$.grant_types_supported", not(hasItem("refresh_token"))))
             .andExpect(
                 jsonPath(
                     "$.scopes_supported",

@@ -22,6 +22,7 @@ spring:
                 - client_secret_post
               authorization-grant-types:
                 - authorization_code
+                - refresh_token
                 - urn:ietf:params:oauth:grant-type:token-exchange
               redirect-uris:
                 - http://127.0.0.1:8080/login/oauth2/code/client-123
@@ -39,6 +40,8 @@ spring:
             require-proof-key: true
             require-authorization-consent: false
             token:
+              reuse-refresh-tokens: false
+              refresh-token-time-to-live: 1h
               authorization-code-time-to-live: 5m
               access-token-time-to-live: 15m
               access-token-format: self-contained
