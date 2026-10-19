@@ -8,7 +8,7 @@ on:
         type: string
         default: 0.0.1-SNAPSHOT
       export-images:
-        description: Save tested Native images for the release workflow.
+        description: Save tested application images for the release workflow.
         type: boolean
         default: false
 
@@ -110,7 +110,6 @@ jobs:
 
       - name: Prepare production scenario signing key
         id: production-key
-        if: matrix.runtime == 'native'
         run: |
           mkdir -p "$CI_PRODUCTION_KEY_DIRECTORY"
           openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$CI_PRODUCTION_KEY_DIRECTORY/private.pem" 2>/dev/null
@@ -125,30 +124,28 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Start production application
-        if: matrix.runtime == 'native'
         run: >-
           docker compose -p "$COMPOSE_PROJECT_NAME-prod"
           -f docker-compose.production.yaml
           up -d --pull never app
 
       - name: Run production startup scenario
-        if: matrix.runtime == 'native'
         run: >-
           docker compose -p "$COMPOSE_PROJECT_NAME-prod"
           -f docker-compose.production.yaml
           --profile scenario run --rm --no-deps runn
 
-      - name: Save tested Native image
-        if: inputs.export-images && matrix.runtime == 'native'
+      - name: Save tested application image
+        if: inputs.export-images
         run: |
           mkdir -p build/ci-image
           docker image save "$TOLO_IDP_IMAGE" --output build/ci-image/image.tar
 
-      - name: Upload tested Native image
-        if: inputs.export-images && matrix.runtime == 'native'
+      - name: Upload tested application image
+        if: inputs.export-images
         uses: actions/upload-artifact@v4
         with:
-          name: native-${{ matrix.platform.arch }}
+          name: ${{ matrix.runtime }}-${{ matrix.platform.arch }}
           path: build/ci-image/image.tar
           compression-level: 0
           retention-days: 1
