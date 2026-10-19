@@ -28,7 +28,7 @@ export type TokenExchangeError = {
 
 export function getToloIdpConfig(): ToloIdpConfig {
   return {
-    baseUrl: process.env.TOLO_IDP_URL ?? "http://localhost:8080",
+    baseUrl: process.env.TOLO_IDP_URL ?? "http://localhost:18080",
     clientId: process.env.TOLO_IDP_CLIENT_ID ?? "client-123",
     clientSecret: process.env.TOLO_IDP_CLIENT_SECRET ?? "secret",
   };

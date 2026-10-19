@@ -1,93 +1,51 @@
-# tolo-idp better-auth test harness
+# Better Auth から tolo-idp を試す
 
-Local-only test client for OIDC login and Token Exchange against tolo-idp.
+Next.js と Better Auth 1.7.4 のローカル検証アプリです。OIDC ログイン、Token Exchange、Refresh Token の更新・ローテーション・明示的な失効を試せます。
 
-This directory is committed only on the stacked review branch `feature/better-auth-test-harness` (draft PR, not intended to merge into `main`). For day-to-day work, keep it out of git via `.git/info/exclude`.
+## 起動
 
-## Prerequisites
-
-- tolo-idp running with seed enabled
-- relation-stub running (for tenant membership)
-
-## bootRun
+Node.js 24 と Docker を使用します。リポジトリのルートで IdP を起動します。
 
 ```bash
-# terminal 1:
-docker compose -f docker-compose.dev.jvm.yaml up -d
-# terminal 2:
-cd /path/to/tolo-idp
-TOLO_IDP_SEED_ENABLED=true \
-TOLO_IDP_RATE_LIMIT_ENABLED=false \
-TOLO_IDP_ISSUER=http://localhost:8080 \
-./gradlew bootRun --args='--spring.profiles.active=dev.jvm' --rerun-tasks
+docker compose -f docker-compose.dev.native.yaml up -d --build
 ```
 
-`.env.local` defaults to `TOLO_IDP_URL=http://localhost:8080`.
-
-## docker-compose.dev.native
-
-```bash
-docker compose -f docker-compose.dev.native.yaml up --build
-```
-
-Update `.env.local`:
-
-```env
-TOLO_IDP_URL=http://localhost:18080
-NEXT_PUBLIC_TOLO_IDP_URL=http://localhost:18080
-```
-
-## Run this app
+別ターミナルで検証アプリを起動します。
 
 ```bash
 cd local/better-auth-test
-npm install
-npx auth@latest migrate
+cp .env.local.example .env.local # 初回のみ。既存の設定は上書きしない
+npm ci
+npm run db:migrate
 npm run dev
 ```
 
-Open http://localhost:3000 and use:
+[検証画面](http://localhost:3000) を開きます。IdP は `http://localhost:18080`、Better Auth の callback は `http://localhost:3000/api/auth/callback/tolo-idp` です。callback は開発用 `client-123` に登録済みです。
 
-- username: `user-123`
-- password: `password`
-- tenant: `tenant-a`
+`.env.local.example` の認証情報はローカル開発専用です。`.env.local` と `sqlite.db` は Git 管理対象外です。`bootRun` などで IdP のポートを変える場合は `.env.local` の `TOLO_IDP_URL` と `NEXT_PUBLIC_TOLO_IDP_URL` を同じ URL に変更します。
 
-## Phase 1: OIDC login
+## 試す手順
 
-1. Click **Login to IdP**
-2. Click **Continue with OIDC**
+1. `user-123` / `password` / `tenant-a` で **1. Login to IdP** を押します。
+2. **2. Continue with OIDC** を押します。Better Auth が Authorization Code + PKCE、ID Token の署名・issuer・audience・nonce の検証を行い、dashboard に進みます。
+3. **3. Exchange for event_access** を押します。`event-1` / `events.read` / `backend-api` で `event_access` を確認できます。`event-3` は未所属のため拒否されます。
+4. **4. Refresh Token で更新** を押します。`refreshTokenRotated: true`、`refreshTokenSaved: true`、`idTokenIssued: true` と新しい `jti` を確認します。更新には Better Auth の標準 `auth.api.refreshToken` を使用し、ローテーション後の token を Better Auth が保存します。
+5. **IdP セッションを終了** の後、もう一度 Refresh を押します。Better Auth のセッションと Refresh Token は残っているため更新できます。
+6. **5. Refresh Token を revoke** を押します。`revoked: true`、`accessTokenActive: false` を確認します。
+7. もう一度 Refresh を押します。`FAILED_TO_REFRESH_ACCESS_TOKEN` で拒否されれば失効が効いています。
+8. やり直すときは **Better Auth からサインアウトしてログインし直す** を押します。
 
-After OIDC completes, open http://localhost:3000/dashboard.
+Better Auth のサインアウト、IdP セッション終了、Refresh Token の revoke は画面で別々に試せます。自動的な連動は行いません。revoke 後の更新拒否を試すため、失効済み token は検証アプリの保存データに残します。
 
-## Phase 2: Token Exchange
+Refresh Token と client secret はサーバー側だけで使用します。画面には token の存在、ローテーション・保存の結果と JWT claim を表示し、Refresh Token 本体は返しません。業務 scope を追加したい場合は `src/lib/auth.ts` の登録を変更し、OIDC ログインをやり直します。`offline_access` は IdP で未対応のため要求しません。
 
-The dashboard loads a `tenant_access` preview and exposes Step 3.
+## 確認
 
-1. Confirm the preview shows `token_use: tenant_access` and `scope` includes `events.read`
-2. Exchange with:
-   - Event ID: `event-1`
-   - Scope: `events.read`
-   - Audience: `backend-api`
-3. Expect `event_access` claims with `event_id: event-1`
-
-### Scope changes require re-OIDC
-
-If OIDC scopes were expanded after you first signed in, sign out and run Step 2 again. Token Exchange requires the stored `tenant_access` token to already include the requested event scope.
-
-### Expected failure case
-
-- Event ID `event-3` with `user-123` should fail because relation-stub has no event role for that user.
-
-### Debug with curl
-
-After signing in through the browser, reuse the session cookie:
+アプリを起動した状態で実行します。
 
 ```bash
-curl -s http://localhost:3000/api/tolo-idp/tenant-token \
-  -H 'Cookie: better-auth.session_token=...'
-
-curl -s -X POST http://localhost:3000/api/token-exchange \
-  -H 'Cookie: better-auth.session_token=...' \
-  -H 'Content-Type: application/json' \
-  -d '{"eventId":"event-1","scope":"events.read"}'
+npm run typecheck
+npm test
 ```
+
+テストは未ログインの token 操作が `401`、異なる Origin・Origin 省略が `403`、不正な操作が `400` になることを確認します。正常なログイン・更新・revoke は上記の画面手順で確認します。
