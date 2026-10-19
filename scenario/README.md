@@ -7,14 +7,21 @@
 
 リポジトリのルートで実行します。Docker と Compose が必要です。
 
+まず [ルートの起動手順](../README.md) に従って `dev-jvm` または `dev-native` を起動します。
+
 ```bash
-docker compose -f docker-compose.dev.native.yaml up -d --build
-docker compose -f docker-compose.dev.native.yaml --profile scenario run --rm runn
+# JVM: Docker 内でソースからビルドして起動する。
+docker compose -f docker-compose.dev-jvm.yaml up -d --build
+docker compose -f docker-compose.dev-jvm.yaml --profile scenario run --rm --no-deps runn
+
+# Native: 依存サービス → Native ビルド → app の順に起動する。
+docker compose -f docker-compose.dev-native.yaml up -d --wait db redis relation-stub
+./gradlew bootBuildImage
+docker compose -f docker-compose.dev-native.yaml up -d app
+docker compose -f docker-compose.dev-native.yaml --profile scenario run --rm --no-deps runn
 ```
 
-ファイル名は `dev.native` ですが、現在の Compose は `Dockerfile.jvm` で Java 24 の JVM アプリをビルドします。ホストへの Java、GraalVM、runn のインストールや `bootBuildImage` の実行は不要です。
-
-最初のコマンドで IdP、PostgreSQL、Redis、relation-stub を起動します。起動済みの場合は2番目のコマンドだけで再実行できます。IdP の起動待ちは health が成功するまで60回、2秒間隔で試行します。各リクエストの timeout は2秒なので、到達できない場合も有限時間で失敗します。ログインやトークン発行は再試行しません。
+各環境は IdP、PostgreSQL、Redis、relation-stub を起動します。起動済みの場合は runn のコマンドだけで再実行できます。IdP の起動待ちは health が成功するまで60回、2秒間隔で試行します。各リクエストの timeout は2秒なので、到達できない場合も有限時間で失敗します。ログインやトークン発行は再試行しません。
 
 `runn` コンテナは `scenario/` を `/books` に読み取り専用でマウントし、直下の `*.yml` を実行します。`helpers/` は include 専用です。
 
@@ -53,13 +60,13 @@ password、client secret、認可コード、token、セッション cookie は 
 
 ## CI
 
-GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。JVM／Native と amd64／arm64 の4通りで、Gradle build、`bootBuildImage`、`Dockerfile` によるイメージ作成を実行し、そのイメージに対して同じ runbook を実行します。CI 用 Compose override でアプリのイメージを指定するため、`Dockerfile.jvm` での再ビルドは行いません。ローカルの開発手順は上記のままです。
+GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動きます。JVM／Native と amd64／arm64 の4通りで Gradle build と同じ runbook を実行します。JVM は Dockerfile から、Native は `bootBuildImage` からイメージを作成し、`TOLO_IDP_IMAGE` で Compose に渡します。
 
-本番プロファイルの起動は `production/startup.yml` で検証します。`docker-compose.prod.yaml` と `docker-compose.scenario.prod.yaml` を使った別の Compose プロジェクトで、新規 DB と一時署名鍵を用意し、Health が UP になることと Discovery の issuer を確認します。seed data は無効のまま実行し、終了時には専用の volume と署名鍵を削除します。
+Native イメージは `docker-compose.production.yaml` の別プロジェクトでも起動し、`production/startup.yml` で Health と Discovery の issuer を検証します。新規 DB と一時署名鍵を用意し、seed は無効のまま実行します。終了時は CI 専用 volume と署名鍵を削除します。本番 Compose には任意の `scenario` profile として runn が含まれています。
 
 ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
 
-CI は実行 ID・runtime・architecture ごとの Compose project を使います。シナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
+CI は実行 ID・runtime・architecture ごとの Compose project を使います。Native のシナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
 
 バージョンタグのリリース CI も同じ再利用ワークフローを呼びます。イメージのビルドと公開については [CI とリリース手順](../CI.md) を参照してください。
 

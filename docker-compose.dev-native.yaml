@@ -1,9 +1,40 @@
-# Dev dependencies for host bootRun (Spring profile: dev.jvm).
-# Published ports match application-jvm.properties.
+# Native development. Build the image with bootBuildImage before starting app.
 
 name: tolo-idp-dev
 
 services:
+  app:
+    image: ${TOLO_IDP_IMAGE:-tolo-idp:0.0.1-SNAPSHOT}
+    pull_policy: never
+    ports:
+      - "18080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev-native
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      relation-stub:
+        condition: service_started
+    restart: unless-stopped
+
+  runn:
+    image: ghcr.io/k1low/runn:v1.10.0-slim
+    profiles:
+      - scenario
+    # Bypass the image's shell entrypoint so the host rule remains one argument.
+    entrypoint: ["runn"]
+    command: ["run", "--verbose", "--host-rules", "localhost app:8080", "/books/*.yml"]
+    environment:
+      IDP_ISSUER: http://localhost:18080
+    volumes:
+      - ./scenario:/books:ro
+    depends_on:
+      app:
+        condition: service_started
+    restart: "no"
+
   relation-stub:
     image: ghcr.io/pj-hoakari/tolo-relation-stub:latest
     ports:

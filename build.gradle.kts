@@ -81,32 +81,26 @@ tasks.withType<ProcessAot>().configureEach {
     // AOT fixes bean conditions and JDBC mapping metadata at build time. Use the
     // production PostgreSQL setup, with a dedicated local database for processing.
     args(
-        "--spring.profiles.active=prod",
+        "--spring.profiles.active=production",
         "--spring.data.jdbc.dialect=postgresql",
         "--spring.datasource.url=" + providers.gradleProperty("aotDatasourceUrl")
-            .getOrElse("jdbc:postgresql://localhost:5432/tolo_idp"),
+            .getOrElse("jdbc:postgresql://localhost:15432/tolo_idp"),
         "--spring.datasource.username=" + providers.gradleProperty("aotDatasourceUsername").getOrElse("tolo_idp"),
         "--spring.datasource.password=" + providers.gradleProperty("aotDatasourcePassword").getOrElse("tolo_idp"),
     )
 }
 
 tasks.named<BootBuildImage>("bootBuildImage") {
-    // Java 24 is no longer included in the latest builder. Keep the last
-    // compatible Java 24 builder for JVM images; Native uses the current GraalVM.
-    builder.set(
-        if (imageRuntime == "jvm") {
-            "paketobuildpacks/builder-noble-java-tiny:0.0.62@sha256:8b1849c892ea08c5f1e39e5eec46cdcaf4c28c739f8251596fcca134cc399a3f"
-        } else {
-            "paketobuildpacks/builder-noble-java-tiny:latest"
-        },
-    )
-    val imageRepository = "tolo-idp" + if (imageRuntime == "jvm") "-jvm" else ""
-    imageName.set("$imageRepository:${project.version}")
-    environment.put("BP_JVM_VERSION", if (imageRuntime == "native") "25" else "24")
-    environment.put("BP_NATIVE_IMAGE", (imageRuntime == "native").toString())
-    if (imageRuntime == "native") {
-        environment.put("BP_NATIVE_IMAGE_BUILD_ARGUMENTS", "-march=compatibility")
+    // JVM containers are built by Dockerfile. Buildpacks always produces Native.
+    doFirst {
+        require(imageRuntime == "native") { "bootBuildImage requires imageRuntime=native; use Dockerfile for JVM" }
     }
+    builder.set("paketobuildpacks/builder-noble-java-tiny:latest")
+    imageName.set("tolo-idp:${project.version}")
+    environment.put("BP_JVM_VERSION", "25")
+    environment.put("BP_NATIVE_IMAGE", "true")
+    val extraNativeArguments = providers.gradleProperty("nativeImageExtraBuildArguments").getOrElse("")
+    environment.put("BP_NATIVE_IMAGE_BUILD_ARGUMENTS", "-march=compatibility $extraNativeArguments".trim())
 }
 
 kover {

@@ -97,7 +97,7 @@ class RunnCleanupTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         result = subprocess.run([
-            "docker", "compose", "-f", "docker-compose.dev.native.yaml", "--profile", "scenario",
+            "docker", "compose", "-f", "docker-compose.dev-native.yaml", "--profile", "scenario",
             "config", "--format", "json",
         ], cwd=ROOT, capture_output=True, text=True, check=True)
         cls.runn = json.loads(result.stdout)["services"]["runn"]
