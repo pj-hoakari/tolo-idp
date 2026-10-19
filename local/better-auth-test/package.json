@@ -4,7 +4,6 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
     "build": "next build",
     "start": "next start --port 3000"
   },

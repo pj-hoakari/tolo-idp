@@ -37,7 +37,7 @@ The example environment uses `http://localhost:18080` for both IdP URLs. The Bet
 cd local/better-auth-test
 cp .env.local.example .env.local # First run only; keep existing settings.
 npm ci
-npm run db:migrate
+npx auth@latest migrate
 npm run dev
 ```
 
