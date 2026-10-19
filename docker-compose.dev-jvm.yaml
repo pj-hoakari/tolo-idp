@@ -1,4 +1,4 @@
-# Dev stack with IdP in a container (Spring profile: dev.native).
+# JVM development. Docker builds the application from source.
 
 name: tolo-idp-dev
 
@@ -6,12 +6,12 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile.jvm
-    image: tolo-idp-dev-native:local
+      dockerfile: Dockerfile
+    image: ${TOLO_IDP_IMAGE:-tolo-idp-dev-jvm:local}
     ports:
       - "18080:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: dev.native
+      SPRING_PROFILES_ACTIVE: dev-jvm
     depends_on:
       db:
         condition: service_healthy

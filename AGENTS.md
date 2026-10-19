@@ -32,10 +32,10 @@
 ./gradlew build
 ```
 
-開発中にアプリケーションを起動する場合:
+開発環境は `dev-jvm` / `dev-native`、本番環境は `production` です。起動手順は `README.md` を参照してください。JVM 開発環境はホスト側の Gradle 実行なしで起動できます。
 
 ```bash
-./gradlew bootRun
+docker compose -f docker-compose.dev-jvm.yaml up -d --build
 ```
 
 Native Image 関連:
@@ -59,7 +59,7 @@ Native Image 関連:
 - `build.gradle.kts`: Gradle / Spring Boot / Kotlin 設定
 - `settings.gradle.kts`: root project name
 - `src/main/kotlin/dev/usbharu/toloidp/ToloIdpApplication.kt`: Spring Boot entry point
-- `src/main/resources/application.properties`: アプリケーション設定
+- `src/main/resources/application.yaml`: アプリケーション設定
 - `src/test/kotlin/dev/usbharu/toloidp/ToloIdpApplicationTests.kt`: context load test
 
 Kotlin の package root は `dev.usbharu.toloidp` です。新規コードはこの package 配下に配置してください。

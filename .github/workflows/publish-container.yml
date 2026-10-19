@@ -37,14 +37,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: [native, jvm]
     env:
       REPOSITORY: ${{ github.repository }}
-      IMAGE_RUNTIME: ${{ matrix.runtime }}
-      IMAGE_SUFFIX: ${{ matrix.runtime == 'jvm' && '-jvm' || '' }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,12 +48,12 @@ jobs:
 
       - name: Resolve image name
         id: image
-        run: echo "name=ghcr.io/${REPOSITORY,,}$IMAGE_SUFFIX" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - name: Download tested Buildpacks images
+      - name: Download tested Native images
         uses: actions/download-artifact@v4
         with:
-          pattern: buildpacks-${{ matrix.runtime }}-*
+          pattern: native-*
           path: build/ci-images
 
       - name: Set up Docker Buildx
@@ -71,40 +66,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish Buildpacks base manifest
-        id: base
+      - name: Publish tested Native images and multi-arch manifest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${REPOSITORY,,}-buildpacks"
-          run_tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${IMAGE_RUNTIME}"
+          run_tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           sources=()
           for arch in amd64 arm64; do
-            docker image load --input "build/ci-images/buildpacks-${IMAGE_RUNTIME}-${arch}/image.tar"
-            source="$image:$run_tag-$arch"
-            docker image tag "tolo-idp-base:$IMAGE_RUNTIME-$arch" "$source"
+            docker image load --input "build/ci-images/native-${arch}/image.tar"
+            source="$IMAGE:$run_tag-$arch"
+            docker image tag "tolo-idp-ci:native-$arch" "$source"
             docker image push "$source"
             digest=$(docker buildx imagetools inspect "$source" --format '{{.Manifest.Digest}}')
-            sources+=("$image@$digest")
+            sources+=("$IMAGE@$digest")
           done
-          docker buildx imagetools create --tag "$image:$run_tag" "${sources[@]}"
-          digest=$(docker buildx imagetools inspect "$image:$run_tag" --format '{{.Manifest.Digest}}')
-          echo "image=$image@$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare release Dockerfile
-        env:
-          BASE_IMAGE: ${{ steps.base.outputs.image }}
-        run: >-
-          awk -v base="$BASE_IMAGE"
-          '/^ARG BASE_IMAGE=/ { print "ARG BASE_IMAGE=" base; next } { print }'
-          Dockerfile > Dockerfile.release
-
-      - name: Publish final multi-arch image
-        uses: pj-hoakari/actions/publish-image@d619552a3e89628f83a45f57ac80e9e9c9590859
-        with:
-          version: ${{ needs.version.outputs.version }}
-          image: ${{ steps.image.outputs.name }}
-          file: ./Dockerfile.release
-          cache-scope: tolo-idp-${{ matrix.runtime }}
+          tags=(--tag "$IMAGE:$VERSION" --tag "$IMAGE:sha-${GITHUB_SHA:0:7}")
+          if [[ "$VERSION" != *-* ]]; then tags+=(--tag "$IMAGE:latest"); fi
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
 
       - name: Verify published platforms
         shell: bash

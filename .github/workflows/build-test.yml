@@ -8,7 +8,7 @@ on:
         type: string
         default: 0.0.1-SNAPSHOT
       export-images:
-        description: Save tested Buildpacks images for the release workflow.
+        description: Save tested Native images for the release workflow.
         type: boolean
         default: false
 
@@ -31,9 +31,8 @@ jobs:
             runner: ubuntu-24.04-arm
     env:
       COMPOSE_PROJECT_NAME: tolo-idp-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runtime }}-${{ matrix.platform.arch }}
-      COMPOSE_FILE: docker-compose.dev.native.yaml:docker-compose.ci.yaml
-      CI_APP_IMAGE: tolo-idp-ci:${{ matrix.runtime }}-${{ matrix.platform.arch }}
-      BASE_IMAGE: tolo-idp-base:${{ matrix.runtime }}-${{ matrix.platform.arch }}
+      COMPOSE_FILE: docker-compose.dev-${{ matrix.runtime }}.yaml
+      TOLO_IDP_IMAGE: tolo-idp-ci:${{ matrix.runtime }}-${{ matrix.platform.arch }}
       IMAGE_RUNTIME: ${{ matrix.runtime }}
       IMAGE_PLATFORM: linux/${{ matrix.platform.arch }}
       RELEASE_VERSION: ${{ inputs.version }}
@@ -64,17 +63,31 @@ jobs:
           "-PreleaseVersion=$RELEASE_VERSION"
           -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
 
-      - name: Build application image with Buildpacks
+      - name: Build Native image with Buildpacks
+        if: matrix.runtime == 'native'
         run: >-
           ./gradlew bootBuildImage --no-daemon
           "-PimageRuntime=$IMAGE_RUNTIME"
           "-PreleaseVersion=$RELEASE_VERSION"
           -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
-          "--imageName=$BASE_IMAGE"
+          "--imageName=$TOLO_IDP_IMAGE"
           "--imagePlatform=$IMAGE_PLATFORM"
 
-      - name: Wrap the Buildpacks image with Dockerfile
-        run: docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" --tag "$CI_APP_IMAGE" .
+      - name: Build JVM image from source
+        if: matrix.runtime == 'jvm'
+        run: docker build --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --tag "$TOLO_IDP_IMAGE" .
+
+      - name: Verify container runtime
+        run: |
+          container=$(docker create "$TOLO_IDP_IMAGE")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          if [ "$IMAGE_RUNTIME" = native ]; then
+            docker cp "$container:/workspace" build/native-workspace
+            find build/native-workspace -type f -exec file {} + > build/native-files.txt
+            grep -q 'ELF.*executable' build/native-files.txt
+          else
+            docker image inspect "$TOLO_IDP_IMAGE" --format '{{json .Config.Entrypoint}}' | grep -F '["java","-jar","/app/app.jar"]'
+          fi
 
       - name: Verify scenario cleanup on assertion failures
         run: python3 scenario/tests/test_runn_cleanup.py
@@ -85,8 +98,19 @@ jobs:
       - name: Run OIDC and Token Exchange scenarios
         run: docker compose --profile scenario run --rm --no-deps runn
 
+      - name: Verify running process
+        run: |
+          docker top "$(docker compose ps -q app)" -eo pid,args > build/app-processes.txt
+          if [ "$IMAGE_RUNTIME" = native ]; then
+            grep -Fq 'dev.usbharu.toloidp.ToloIdpApplicationKt' build/app-processes.txt
+            if grep -Eq '(^|[ /])java([[:space:]]|$)' build/app-processes.txt; then exit 1; fi
+          else
+            grep -q 'java -jar /app/app.jar' build/app-processes.txt
+          fi
+
       - name: Prepare production scenario signing key
         id: production-key
+        if: matrix.runtime == 'native'
         run: |
           mkdir -p "$CI_PRODUCTION_KEY_DIRECTORY"
           openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$CI_PRODUCTION_KEY_DIRECTORY/private.pem" 2>/dev/null
@@ -94,7 +118,6 @@ jobs:
           chmod 755 "$CI_PRODUCTION_KEY_DIRECTORY"
           chmod 644 "$CI_PRODUCTION_KEY_DIRECTORY/private.pem"
           {
-            echo "TOLO_IDP_IMAGE=$CI_APP_IMAGE"
             echo "TOLO_IDP_POSTGRES_PASSWORD=tolo-idp-ci"
             echo "TOLO_IDP_ISSUER=http://localhost:8080"
             echo "TOLO_IDP_JWK_PRIVATE_KEY_HOST_PATH=$CI_PRODUCTION_KEY_DIRECTORY/private.pem"
@@ -102,28 +125,30 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Start production application
+        if: matrix.runtime == 'native'
         run: >-
           docker compose -p "$COMPOSE_PROJECT_NAME-prod"
-          -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml
+          -f docker-compose.production.yaml
           up -d --pull never app
 
       - name: Run production startup scenario
+        if: matrix.runtime == 'native'
         run: >-
           docker compose -p "$COMPOSE_PROJECT_NAME-prod"
-          -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml
+          -f docker-compose.production.yaml
           --profile scenario run --rm --no-deps runn
 
-      - name: Save tested Buildpacks image
-        if: inputs.export-images
+      - name: Save tested Native image
+        if: inputs.export-images && matrix.runtime == 'native'
         run: |
           mkdir -p build/ci-image
-          docker image save "$BASE_IMAGE" --output build/ci-image/image.tar
+          docker image save "$TOLO_IDP_IMAGE" --output build/ci-image/image.tar
 
-      - name: Upload tested Buildpacks image
-        if: inputs.export-images
+      - name: Upload tested Native image
+        if: inputs.export-images && matrix.runtime == 'native'
         uses: actions/upload-artifact@v4
         with:
-          name: buildpacks-${{ matrix.runtime }}-${{ matrix.platform.arch }}
+          name: native-${{ matrix.platform.arch }}
           path: build/ci-image/image.tar
           compression-level: 0
           retention-days: 1
@@ -137,13 +162,13 @@ jobs:
         if: failure() && steps.production-key.outcome == 'success'
         run: >-
           docker compose -p "$COMPOSE_PROJECT_NAME-prod"
-          -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml ps -a
+          -f docker-compose.production.yaml ps -a
 
       - name: Clean up production scenario stack
         if: always() && steps.production-key.outcome == 'success'
         run: |
           docker compose -p "$COMPOSE_PROJECT_NAME-prod" \
-            -f docker-compose.prod.yaml -f docker-compose.scenario.prod.yaml \
+            -f docker-compose.production.yaml \
             --profile scenario down --volumes --remove-orphans
           rm -rf "$CI_PRODUCTION_KEY_DIRECTORY"
 

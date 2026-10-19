@@ -1106,7 +1106,7 @@ tolo-idp.clients.client-123.tenant-access-ttl=15m
 tolo-idp.clients.client-123.event-access-ttl=10m
 ```
 
-RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev / local / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
+RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev-jvm / dev-native / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
 
 `client_secret_basic` / `client_secret_post` / `client_secret_jwt` のいずれかを使う構成管理クライアントは、空白のみではない client secret を必須とする。未設定・空文字・空白のみの場合、DB 更新前に同期を拒否し、起動を失敗させる。既存の secret を暗黙に保持したり、空文字を開発用の既定値へ置き換えたりしない。`none` や `private_key_jwt` など secret を使わない認証方式のみの場合は、secret の未設定を許可する。
 
