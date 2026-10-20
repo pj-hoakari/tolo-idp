@@ -32,7 +32,7 @@ repositories {
 
 dependencies {
     implementation(platform("com.google.cloud:spring-cloud-gcp-dependencies:8.0.4"))
-    implementation("org.springframework.boot:spring-boot-h2console")
+    developmentOnly("org.springframework.boot:spring-boot-h2console")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-flyway")
@@ -50,7 +50,7 @@ dependencies {
     implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity6")
     implementation("tools.jackson.module:jackson-module-kotlin")
     developmentOnly("org.springframework.boot:spring-boot-devtools")
-    runtimeOnly("com.h2database:h2")
+    developmentOnly("com.h2database:h2")
     runtimeOnly("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
     runtimeOnly("org.xerial:sqlite-jdbc")
@@ -64,6 +64,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-validation-test")
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+    testRuntimeOnly("com.h2database:h2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -78,16 +79,9 @@ tasks.withType<Test> {
 }
 
 tasks.withType<ProcessAot>().configureEach {
-    // AOT fixes bean conditions and JDBC mapping metadata at build time. Use the
-    // production PostgreSQL setup, with a dedicated local database for processing.
-    args(
-        "--spring.profiles.active=production",
-        "--spring.data.jdbc.dialect=postgresql",
-        "--spring.datasource.url=" + providers.gradleProperty("aotDatasourceUrl")
-            .getOrElse("jdbc:postgresql://localhost:15432/tolo_idp"),
-        "--spring.datasource.username=" + providers.gradleProperty("aotDatasourceUsername").getOrElse("tolo_idp"),
-        "--spring.datasource.password=" + providers.gradleProperty("aotDatasourcePassword").getOrElse("tolo_idp"),
-    )
+    // Use production bean conditions and the explicit PostgreSQL dialect bean
+    // so JDBC query pre-generation does not require a running database.
+    args("--spring.profiles.active=production")
 }
 
 tasks.named<BootBuildImage>("bootBuildImage") {

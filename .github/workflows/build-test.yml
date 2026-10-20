@@ -61,7 +61,6 @@ jobs:
           ./gradlew build --no-daemon
           "-PimageRuntime=$IMAGE_RUNTIME"
           "-PreleaseVersion=$RELEASE_VERSION"
-          -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
 
       - name: Build Native image with Buildpacks
         if: matrix.runtime == 'native'
@@ -69,7 +68,6 @@ jobs:
           ./gradlew bootBuildImage --no-daemon
           "-PimageRuntime=$IMAGE_RUNTIME"
           "-PreleaseVersion=$RELEASE_VERSION"
-          -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
           "--imageName=$TOLO_IDP_IMAGE"
           "--imagePlatform=$IMAGE_PLATFORM"
 

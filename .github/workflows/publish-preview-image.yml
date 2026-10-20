@@ -24,7 +24,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      COMPOSE_FILE: docker-compose.dev-native.yaml
       REPOSITORY: ${{ github.repository }}
     steps:
       - name: Resolve pull request head
@@ -47,9 +46,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Start AOT database
-        run: docker compose up -d --wait db
-
       - name: Resolve image name
         id: image
         env:
@@ -62,7 +58,6 @@ jobs:
         run: >-
           ./gradlew bootBuildImage --no-daemon
           -PimageRuntime=native
-          -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
           "--imageName=$IMAGE"
           --imagePlatform=linux/amd64
 
