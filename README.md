@@ -33,9 +33,8 @@ docker build -t tolo-idp-dev-jvm:local .
 Docker と Java 24 が必要です。Native コンパイラは Buildpacks 内の GraalVM 25 を使うため、ホストへの GraalVM のインストールは不要です。
 
 ```bash
-# AOT 処理が参照する PostgreSQL を先に起動する。
-docker compose -f docker-compose.dev-native.yaml up -d --wait db redis relation-stub
 ./gradlew bootBuildImage
+docker compose -f docker-compose.dev-native.yaml up -d --wait db redis relation-stub
 docker compose -f docker-compose.dev-native.yaml up -d app
 ```
 
@@ -47,7 +46,9 @@ Native ビルドは多くのメモリを使います。Docker VM の6GiB割り�
 ./gradlew bootBuildImage '-PnativeImageExtraBuildArguments=-J-Xmx8g --parallelism=2'
 ```
 
-AOT は `production` プロファイルと PostgreSQL を使います。接続先の既定値は `jdbc:postgresql://localhost:15432/tolo_idp`、ユーザーとパスワードは `tolo_idp` です。変更する場合は `-PaotDatasourceUrl=...`・`-PaotDatasourceUsername=...`・`-PaotDatasourcePassword=...` を指定します。ビルドした同じ Native イメージを `dev-native` と `production` の両方で使用できます。AOT はビルド時の `production` プロファイルを起動時にも追加するため、YAML は共通 → 本番 → 開発の順に定義し、明示した開発設定を優先させています。
+AOT は `production` プロファイルで実行し、ビルド中の DB 接続は不要です。`production` / `dev-jvm` / `dev-native` では PostgreSQL の `JdbcDialect` Bean を明示し、AOT 中の方言取得に伴う DataSource 初期化を防いでいます。JDBC Repository のクエリ事前生成は有効なままです。実行時は PostgreSQL を使用します。
+
+ビルドした同じ Native イメージを `dev-native` と `production` の両方で使用できます。AOT はビルド時の `production` プロファイルを起動時にも追加するため、YAML は共通 → 本番 → 開発の順に定義し、明示した開発設定を優先させています。
 
 ### production
 
