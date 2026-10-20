@@ -1,0 +1,79 @@
+name: Publish Preview Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull-request:
+        description: "イメージを公開するプルリクエストの番号"
+        required: true
+        type: number
+  workflow_call:
+    inputs:
+      pull-request:
+        description: "イメージを公開するプルリクエストの番号"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      COMPOSE_FILE: docker-compose.dev-native.yaml
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Resolve pull request head
+        id: pr
+        uses: pj-hoakari/actions/pull-request-head@a753f5b7b0efae839bd92d283fca39401471a4b2 # v20261020.0.0
+        with:
+          number: ${{ inputs.pull-request }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "24"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Start AOT database
+        run: docker compose up -d --wait db
+
+      - name: Resolve image name
+        id: image
+        env:
+          TAG: ${{ steps.pr.outputs.tag }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}:$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build Native image with Buildpacks
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: >-
+          ./gradlew bootBuildImage --no-daemon
+          -PimageRuntime=native
+          -PaotDatasourceUrl=jdbc:postgresql://localhost:15432/tolo_idp
+          "--imageName=$IMAGE"
+          --imagePlatform=linux/amd64
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: docker image push "$IMAGE"
