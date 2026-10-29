@@ -37,6 +37,9 @@ import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.jackson.SecurityJacksonModules
+import org.springframework.security.oauth2.core.oidc.OidcUserInfo
+import org.springframework.security.oauth2.core.oidc.OidcIdToken
+import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
@@ -68,8 +71,7 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Refr
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.authentication.AuthenticationProvider
-import org.springframework.security.provisioning.JdbcUserDetailsManager
-import org.springframework.security.provisioning.UserDetailsManager
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.AuthenticationFailureHandler
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler
@@ -153,6 +155,7 @@ class SecurityConfig {
         registeredClientRepository: RegisteredClientRepository,
         authorizationService: OAuth2AuthorizationService,
         authorizationConsentService: OAuth2AuthorizationConsentService,
+        users: IdpUserDetailsManager,
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
         resourceParser: ResourceParser,
         relationService: RelationService,
@@ -168,6 +171,22 @@ class SecurityConfig {
         http.with(authorizationServerConfigurer) { authorizationServer ->
             authorizationServer
                 .oidc { oidc ->
+                    oidc.userInfoEndpoint { endpoint ->
+                        endpoint.userInfoMapper { context ->
+                            val subject = context.authorization.getToken(OidcIdToken::class.java)!!.token.subject
+                            val claims = OidcUserInfo.builder().subject(subject)
+                            if (IdpScopes.PROFILE in context.accessToken.scopes) {
+                                val user = try {
+                                    users.loadUserById(subject)
+                                } catch (_: UsernameNotFoundException) {
+                                    throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
+                                }
+                                if (!user.isEnabled) throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
+                                claims.preferredUsername(user.username)
+                            }
+                            claims.build()
+                        }
+                    }
                     oidc.providerConfigurationEndpoint { providerConfigurationEndpoint ->
                         providerConfigurationEndpoint.providerConfigurationCustomizer { metadata ->
                             metadata.claims(discoveryMetadataClaimsCustomizer())
@@ -449,8 +468,8 @@ class SecurityConfig {
      * login API と Spring Security session 認証で使う JDBC ベースの user store。
      */
     @Bean
-    fun userDetailsService(dataSource: DataSource): UserDetailsManager =
-        JdbcUserDetailsManager(dataSource)
+    fun userDetailsService(dataSource: DataSource): IdpUserDetailsManager =
+        IdpUserDetailsManager(dataSource)
 
     /**
      * 保存済み user password に `{bcrypt}` などの encoder id を含められる delegating password encoder。

@@ -11,7 +11,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
-import org.springframework.security.provisioning.UserDetailsManager
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -26,7 +26,7 @@ import kotlin.test.assertTrue
 )
 class SeedDataRunnerTests(
     @Autowired private val registeredClients: RegisteredClientRepository,
-    @Autowired private val users: UserDetailsManager,
+    @Autowired private val users: IdpUserDetailsManager,
     @Autowired private val passwordEncoder: PasswordEncoder,
     @Autowired private val jdbc: JdbcClient,
 ) {

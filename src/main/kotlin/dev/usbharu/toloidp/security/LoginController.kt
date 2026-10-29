@@ -17,7 +17,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.FactorGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.core.context.SecurityContextImpl
-import org.springframework.security.core.userdetails.UserDetailsService
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository
 import org.springframework.web.bind.annotation.PostMapping
@@ -29,7 +29,7 @@ import org.springframework.web.server.ResponseStatusException
 @RestController
 @RequestMapping("/api")
 class LoginController(
-    private val userDetailsService: UserDetailsService,
+    private val userDetailsService: IdpUserDetailsManager,
     private val passwordEncoder: PasswordEncoder,
     private val relationService: RelationService,
     private val resourceParser: ResourceParser,
@@ -71,7 +71,7 @@ class LoginController(
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
-        if (!passwordEncoder.matches(request.password, user.password)) {
+        if (!user.isEnabled || !passwordEncoder.matches(request.password, user.password)) {
             log.structuredWarn(
                 "Login rejected",
                 "event" to "login_rejected",
@@ -82,7 +82,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         try {
-            relationService.getMembership(request.tenantId, user.username)
+            relationService.getMembership(request.tenantId, user.userId)
         } catch (ex: RelationLookupException) {
             log.structuredWarn(
                 "Login rejected",
@@ -95,7 +95,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not allowed")
         }
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            user.username,
+            user.userId,
             null,
             user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
         )
@@ -118,6 +118,7 @@ class LoginController(
         return ResponseEntity.ok(
             LoginResponse(
                 username = user.username,
+                userId = user.userId,
                 tenantId = request.tenantId,
                 resource = resourceParser.tenantResource(request.tenantId),
                 authorities = user.authorities.mapNotNull { it.authority },
@@ -159,6 +160,7 @@ data class LoginRequest(
 )
 
 data class LoginResponse(
+    val userId: String,
     val username: String,
     val tenantId: String,
     val resource: String,

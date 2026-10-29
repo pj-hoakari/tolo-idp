@@ -86,6 +86,7 @@ Authorization Server は以下を確認する。
 
 ```json
 {
+  "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "username": "user-123",
   "tenantId": "tenant-a",
   "resource": "https://api.example.com/tenants/tenant-a",
@@ -94,6 +95,31 @@ Authorization Server は以下を確認する。
 ```
 
 認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
+
+### 4.1.1 ユーザーの識別
+
+ユーザー作成時に UUID v4 のサロゲートキー `userId` を発行し、`idp_users.id` に保存する。username は一意なログイン名として保持する。ユーザー名やパスワードを更新しても `userId` は変更せず、削除後に同じ username で作成したユーザーには新しい ID を発行する。
+
+権限は `idp_user_authorities.user_id` でユーザーに紐付ける。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub`、relation service の userId はすべてこの ID を使う。ログインレスポンスは `userId` と `username` を返す。無効なユーザーはログインできない。
+
+開発用 seed user の ID は relation-stub のサンプルと一致させるため `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。通常のユーザー作成では ID を自動生成する。
+
+V6 の DB マイグレーションで既存ユーザーごとに UUID を発行し、パスワード・有効状態・権限を保持する。旧 username を principal とする保存済み authorization と consent、および relation cache は削除する。開発段階のため、DB 以外の既存データ・セッション・外部サービスの移行や、旧 username ベースの識別との互換性対応は行わない。
+
+### 4.1.2 UserInfo
+
+`GET /userinfo` は `openid` scope を持つ有効な OIDC access token を Bearer 認証で受け付ける。`sub` は UUID の user ID とする。
+
+access token に `profile` scope が含まれる場合、現在の username を `preferred_username` として返す。username の変更は次の UserInfo 参照から反映する。対象ユーザーが存在しない、または無効な場合は `invalid_token` とする。`profile` がない場合は `sub` のみを返す。Refresh Token で `profile` を除外した場合もログイン名は返さない。
+
+`profile` は client の登録 scope に明示的に含める。tenant_access では role 判定から除外し、event_access では許可しない。ユーザーの一意な識別には変更可能な `preferred_username` ではなく `sub` を使う。ID Token に `preferred_username` は追加しない。
+
+```json
+{
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
+  "preferred_username": "user-123"
+}
+```
 
 ### 4.2 ログアウト
 
@@ -125,7 +151,7 @@ POST /api/logout
 ```json
 {
   "iss": "https://auth.example.com",
-  "sub": "user-123",
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "aud": "backend-api",
   "client_id": "client-123",
   "scope": "tenant.read tenant.write events.read events.manage events.operate events.report",
@@ -164,7 +190,7 @@ POST /api/logout
 ```json
 {
   "iss": "https://auth.example.com",
-  "sub": "user-123",
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "aud": "backend-api",
   "client_id": "client-123",
   "scope": "events.read events.manage events.operate events.report",
@@ -334,7 +360,7 @@ staff
 | `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
 | `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
 
-OIDC の `openid` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
+OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
 
 旧 `events.write` は廃止する。新しい発行要求では、登録設定に残っていても拒否する。新スコープへの暗黙の変換は行わない。
 
@@ -372,7 +398,7 @@ Authorization Server は、resource から得た `tenantId` と subject user id 
 GET /tenants/{tenantId}/users/{userId}
 ```
 
-Token Exchange では `userId` に JWT の `sub` をそのまま使う。ログイン時は認証済み user の username をそのまま使う。
+ログイン時の `userId` は認証済み user のサロゲートキーとする。Token Exchange では JWT の `sub` をそのまま使う。username による代替参照は行わない。
 
 ### 10.2 response
 
@@ -381,7 +407,7 @@ relation service は以下の JSON を返す。
 ```json
 {
   "tenant": { "id": "tenant-a", "role": "owner" },
-  "user": { "id": "user-123" },
+  "user": { "id": "71c68dc1-2c72-45ac-a191-1c47c1551011" },
   "events": [
     { "id": "event-1", "role": "staff" }
   ]
@@ -522,7 +548,7 @@ requested_scope ⊆ tenant_role.allowed_scopes
 
 `tenant.claim` は発行しない。要求に含まれる場合は `invalid_scope` とする。
 
-既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` は event role の許可 scope に含まれず、発行しない。
+既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` / `profile` は event role の許可 scope に含まれず、発行しない。
 
 `event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
@@ -546,7 +572,9 @@ resource の `eventId` に一致する event が `events` に存在しない場�
 
 ```text
 tenant.claim
+profile tenant.claim
 openid tenant.claim
+openid profile tenant.claim
 ```
 
 他の業務 scope との混在は `invalid_scope` とする。認可リクエスト時と JWT 発行時の両方で検証する。
@@ -1009,7 +1037,7 @@ token_invalid_claims
   "timestamp": "2026-05-20T10:00:00Z",
   "request_id": "req-abc",
   "client_id": "client-123",
-  "subject": "user-123",
+  "subject": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "source_token_use": "tenant_access",
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
@@ -1033,7 +1061,7 @@ token_invalid_claims
   "timestamp": "2026-05-20T10:00:00Z",
   "request_id": "req-def",
   "client_id": "client-123",
-  "subject": "user-123",
+  "subject": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "source_token_use": "tenant_access",
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
@@ -1122,7 +1150,7 @@ password=password
 client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
-allowed_scopes=openid,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
+allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
 ```
 
 ### 22.1 RegisteredClient 設定の集約

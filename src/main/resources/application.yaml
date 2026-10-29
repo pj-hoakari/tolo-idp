@@ -84,6 +84,7 @@ spring:
                 - http://localhost:3000/api/auth/callback/tolo-idp
               scopes:
                 - openid
+                - profile
                 - tenant.read
                 - tenant.write
                 - tenant.claim

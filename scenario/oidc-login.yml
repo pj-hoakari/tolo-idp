@@ -188,7 +188,7 @@ steps:
       current.res.status == 200
       && current.res.body.active == true
       && current.res.body.iss == vars.issuer
-      && current.res.body.sub == vars.username
+      && current.res.body.sub == steps.login.res.body.userId
       && current.res.body.client_id == vars.client_id
       && current.res.body.aud == [vars.audience]
       && current.res.body.token_use == "tenant_access"
@@ -262,7 +262,7 @@ steps:
       current.res.status == 200
       && current.res.body.active == true
       && current.res.body.iss == vars.issuer
-      && current.res.body.sub == vars.username
+      && current.res.body.sub == steps.login.res.body.userId
       && current.res.body.client_id == vars.client_id
       && current.res.body.aud == [vars.audience]
       && current.res.body.token_use == "event_access"
