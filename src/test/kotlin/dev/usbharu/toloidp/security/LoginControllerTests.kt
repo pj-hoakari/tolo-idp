@@ -42,7 +42,7 @@ class LoginControllerTests(
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
+                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -59,7 +59,7 @@ class LoginControllerTests(
         mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
-            .andExpect(jsonPath("$.userId").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
+            .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
             .andExpect(jsonPath("$.tenantId").value("tenant-a"))
             .andExpect(jsonPath("$.resource").value("https://api.example.com/tenants/tenant-a"))
             .andExpect(jsonPath("$.authorities[0]").value("ROLE_USER"))
@@ -77,13 +77,13 @@ class LoginControllerTests(
 
     @Test
     fun disabledUserCannotCreateSession() {
-        users.createUser(org.springframework.security.core.userdetails.User.withUsername("disabled-user")
+        users.createUser("tenant-a", org.springframework.security.core.userdetails.User.withUsername("disabled-user")
             .password("{noop}password").roles("USER").disabled(true).build())
         try {
             mockMvc.perform(loginRequest("disabled-user", "password", "tenant-a"))
                 .andExpect(status().isUnauthorized)
         } finally {
-            users.deleteUser("disabled-user")
+            users.deleteUser("tenant-a", "disabled-user")
         }
     }
 
@@ -101,7 +101,8 @@ class LoginControllerTests(
 
     @Test
     fun loginRejectsTenantWithoutMembership() {
-        mockMvc.perform(loginRequest("user-123", "password", "tenant-missing"))
+        cacheRepository.deleteAll()
+        mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
             .andExpect(status().isForbidden)
     }
 
@@ -188,12 +189,12 @@ class LoginControllerTests(
             }
 
             val enabledUser = users.loadUserById(IdpUserDetailsManager.DEVELOPMENT_USER_ID)
-            users.updateUser(org.springframework.security.core.userdetails.User.withUserDetails(enabledUser).disabled(true).build())
+            users.updateUser("tenant-a", org.springframework.security.core.userdetails.User.withUserDetails(enabledUser).disabled(true).build())
             try {
                 mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
                     .andExpect(status().isUnauthorized)
             } finally {
-                users.updateUser(enabledUser)
+                users.updateUser("tenant-a", enabledUser)
             }
 
             val refreshToken = jsonMapper.readTree(tokenResponse.contentAsString)["refresh_token"].stringValue()

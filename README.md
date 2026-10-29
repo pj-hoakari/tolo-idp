@@ -102,6 +102,6 @@ docker compose -f docker-compose.dev-jvm.yaml down
 
 CI と公開手順は [CI.md](CI.md) を参照してください。
 
-ユーザーは UUID の `userId` で管理します。ログインには username を使い、ログインレスポンスの `userId` が JWT の `sub` と relation service の userId になります。新規 DB の開発用 seed user の ID は `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 の DB マイグレーションで既存ユーザーにも UUID を発行します。
+ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service には `(tenantId, username)` を渡します。開発用 seed は `(tenant-a, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
 
 ログイン名の取得には、認可時に `openid profile` scope を要求し、その access token で `GET /userinfo` を呼び出してください。`preferred_username` に現在のログイン名、`sub` に UUID の user ID を返します。

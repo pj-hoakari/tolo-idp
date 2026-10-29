@@ -39,8 +39,9 @@ open class SeedDataRunner(
             return
         }
 
-        if (!userDetailsManager.userExists("user-123")) {
+        if (!userDetailsManager.userExists("tenant-a", "user-123")) {
             userDetailsManager.createUser(
+                "tenant-a",
                 User.withUsername("user-123")
                     .password(passwordEncoder.encode(properties.seed.userPassword))
                     .roles("USER")

@@ -123,7 +123,7 @@ class TokenRevocationEndpointTests(
         val audit = latestAudit()
         assertEquals("success", audit.result)
         assertEquals("client-123", audit.clientId)
-        assertEquals("user-123", audit.subject)
+        assertEquals(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit.subject)
         assertEquals(TOKEN_USE_TENANT_ACCESS, audit.sourceTokenUse)
         assertEquals("revocation", audit.requestedTokenUse)
         assertEquals("tenant-revoke-jti", audit.issuedJti)
@@ -261,7 +261,7 @@ class TokenRevocationEndpointTests(
         assertTrue(authorizationService.findByToken(unrelatedAccess, OAuth2TokenType.ACCESS_TOKEN)!!.accessToken!!.isActive)
         val audit = latestAudit()
         assertEquals("success", audit.result)
-        assertEquals("user-123", audit.subject)
+        assertEquals(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit.subject)
         assertEquals("refresh_token", audit.sourceTokenUse)
         assertEquals(null, audit.issuedJti)
         assertFalse(audit.payload.contains(refresh))
@@ -375,7 +375,7 @@ class TokenRevocationEndpointTests(
         val registeredClient = registeredClientRepository.findByClientId(clientId)
             ?: error("client $clientId is required")
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            "user-123",
+            dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
             null,
             listOf(SimpleGrantedAuthority("ROLE_USER")),
         )
@@ -389,14 +389,14 @@ class TokenRevocationEndpointTests(
             scopes,
         )
         val authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
-            .principalName("user-123")
+            .principalName(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID)
             .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .authorizedScopes(scopes)
             .attribute(Principal::class.java.name, authentication)
             .token(token) { metadata ->
                 val claims = linkedMapOf<String, Any>(
                     "iss" to "http://localhost:8080",
-                    "sub" to "user-123",
+                    "sub" to dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
                     "aud" to listOf("backend-api"),
                     "client_id" to clientId,
                     "scope" to scopes.joinToString(" "),

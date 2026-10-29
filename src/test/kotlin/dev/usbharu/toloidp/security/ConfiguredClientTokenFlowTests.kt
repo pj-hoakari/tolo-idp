@@ -63,7 +63,7 @@ class ConfiguredClientTokenFlowTests(
     fun configurationAloneEnablesAuthorizationCodeAndTokenExchangeWithConfiguredAudienceAndTtls() {
         memberships.deleteAll()
         memberships.save(RelationMembershipCache(
-            cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
+            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
             membership = TenantMembership("tenant-a", RelationRole.OWNER, listOf(EventMembership("event-1", RelationRole.OWNER))),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))
@@ -238,7 +238,7 @@ class ConfiguredClientTokenFlowTests(
     private fun seedMembership(role: RelationRole) {
         memberships.deleteAll()
         memberships.save(RelationMembershipCache(
-            cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
+            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
             membership = TenantMembership("tenant-a", role, listOf(EventMembership("event-1", RelationRole.OWNER))),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))

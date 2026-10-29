@@ -59,7 +59,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenantId")
         }
         val user = try {
-            userDetailsService.loadUserByUsername(request.username)
+            userDetailsService.loadUserByUsername(request.tenantId, request.username)
         } catch (ex: RuntimeException) {
             log.structuredWarn(
                 "Login rejected",
@@ -82,7 +82,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         try {
-            relationService.getMembership(request.tenantId, user.userId)
+            relationService.getMembership(request.tenantId, user.username)
         } catch (ex: RelationLookupException) {
             log.structuredWarn(
                 "Login rejected",
@@ -95,7 +95,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not allowed")
         }
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            user.userId,
+            user.id,
             null,
             user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
         )
@@ -118,7 +118,7 @@ class LoginController(
         return ResponseEntity.ok(
             LoginResponse(
                 username = user.username,
-                userId = user.userId,
+                sub = user.id,
                 tenantId = request.tenantId,
                 resource = resourceParser.tenantResource(request.tenantId),
                 authorities = user.authorities.mapNotNull { it.authority },
@@ -160,7 +160,7 @@ data class LoginRequest(
 )
 
 data class LoginResponse(
-    val userId: String,
+    val sub: String,
     val username: String,
     val tenantId: String,
     val resource: String,

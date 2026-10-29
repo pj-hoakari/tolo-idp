@@ -45,7 +45,7 @@ class RateLimitFilterTests(
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
+                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -102,7 +102,7 @@ class RateLimitFilterTests(
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
 
-        assertEquals(RateLimitIdentity("192.0.2.12", "user-123"), rateLimitService.lastIdentity.get())
+        assertEquals(RateLimitIdentity("192.0.2.12", "[\"tenant-a\",\"user-123\"]"), rateLimitService.lastIdentity.get())
     }
 
     @Test

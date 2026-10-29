@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
@@ -27,6 +28,7 @@ import java.util.function.Consumer
  * client policy / tenant resource / audience / relation membership / scope を検証する。
  */
 class TenantAuthorizationValidator(
+    private val users: IdpUserDetailsManager,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
@@ -83,7 +85,7 @@ class TenantAuthorizationValidator(
         val requestedScopes = authentication.scopes.orEmpty()
         try {
             scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
-            val membership = relationService.getMembership(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name)
+            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name).username)
             log.structuredDebug(
                 "Authorization request membership loaded",
                 "event" to "authorization_request_membership_loaded",

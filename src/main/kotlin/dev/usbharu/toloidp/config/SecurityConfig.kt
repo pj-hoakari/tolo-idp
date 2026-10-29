@@ -213,6 +213,7 @@ class SecurityConfig {
                         .forEach {
                             it.setAuthenticationValidator(
                                 TenantAuthorizationValidator(
+                                    users,
                                     resourceParser,
                                     relationService,
                                     scopePolicy,
@@ -420,6 +421,7 @@ class SecurityConfig {
      */
     @Bean
     fun specTokenExchangeAuthenticationProvider(
+        users: IdpUserDetailsManager,
         authorizationService: OAuth2AuthorizationService,
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
         resourceParser: ResourceParser,
@@ -430,6 +432,7 @@ class SecurityConfig {
         clock: Clock,
     ): SpecTokenExchangeAuthenticationProvider =
         SpecTokenExchangeAuthenticationProvider(
+            users,
             authorizationService,
             tokenGenerator,
             resourceParser,
@@ -468,8 +471,8 @@ class SecurityConfig {
      * login API と Spring Security session 認証で使う JDBC ベースの user store。
      */
     @Bean
-    fun userDetailsService(dataSource: DataSource): IdpUserDetailsManager =
-        IdpUserDetailsManager(dataSource)
+    fun userDetailsService(dataSource: DataSource, passwordEncoder: PasswordEncoder): IdpUserDetailsManager =
+        IdpUserDetailsManager(dataSource, passwordEncoder)
 
     /**
      * 保存済み user password に `{bcrypt}` などの encoder id を含められる delegating password encoder。

@@ -10,13 +10,13 @@
     { "id": "event-b1", "tenantId": "tenant-b", "name": "Event B1" }
   ],
   "tenantMembers": [
-    { "tenantId": "tenant-a", "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011", "role": "owner" },
+    { "tenantId": "tenant-a", "userId": "user-123", "role": "owner" },
     { "tenantId": "tenant-a", "userId": "user-456", "role": "staff" },
     { "tenantId": "tenant-b", "userId": "user-789", "role": "owner" }
   ],
   "eventMembers": [
-    { "eventId": "event-1", "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011", "role": "owner" },
-    { "eventId": "event-2", "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011", "role": "staff" },
+    { "eventId": "event-1", "userId": "user-123", "role": "owner" },
+    { "eventId": "event-2", "userId": "user-123", "role": "staff" },
     { "eventId": "event-2", "userId": "user-456", "role": "owner" },
     { "eventId": "event-3", "userId": "user-456", "role": "staff" },
     { "eventId": "event-b1", "userId": "user-789", "role": "owner" }

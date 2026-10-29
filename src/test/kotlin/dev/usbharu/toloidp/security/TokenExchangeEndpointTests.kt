@@ -52,6 +52,7 @@ import kotlin.test.assertNotNull
 @SpringBootTest
 @AutoConfigureMockMvc
 class TokenExchangeEndpointTests(
+    @Autowired private val userDetailsManager: dev.usbharu.toloidp.user.IdpUserDetailsManager,
     @Autowired private val mockMvc: MockMvc,
     @Autowired private val authorizationService: OAuth2AuthorizationService,
     @Autowired private val registeredClientRepository: RegisteredClientRepository,
@@ -86,6 +87,26 @@ class TokenExchangeEndpointTests(
                 expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
             ),
         )
+    }
+
+    @Test
+    fun subjectCannotResolveToSameLoginNameInAnotherTenant() {
+        val users = org.springframework.security.core.userdetails.User.withUsername("user-123")
+            .password("{noop}other").roles("USER").build()
+        // The tenant-a membership for user-123 already exists. A tenant-b subject must never use it.
+        val manager = userDetailsManager
+        manager.createUser("tenant-b", users)
+        try {
+            val other = manager.loadUserByUsername("tenant-b", "user-123")
+            mockMvc.perform(tokenExchangeRequest(saveTenantAuthorization(subject = other.id)))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_grant"))
+            mockMvc.perform(tokenExchangeRequest(saveTenantAuthorization(subject = "user-123")))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_grant"))
+        } finally {
+            manager.deleteUser("tenant-b", "user-123")
+        }
     }
 
     @Test
@@ -130,7 +151,7 @@ class TokenExchangeEndpointTests(
         val audit = latestAudit()
         assertEquals("success", audit["result"])
         assertEquals("client-123", audit["client_id"])
-        assertEquals("user-123", audit["subject"])
+        assertEquals(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit["subject"])
         assertEquals(TOKEN_USE_TENANT_ACCESS, audit["source_token_use"])
         assertEquals(TOKEN_USE_EVENT_ACCESS, audit["requested_token_use"])
         assertEquals("tenant-a", audit["tenant_id"])
@@ -710,7 +731,7 @@ class TokenExchangeEndpointTests(
 
     private fun saveTenantAuthorization(
         tokenUse: String = TOKEN_USE_TENANT_ACCESS,
-        subject: String? = "user-123",
+        subject: String? = dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
         subjectAudience: Any? = listOf("backend-api"),
         tenantId: String = "tenant-a",
         subjectResource: String? = "https://api.example.com/tenants/$tenantId",
@@ -721,7 +742,7 @@ class TokenExchangeEndpointTests(
         val registeredClient = registeredClientRepository.findByClientId("client-123")
             ?: error("seed client-123 is required")
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            "user-123",
+            dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
             null,
             listOf(SimpleGrantedAuthority("ROLE_USER")),
         )
@@ -734,7 +755,7 @@ class TokenExchangeEndpointTests(
             scopes,
         )
         val authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
-            .principalName("user-123")
+            .principalName(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID)
             .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .authorizedScopes(scopes)
             .attribute(Principal::class.java.name, authentication)

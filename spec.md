@@ -76,7 +76,7 @@ Authorization Server は以下を確認する。
 
 ```text
 - tenantId が ID 形式に一致する
-- username / password が IdP 内の user と一致する
+- (tenantId, username) で特定した IdP 内の user の password が一致する
 - relation service 上で user が tenant に所属している
 ```
 
@@ -86,7 +86,7 @@ Authorization Server は以下を確認する。
 
 ```json
 {
-  "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011",
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "username": "user-123",
   "tenantId": "tenant-a",
   "resource": "https://api.example.com/tenants/tenant-a",
@@ -98,13 +98,15 @@ Authorization Server は以下を確認する。
 
 ### 4.1.1 ユーザーの識別
 
-ユーザー作成時に UUID v4 のサロゲートキー `userId` を発行し、`idp_users.id` に保存する。username は一意なログイン名として保持する。ユーザー名やパスワードを更新しても `userId` は変更せず、削除後に同じ username で作成したユーザーには新しい ID を発行する。
+ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内の userId（ログイン名）であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
 
-権限は `idp_user_authorities.user_id` でユーザーに紐付ける。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub`、relation service の userId はすべてこの ID を使う。ログインレスポンスは `userId` と `username` を返す。無効なユーザーはログインできない。
+権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, username)` を渡し、サロゲートキーを渡さない。
 
-開発用 seed user の ID は relation-stub のサンプルと一致させるため `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。通常のユーザー作成では ID を自動生成する。
+ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も `(tenantId, username)` ごとに分離する。
 
-V6 の DB マイグレーションで既存ユーザーごとに UUID を発行し、パスワード・有効状態・権限を保持する。旧 username を principal とする保存済み authorization と consent、および relation cache は削除する。開発段階のため、DB 以外の既存データ・セッション・外部サービスの移行や、旧 username ベースの識別との互換性対応は行わない。
+開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId は従来どおり `user-123` とする。
+
+V6 は未リリースの開発用スキーマ変更としてユーザーテーブルを作り直す。旧テーブルには tenantId がないため所属を推測せず、旧ユーザー・権限・対応する authorization / consent・relation cache を削除する。開発用ユーザーは seed で再作成する。DB 以外の移行・旧識別方式との互換性対応は行わない。
 
 ### 4.1.2 UserInfo
 
@@ -398,7 +400,7 @@ Authorization Server は、resource から得た `tenantId` と subject user id 
 GET /tenants/{tenantId}/users/{userId}
 ```
 
-ログイン時の `userId` は認証済み user のサロゲートキーとする。Token Exchange では JWT の `sub` をそのまま使う。username による代替参照は行わない。
+ログイン時は認証済み user の username を `userId` として渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで username を渡す。未知・無効・別 tenant の subject は拒否する。`sub` を Relation Service の userId として扱わない。
 
 ### 10.2 response
 
@@ -407,7 +409,7 @@ relation service は以下の JSON を返す。
 ```json
 {
   "tenant": { "id": "tenant-a", "role": "owner" },
-  "user": { "id": "71c68dc1-2c72-45ac-a191-1c47c1551011" },
+  "user": { "id": "user-123" },
   "events": [
     { "id": "event-1", "role": "staff" }
   ]
@@ -765,7 +767,7 @@ Authorization Server は以下を確認する。
 - requested audience が client に許可されている
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- relation service cache または relation service に subject_token.sub と resource の tenantId を問い合わせる
+- subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の username) を問い合わせる
 - relation service の tenant.role が null ではない
 - resource の eventId が relation service の events[].id に存在する
 - requested_scope が subject_token.scope を超えていない
