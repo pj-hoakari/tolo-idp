@@ -174,14 +174,14 @@ class SecurityConfig {
                     oidc.userInfoEndpoint { endpoint ->
                         endpoint.userInfoMapper { context ->
                             val subject = context.authorization.getToken(OidcIdToken::class.java)!!.token.subject
+                            val user = try {
+                                users.loadUserById(subject)
+                            } catch (_: UsernameNotFoundException) {
+                                throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
+                            }
+                            if (!user.isEnabled) throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
                             val claims = OidcUserInfo.builder().subject(subject)
                             if (IdpScopes.PROFILE in context.accessToken.scopes) {
-                                val user = try {
-                                    users.loadUserById(subject)
-                                } catch (_: UsernameNotFoundException) {
-                                    throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
-                                }
-                                if (!user.isEnabled) throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
                                 claims.preferredUsername(user.username)
                             }
                             claims.build()

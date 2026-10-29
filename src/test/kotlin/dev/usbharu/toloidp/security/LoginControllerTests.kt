@@ -177,6 +177,8 @@ class LoginControllerTests(
             .andExpect(jsonPath("$.password").doesNotExist())
             .andExpect(jsonPath("$.authorities").doesNotExist())
 
+        assertUserInfoRejectsUnavailableUser(accessToken)
+
         if (profile) {
             users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "userinfo-renamed")
             try {
@@ -186,15 +188,6 @@ class LoginControllerTests(
                     .andExpect(jsonPath("$.preferred_username").value("userinfo-renamed"))
             } finally {
                 users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "user-123")
-            }
-
-            val enabledUser = users.loadUserById(IdpUserDetailsManager.DEVELOPMENT_USER_ID)
-            users.updateUser("tenant-a", org.springframework.security.core.userdetails.User.withUserDetails(enabledUser).disabled(true).build())
-            try {
-                mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
-                    .andExpect(status().isUnauthorized)
-            } finally {
-                users.updateUser("tenant-a", enabledUser)
             }
 
             val refreshToken = jsonMapper.readTree(tokenResponse.contentAsString)["refresh_token"].stringValue()
@@ -209,6 +202,31 @@ class LoginControllerTests(
             mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $narrowedToken"))
                 .andExpect(status().isOk)
                 .andExpect(jsonPath("$.preferred_username").doesNotExist())
+            assertUserInfoRejectsUnavailableUser(narrowedToken)
+        }
+    }
+
+    private fun assertUserInfoRejectsUnavailableUser(accessToken: String) {
+        val enabledUser = users.loadUserById(IdpUserDetailsManager.DEVELOPMENT_USER_ID)
+        users.updateUser("tenant-a", org.springframework.security.core.userdetails.User.withUserDetails(enabledUser).disabled(true).build())
+        try {
+            mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.error").value("invalid_token"))
+        } finally {
+            users.updateUser("tenant-a", enabledUser)
+        }
+
+        // Keep the token valid while changing only the subject's availability.
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+            .andExpect(status().isOk)
+        users.deleteUser("tenant-a", enabledUser.username)
+        try {
+            mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.error").value("invalid_token"))
+        } finally {
+            users.createUser("tenant-a", enabledUser, enabledUser.id)
         }
     }
 
