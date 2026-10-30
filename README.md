@@ -69,7 +69,7 @@ Native は `ghcr.io/pj-hoakari/tolo-idp`、JVM は `ghcr.io/pj-hoakari/tolo-idp-
 docker compose -f docker-compose.production.yaml up -d
 ```
 
-IdP の公開ポートは8080です。seed と一時署名鍵は無効です。本番 relation service の接続先など、環境固有の設定は Compose の app に環境変数を追加してください（例: `TOLO_IDP_RELATION_BASE_URL`）。
+IdP の公開ポートは8080です。seed と一時署名鍵は無効です。本番の relation service（tolo-tenant-management）の接続先など、環境固有の設定は Compose の app に環境変数を追加してください（例: `TOLO_IDP_RELATION_BASE_URL`）。
 
 ## シナリオの実行・停止
 

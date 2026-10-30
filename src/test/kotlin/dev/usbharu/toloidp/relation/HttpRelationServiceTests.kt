@@ -51,11 +51,13 @@ class HttpRelationServiceTests {
             status = 200,
             body = """
                 {
-                  "tenant": {"id": "tenant-a", "role": "owner"},
-                  "user": {"id": "user-123"},
-                  "events": [
-                    {"id": "event-1", "role": "staff"},
-                    {"id": "event-2", "role": "owner"}
+                  "memberships": [
+                    {
+                      "user_id": "user-123",
+                      "tenant_id": "tenant-a",
+                      "tenant_role": "owner",
+                      "event_roles": [{"event_id": "event-1", "role": "staff"}, {"event_id": "event-2", "role": "owner"}]
+                    }
                   ]
                 }
             """.trimIndent(),
@@ -85,14 +87,19 @@ class HttpRelationServiceTests {
     }
 
     @Test
-    fun rejectsMismatchedTenantOrUser() {
+    fun rejectsMismatchedTenant() {
         respondWith(
             200,
             """
             {
-              "tenant": {"id": "tenant-b", "role": "owner"},
-              "user": {"id": "user-123"},
-              "events": []
+              "memberships": [
+                {
+                  "user_id": "user-123",
+                  "tenant_id": "tenant-b",
+                  "tenant_role": "owner",
+                  "event_roles": []
+                }
+              ]
             }
             """.trimIndent(),
         )
@@ -104,17 +111,29 @@ class HttpRelationServiceTests {
     }
 
     @Test
-    fun rejectsMissingTenantRole() {
-        respondWith(
-            200,
-            """
-            {
-              "tenant": {"id": "tenant-a"},
-              "user": {"id": "user-123"},
-              "events": []
-            }
-            """.trimIndent(),
-        )
+    fun rejectsMismatchedUser() {
+        respondWith(200, """{"memberships": [{"user_id": "user-456", "tenant_id": "tenant-a", "tenant_role": "owner", "event_roles": []}]}""")
+
+        val exception = assertFailsWith<RelationLookupException> {
+            service.getMembership("tenant-a", "user-123")
+        }
+        assertEquals("relation_response_invalid", exception.reason)
+    }
+
+    @Test
+    fun rejectsMultipleMemberships() {
+        val membership = """{"user_id": "user-123", "tenant_id": "tenant-a", "tenant_role": "owner", "event_roles": []}"""
+        respondWith(200, """{"memberships": [$membership, $membership]}""")
+
+        val exception = assertFailsWith<RelationLookupException> {
+            service.getMembership("tenant-a", "user-123")
+        }
+        assertEquals("relation_response_invalid", exception.reason)
+    }
+
+    @Test
+    fun treatsEmptyMembershipsAsNotTenantMember() {
+        respondWith(200, """{"memberships": []}""")
 
         val exception = assertFailsWith<RelationLookupException> {
             service.getMembership("tenant-a", "user-123")
@@ -128,9 +147,14 @@ class HttpRelationServiceTests {
             200,
             """
             {
-              "tenant": {"id": "tenant-a", "role": "admin"},
-              "user": {"id": "user-123"},
-              "events": []
+              "memberships": [
+                {
+                  "user_id": "user-123",
+                  "tenant_id": "tenant-a",
+                  "tenant_role": "admin",
+                  "event_roles": []
+                }
+              ]
             }
             """.trimIndent(),
         )
@@ -147,9 +171,14 @@ class HttpRelationServiceTests {
             200,
             """
             {
-              "tenant": {"id": "tenant-a", "role": "owner"},
-              "user": {"id": "user-123"},
-              "events": [{"id": " event-1", "role": "staff"}]
+              "memberships": [
+                {
+                  "user_id": "user-123",
+                  "tenant_id": "tenant-a",
+                  "tenant_role": "owner",
+                  "event_roles": [{"event_id": " event-1", "role": "staff"}]
+                }
+              ]
             }
             """.trimIndent(),
         )
@@ -224,8 +253,12 @@ class HttpRelationServiceTests {
     }
 
     private fun respondWith(status: Int, body: String) {
-        server.createContext("/tenants/tenant-a/users/user-123") { exchange ->
-            exchange.sendJson(status, body)
+        server.createContext("/") { exchange ->
+            if (exchange.requestURI.rawPath == "/tenants/tenant-a/users/user-123/memberships") {
+                exchange.sendJson(status, body)
+            } else {
+                exchange.sendJson(404, """{"error":"unexpected path"}""")
+            }
         }
     }
 

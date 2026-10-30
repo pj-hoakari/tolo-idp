@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.relation
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import dev.usbharu.toloidp.config.IdpProperties
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
@@ -47,26 +48,37 @@ class HttpRelationService(
     override fun getMembership(tenantId: String, userId: String): TenantMembership {
         log.structuredTrace("Relation membership HTTP lookup started", "event" to "relation_membership_http_lookup_started", "tenant_id" to tenantId, "subject" to userId)
         resourceParser.requireValidId(tenantId)
-        val response = getOrNull<MembershipResponse>("/tenants/{tenantId}/users/{userId}", tenantId, userId)
+        val response = getOrNull<MembershipsResponse>("/tenants/{tenantId}/users/{userId}/memberships", tenantId, userId)
             ?: throw RelationLookupException("tenant_not_found")
-        if (response.tenant.id != tenantId || response.user.id != userId) {
+        if (response.memberships.size > 1) {
+            log.structuredWarn(
+                "Relation service returned multiple memberships",
+                "event" to "relation_membership_response_invalid",
+                "tenant_id" to tenantId,
+                "subject" to userId,
+                "membership_count" to response.memberships.size,
+                "failure_reason" to "relation_response_invalid",
+            )
+            throw RelationLookupException("relation_response_invalid")
+        }
+        val membership = response.memberships.singleOrNull() ?: throw RelationLookupException("user_not_tenant_member")
+        if (membership.tenantId != tenantId || membership.userId != userId) {
             log.structuredWarn(
                 "Relation service returned mismatched membership",
                 "event" to "relation_membership_response_invalid",
                 "tenant_id" to tenantId,
                 "subject" to userId,
-                "response_tenant_id" to response.tenant.id,
-                "response_subject" to response.user.id,
+                "response_tenant_id" to membership.tenantId,
+                "response_subject" to membership.userId,
                 "failure_reason" to "relation_response_invalid",
             )
             throw RelationLookupException("relation_response_invalid")
         }
-        val roleValue = response.tenant.role ?: throw RelationLookupException("user_not_tenant_member")
-        val tenantRole = parseRole(roleValue)
+        val tenantRole = parseRole(membership.tenantRole)
         val events = try {
-            response.events.map {
-                resourceParser.requireValidId(it.id)
-                EventMembership(it.id, parseRole(it.role))
+            membership.eventRoles.map {
+                resourceParser.requireValidId(it.eventId)
+                EventMembership(it.eventId, parseRole(it.role))
             }
         } catch (ex: ResourceValidationException) {
             log.structuredWarn(
@@ -163,23 +175,24 @@ class HttpRelationService(
         }
     }
 
-    data class MembershipResponse(
-        val tenant: TenantNode = TenantNode(),
-        val user: UserNode = UserNode(),
-        val events: List<EventNode> = emptyList(),
+    data class MembershipsResponse(
+        val memberships: List<MembershipNode> = emptyList(),
     )
 
-    data class TenantNode(
-        val id: String = "",
-        val role: String? = null,
+    data class MembershipNode(
+        @JsonProperty("user_id")
+        val userId: String = "",
+        @JsonProperty("tenant_id")
+        val tenantId: String = "",
+        @JsonProperty("tenant_role")
+        val tenantRole: String = "",
+        @JsonProperty("event_roles")
+        val eventRoles: List<EventRoleNode> = emptyList(),
     )
 
-    data class UserNode(
-        val id: String = "",
-    )
-
-    data class EventNode(
-        val id: String = "",
+    data class EventRoleNode(
+        @JsonProperty("event_id")
+        val eventId: String = "",
         val role: String = "",
     )
 

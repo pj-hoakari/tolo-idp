@@ -14,10 +14,9 @@ class ToloIdpRuntimeHintsTest {
     @Test
     fun `registers reflection hints for the relation API response and its nested types`() {
         val types = listOf(
-            HttpRelationService.MembershipResponse::class.java,
-            HttpRelationService.TenantNode::class.java,
-            HttpRelationService.UserNode::class.java,
-            HttpRelationService.EventNode::class.java,
+            HttpRelationService.MembershipsResponse::class.java,
+            HttpRelationService.MembershipNode::class.java,
+            HttpRelationService.EventRoleNode::class.java,
         )
 
         types.forEach { type ->

@@ -36,7 +36,7 @@ services:
     restart: "no"
 
   relation-stub:
-    image: ghcr.io/pj-hoakari/tolo-relation-stub:latest
+    image: ghcr.io/pj-hoakari/tolo-relation-stub:0.2
     ports:
       - "18081:8080"
     environment:
