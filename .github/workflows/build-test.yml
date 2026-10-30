@@ -151,7 +151,9 @@ jobs:
 
       - name: Show service status on failure
         if: failure()
-        run: docker compose ps -a
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail 100 app relation-stub
 
       - name: Show production service status on failure
         if: failure() && steps.production-key.outcome == 'success'
