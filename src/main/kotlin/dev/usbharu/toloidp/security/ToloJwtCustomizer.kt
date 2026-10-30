@@ -44,6 +44,12 @@ class ToloJwtCustomizer(
      */
     override fun customize(context: JwtEncodingContext) {
         if (context.tokenType != OAuth2TokenType.ACCESS_TOKEN) {
+            if (context.tokenType.value == "id_token") {
+                val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
+                OidcAuthenticationRequestValidator.authenticationTime(principal)?.let {
+                    context.claims.claim("auth_time", java.util.Date.from(Instant.ofEpochSecond(it)))
+                }
+            }
             return
         }
         when (context.authorizationGrantType) {

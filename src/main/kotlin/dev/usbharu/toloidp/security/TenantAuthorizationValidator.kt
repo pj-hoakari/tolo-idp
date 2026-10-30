@@ -32,6 +32,7 @@ class TenantAuthorizationValidator(
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
+    private val oidcRequests: OidcAuthenticationRequestValidator,
 ) : Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> {
     private val defaultValidator = OAuth2AuthorizationCodeRequestAuthenticationValidator()
 
@@ -42,6 +43,26 @@ class TenantAuthorizationValidator(
         log.structuredTrace("Tenant authorization validation started", "event" to "tenant_authorization_validation_started", "client_id" to context.registeredClient.clientId)
         defaultValidator.accept(context)
         val authentication = context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
+        try {
+            validateTrustedRequest(context, authentication)
+        } catch (ex: OAuth2AuthorizationCodeRequestAuthenticationException) {
+            // Only attach a redirect after the standard client / redirect validator succeeded.
+            val redirect = authentication.redirectUri ?: context.registeredClient.redirectUris.singleOrNull()
+            val response = OAuth2AuthorizationCodeRequestAuthenticationToken(
+                authentication.authorizationUri, authentication.clientId,
+                authentication.principal as org.springframework.security.core.Authentication,
+                redirect, authentication.state, authentication.scopes, authentication.additionalParameters,
+            )
+            response.isAuthenticated = true
+            throw OAuth2AuthorizationCodeRequestAuthenticationException(ex.error, response)
+        }
+    }
+
+    private fun validateTrustedRequest(
+        context: OAuth2AuthorizationCodeRequestAuthenticationContext,
+        authentication: OAuth2AuthorizationCodeRequestAuthenticationToken,
+    ) {
+        val completeReauthentication = oidcRequests.validate(authentication, context.registeredClient)
         val clientId = context.registeredClient.clientId
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throwAuthorizationError(OAuth2ErrorCodes.INVALID_REQUEST, "client_id")
@@ -116,7 +137,7 @@ class TenantAuthorizationValidator(
                 "tenant_id" to tenantResource.tenantId,
                 "failure_reason" to ex.reason,
             )
-            throwAuthorizationError(OAuth2ErrorCodes.INVALID_GRANT, OAuth2ParameterNames.RESOURCE)
+            throwAuthorizationError(OAuth2ErrorCodes.ACCESS_DENIED, OAuth2ParameterNames.RESOURCE)
         }
         log.structuredDebug(
             "Authorization request validation completed",
@@ -128,6 +149,7 @@ class TenantAuthorizationValidator(
             "result" to "success",
         )
         log.structuredTrace("Tenant authorization validation completed", "event" to "tenant_authorization_validation_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
+        completeReauthentication()
     }
 
     private fun throwAuthorizationError(errorCode: String, parameter: String): Nothing {

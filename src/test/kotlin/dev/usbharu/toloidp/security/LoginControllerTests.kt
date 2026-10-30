@@ -213,6 +213,7 @@ class LoginControllerTests(
             mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
                 .andExpect(status().isUnauthorized)
                 .andExpect(jsonPath("$.error").value("invalid_token"))
+                .andExpect(header().string("WWW-Authenticate", "Bearer error=\"invalid_token\""))
         } finally {
             users.updateUser("tenant-a", enabledUser)
         }
@@ -225,6 +226,7 @@ class LoginControllerTests(
             mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
                 .andExpect(status().isUnauthorized)
                 .andExpect(jsonPath("$.error").value("invalid_token"))
+                .andExpect(header().string("WWW-Authenticate", "Bearer error=\"invalid_token\""))
         } finally {
             users.createUser("tenant-a", enabledUser, enabledUser.id)
         }

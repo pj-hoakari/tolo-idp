@@ -25,6 +25,8 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
+import java.time.Clock
+import java.util.UUID
 
 @RestController
 @RequestMapping("/api")
@@ -33,6 +35,7 @@ class LoginController(
     private val passwordEncoder: PasswordEncoder,
     private val relationService: RelationService,
     private val resourceParser: ResourceParser,
+    private val clock: Clock,
 ) {
     @PostMapping("/login")
     fun login(
@@ -98,6 +101,10 @@ class LoginController(
             user.id,
             null,
             user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
+        )
+        authentication.details = linkedMapOf(
+            OidcAuthenticationRequestValidator.AUTH_TIME to clock.instant().epochSecond.toString(),
+            OidcAuthenticationRequestValidator.LOGIN_ID to UUID.randomUUID().toString(),
         )
         val context = SecurityContextImpl(authentication)
         SecurityContextHolder.setContext(context)

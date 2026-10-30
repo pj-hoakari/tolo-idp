@@ -55,7 +55,9 @@ class TenantScopedUserFlowTests(
                 session.setAttribute(dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE, otherTenant)
                 try {
                     mvc.perform(authorize(session, otherTenant))
-                        .andExpect(status().isBadRequest)
+                        .andExpect(status().isFound)
+                        .andExpect(header().string("Location", org.hamcrest.Matchers.containsString("error=access_denied")))
+                        .andExpect(header().string("Location", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("code="))))
                 } finally {
                     session.setAttribute(dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE, tenant)
                 }

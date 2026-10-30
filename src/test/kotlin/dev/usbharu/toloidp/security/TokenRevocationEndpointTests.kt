@@ -225,19 +225,19 @@ class TokenRevocationEndpointTests(
     }
 
     @Test
-    fun rejectsUnsupportedTokenTypeHint() {
+    fun ignoresUnknownTokenTypeHint() {
         val token = saveAuthorization(jti = "unsupported-hint-jti")
 
         mockMvc.perform(
             revocationRequest(token)
                 .param(OAuth2ParameterNames.TOKEN_TYPE_HINT, "id_token"),
         )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("unsupported_token_type"))
+            .andExpect(status().isOk)
+            .andExpect(content().string(""))
             .andExpect(content().string(not(containsString(token))))
 
-        assertFalse(jtiDenylistRepository.existsById("unsupported-hint-jti"))
-        assertEquals("unsupported_token_type", latestAudit().failureReason)
+        assertTrue(jtiDenylistRepository.existsById("unsupported-hint-jti"))
+        assertEquals("success", latestAudit().result)
     }
 
     @ParameterizedTest

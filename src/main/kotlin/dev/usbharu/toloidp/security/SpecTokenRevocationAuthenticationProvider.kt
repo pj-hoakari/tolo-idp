@@ -15,6 +15,8 @@ import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes
 import org.springframework.security.oauth2.core.OAuth2Token
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
+import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.jwt.JwtException
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
@@ -31,6 +33,8 @@ class SpecTokenRevocationAuthenticationProvider(
     private val jtiDenylistRepository: JtiDenylistRepository,
     private val auditService: AuditService,
     private val clock: Clock,
+    private val jwtDecoder: JwtDecoder,
+    private val issuer: String,
 ) : AuthenticationProvider {
     override fun authenticate(authentication: Authentication): Authentication {
         val revocation = authentication as OAuth2TokenRevocationAuthenticationToken
@@ -44,10 +48,6 @@ class SpecTokenRevocationAuthenticationProvider(
 
         try {
             val tokenTypeHint = revocation.tokenTypeHint
-            if (tokenTypeHint != null && tokenTypeHint !in setOf(OAuth2ParameterNames.ACCESS_TOKEN, OAuth2ParameterNames.REFRESH_TOKEN)) {
-                fail(OAuth2ErrorCodes.UNSUPPORTED_TOKEN_TYPE, "unsupported_token_type")
-            }
-
             val policy = ClientPolicy.from(registeredClient)
                 ?: fail(OAuth2ErrorCodes.INVALID_CLIENT, "client_not_allowed")
             if (policy.clientType != ClientType.CONFIDENTIAL ||
@@ -69,7 +69,7 @@ class SpecTokenRevocationAuthenticationProvider(
             // hint は検索順の指定であり、別の対応済み token 種別への検索を省略しない。
             val authorization = authorizationService.findByToken(revocation.token, preferredType)
                 ?: authorizationService.findByToken(revocation.token, fallbackType)
-                ?: return success(revocation, audit)
+                ?: return revokeUnstoredJwt(revocation, registeredClient.clientId, audit)
             if (authorization.registeredClientId != registeredClient.id) {
                 fail(OAuth2ErrorCodes.INVALID_CLIENT, "subject_token_client_mismatch")
             }
@@ -126,6 +126,29 @@ class SpecTokenRevocationAuthenticationProvider(
 
     override fun supports(authentication: Class<*>): Boolean =
         OAuth2TokenRevocationAuthenticationToken::class.java.isAssignableFrom(authentication)
+
+    /** A refresh replaces JDBC's current token, but the older signed JWT can still be revoked. */
+    private fun revokeUnstoredJwt(
+        revocation: OAuth2TokenRevocationAuthenticationToken, clientId: String, audit: TokenAuditEvent,
+    ): Authentication {
+        val jwt = try { jwtDecoder.decode(revocation.token) } catch (_: JwtException) { return success(revocation, audit) }
+        val tokenUse = jwt.getClaimAsString("token_use")
+        val expiresAt = jwt.expiresAt
+        val jti = jwt.id
+        val now = clock.instant()
+        if (jwt.issuer?.toString() != issuer || tokenUse !in setOf(TOKEN_USE_TENANT_ACCESS, TOKEN_USE_EVENT_ACCESS) ||
+            jti.isNullOrBlank() || expiresAt == null || !expiresAt.isAfter(now) || jwt.notBefore?.isAfter(now) == true
+        ) return success(revocation, audit)
+        if (jwt.getClaimAsString("client_id") != clientId) {
+            fail(OAuth2ErrorCodes.INVALID_CLIENT, "subject_token_client_mismatch")
+        }
+        saveDenylistEntry(jti, expiresAt)
+        return success(revocation, audit.copy(
+            subject = jwt.subject, sourceTokenUse = tokenUse, requestedResource = jwt.getClaimAsString("resource"),
+            requestedScope = scopeList(jwt.claims["scope"]), tenantId = jwt.getClaimAsString("tenant_id"),
+            eventId = jwt.getClaimAsString("event_id"), issuedJti = jti,
+        ))
+    }
 
     private fun authenticatedClient(revocation: OAuth2TokenRevocationAuthenticationToken): OAuth2ClientAuthenticationToken {
         val clientPrincipal = revocation.principal as? OAuth2ClientAuthenticationToken

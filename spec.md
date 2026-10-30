@@ -96,6 +96,8 @@ Authorization Server は以下を確認する。
 
 認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
 
+ログイン成功時には、パスワードを検証した時刻とログインごとの識別子をサーバー側で記録する。認証時刻は ID Token の `auth_time` に使い、Refresh Token による更新でも元の認証時刻を維持する。token の更新を再ログインとして扱わない。
+
 ### 4.1.1 ユーザーの識別
 
 ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内の userId（ログイン名）であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
@@ -114,6 +116,8 @@ V6 は未リリースの開発用スキーマ変更としてユーザーテー�
 
 access token に `profile` scope が含まれる場合、現在の username を `preferred_username` として返す。username の変更は次の UserInfo 参照から反映する。対象ユーザーが存在しない、または無効な場合は `invalid_token` とする。`profile` がない場合は `sub` のみを返す。Refresh Token で `profile` を除外した場合もログイン名は返さない。
 
+認証失敗時は `401 Unauthorized` と `WWW-Authenticate: Bearer error="invalid_token"` を返す。`openid` scope が不足する場合は `403 Forbidden` と Bearer challenge の `insufficient_scope` を返す。
+
 `profile` は client の登録 scope に明示的に含める。tenant_access では role 判定から除外し、event_access では許可しない。ユーザーの一意な識別には変更可能な `preferred_username` ではなく `sub` を使う。ID Token に `preferred_username` は追加しない。
 
 ```json
@@ -122,6 +126,20 @@ access token に `profile` scope が含まれる場合、現在の username を 
   "preferred_username": "user-123"
 }
 ```
+
+### 4.1.3 OIDC の認可要求と再認証
+
+ログイン画面と `/api/login` の呼び出しは別フロントエンドの責務とする。IdP はログイン画面を提供しない。
+
+認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
+
+認可要求の tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
+
+`prompt=login` と `max_age=0` は再ログインを要求する。正の `max_age` は認証からの経過秒数を検証し、超過時は再ログインを要求する。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、画面を表示せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。
+
+フロントエンドは `login_required` を受けたら、同じブラウザセッションで `/api/login` を呼び、元の認可要求を再送する。IdP はセッションごとに1件、5分間だけ再認証待ちの要求を保持する。要求の全パラメータに結び付け、新たなパスワード認証を確認してから認可を再開する。完了した要求で同じ再認証結果を再利用しない。`state` などのパラメータを変更した要求は別の要求として扱う。
+
+`id_token_hint` は署名、issuer、対象 client、ID Token の形式を検証する。過去に発行された期限切れ ID Token も hint として受け付けるが、access token や署名不正の値は受け付けない。hint の `sub` と認証済みユーザーが異なる場合は `login_required` とし、別ユーザーの token を発行しない。
 
 ### 4.2 ログアウト
 
@@ -846,7 +864,7 @@ token=...
 token_type_hint=access_token
 ```
 
-`token_type_hint` は未指定、`access_token`、`refresh_token` を許可する。それ以外は `unsupported_token_type` を返す。
+`token_type_hint` は未指定、`access_token`、`refresh_token` を受け付ける。未知の値は RFC 7009 に従って無視する。
 hint は検索順の指定とし、指定種別で見つからない場合は、もう一方の対応済み種別も検索する。Authorization Code や ID Token は検索しない。
 
 Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。
@@ -868,6 +886,8 @@ Refresh Token の revocation では保存済み token を無効化し、その�
 
 別の authorization に保存された event_access、更新前の古い access token、別ログインの token はこの連動失効の対象外とする。ローテーションで置き換え済みの Refresh Token は保存されていないため、未知 token と同じ扱いとし、現在の Refresh Token へ遡及しない。
 
+更新前の古い access token を明示的に revocation した場合は、その JWT の `jti` を denylist に登録する。DB に token が見つからない場合も、JWT の署名、issuer、発行先 `client_id`、`token_use`、`jti`、有効期間を検証する。有効な `tenant_access` / `event_access` だけを対象とし、ID Token は対象にしない。現在の access token と Refresh Token は、この操作では失効させない。Resource Server は即時失効を必要とする場合に denylist を確認する。
+
 Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスとする。
 
 ```text
@@ -878,7 +898,7 @@ Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスと�
 ```
 
 別 client が発行した token の revocation、client 認証不正、public client からの
-revocation、未対応の hint は OAuth2 error とする。
+revocation は OAuth2 error とする。
 
 Revocation endpoint は token 本体、client secret、authorization code、password を
 レスポンスおよびログへ出力してはならない。
