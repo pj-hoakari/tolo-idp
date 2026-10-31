@@ -15,9 +15,9 @@ import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.security.TenantAuthorizationValidator
-import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
 import dev.usbharu.toloidp.security.ToloJwtCustomizer
 import dev.usbharu.toloidp.security.OidcAuthenticationRequestValidator
+import dev.usbharu.toloidp.security.AuthorizationRequestConverter
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
@@ -148,7 +148,7 @@ class SecurityConfig {
     /**
      * Authorization Server endpoint を構成し、この IDP でセキュリティ上重要な拡張点を差し替える。
      *
-     * Authorization Code endpoint では tenant resource を注入・検証し、token endpoint では
+     * Authorization Code endpoint では tenant resource を検証し、token endpoint では
      * `spec.md` の tenant-access から event-access への Token Exchange に
      * [SpecTokenExchangeAuthenticationProvider] を使う。
      */
@@ -227,7 +227,7 @@ class SecurityConfig {
                 .authorizationEndpoint { authorizationEndpoint ->
                 authorizationEndpoint.authorizationRequestConverters { converters ->
                     converters.removeIf { it is OAuth2AuthorizationCodeRequestAuthenticationConverter }
-                    converters.add(0, TenantAwareAuthorizationRequestConverter(resourceParser))
+                    converters.add(0, AuthorizationRequestConverter())
                 }
                 authorizationEndpoint.authenticationProviders { providers ->
                     providers.filterIsInstance<OAuth2AuthorizationCodeRequestAuthenticationProvider>()

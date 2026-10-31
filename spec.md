@@ -47,7 +47,7 @@
 
 Authorization Server は REST API を用いてユーザー認証を行う。
 
-認証成功後、Authorization Server は Spring Security セッションに選択 tenant を保存し、その後の Authorization Code フローで特定 tenant 文脈を持つ `tenant_access` token を JWT access token として発行する。
+Authorization Code フローでは、認可要求の `resource` で指定した tenant の文脈を持つ `tenant_access` token を JWT access token として発行する。ログイン状態から tenant を補わない。
 
 本仕様では `login` token は定義しない。
 
@@ -80,7 +80,7 @@ Authorization Server は以下を確認する。
 - relation service 上で user が tenant に所属している
 ```
 
-成功時は Spring Security セッションを作成し、選択 tenant をセッションに保存する。
+成功時は Spring Security セッションを作成する。セッションに tenant を保存しない。
 
 レスポンス:
 
@@ -133,7 +133,7 @@ access token に `profile` scope が含まれる場合、現在の username を 
 
 認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
 
-認可要求の tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
+認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。ログインしたユーザーの tenant と異なる tenant の要求、および tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
 `prompt=login` と `max_age=0` は再ログインを要求する。正の `max_age` は認証からの経過秒数を検証し、超過時は再ログインを要求する。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、画面を表示せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。
 
@@ -1151,7 +1151,6 @@ token_invalid_claims
 - 具体的な Resource Server 分割
 - 具体的な audience 名
 - API path の最終形
-- ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
 - 本番 relation service で `admin` role を扱うか
 ```

@@ -75,6 +75,7 @@ class ConfiguredClientTokenFlowTests(
                 val query = form(mapOf(
                     "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
                     "scope" to "openid tenant.read events.read", "audience" to "configured-api",
+                    "resource" to "https://api.example.com/tenants/tenant-a",
                     "state" to "fixture-state", "nonce" to "fixture-nonce",
                     "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
                 ))
@@ -250,6 +251,7 @@ class ConfiguredClientTokenFlowTests(
         val query = form(mapOf(
             "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
             "scope" to scope, "audience" to "configured-api", "nonce" to "refresh-test-nonce",
+            "resource" to "https://api.example.com/tenants/tenant-a",
             "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
         ))
         val authorize = send(http, "/oauth2/authorize?$query")

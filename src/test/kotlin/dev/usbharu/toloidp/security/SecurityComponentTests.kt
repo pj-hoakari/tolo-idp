@@ -15,7 +15,6 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.RelationRole
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.ScopePolicy
-import dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -23,7 +22,6 @@ import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
@@ -100,33 +98,6 @@ class SecurityComponentTests(
     fun tearDown() {
         SecurityContextHolder.clearContext()
         AuthorizationServerContextHolder.resetContext()
-    }
-
-    @Test
-    fun tenantAwareAuthorizationRequestConverterAddsSessionTenantResource() {
-        SecurityContextHolder.getContext().authentication = principal
-        val request = authorizationRequest()
-        request.getSession(true)!!.setAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE, "tenant-a")
-
-        val converted = TenantAwareAuthorizationRequestConverter(resourceParser).convert(request)
-            as OAuth2AuthorizationCodeRequestAuthenticationToken
-
-        assertEquals("client-123", converted.clientId)
-        assertEquals(
-            "https://api.example.com/tenants/tenant-a",
-            converted.additionalParameters[OAuth2ParameterNames.RESOURCE],
-        )
-    }
-
-    @Test
-    fun tenantAwareAuthorizationRequestConverterLeavesRequestUnchangedWithoutSessionTenant() {
-        SecurityContextHolder.getContext().authentication = principal
-        val request = authorizationRequest()
-
-        val converted = TenantAwareAuthorizationRequestConverter(resourceParser).convert(request)
-            as OAuth2AuthorizationCodeRequestAuthenticationToken
-
-        assertFalse(converted.additionalParameters.containsKey(OAuth2ParameterNames.RESOURCE))
     }
 
     @Test
@@ -653,22 +624,6 @@ class SecurityComponentTests(
             ),
         )
     }
-
-    private fun authorizationRequest(): MockHttpServletRequest =
-        MockHttpServletRequest("GET", "/oauth2/authorize").apply {
-            setParameter(OAuth2ParameterNames.RESPONSE_TYPE, "code")
-            setParameter(OAuth2ParameterNames.CLIENT_ID, "client-123")
-            setParameter(OAuth2ParameterNames.REDIRECT_URI, "http://127.0.0.1:8080/login/oauth2/code/client-123")
-            setParameter(OAuth2ParameterNames.SCOPE, "tenant.read")
-            setParameter(OAuth2ParameterNames.STATE, "state-1")
-            queryString = listOf(
-                "${OAuth2ParameterNames.RESPONSE_TYPE}=code",
-                "${OAuth2ParameterNames.CLIENT_ID}=client-123",
-                "${OAuth2ParameterNames.REDIRECT_URI}=http%3A%2F%2F127.0.0.1%3A8080%2Flogin%2Foauth2%2Fcode%2Fclient-123",
-                "${OAuth2ParameterNames.SCOPE}=tenant.read",
-                "${OAuth2ParameterNames.STATE}=state-1",
-            ).joinToString("&")
-        }
 
     private fun cacheMembership(membership: TenantMembership) {
         cacheRepository.save(

@@ -45,7 +45,7 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 
 1. Health と Discovery の issuer、endpoint、対応フローを確認する。
 2. `/api/login` で tenant-a を選択し、HttpOnly のセッション cookie を保持する。
-3. PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定し、認可コード付きの302を確認する。
+3. tenant-a の resource、PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定し、認可コード付きの302を確認する。
 4. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
 5. 認証付き Introspection で tenant_access の claim を確認する。
 6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。

@@ -114,7 +114,7 @@ steps:
   authorize:
     desc: セッションと PKCE を使って認可コードを取得する
     idp:
-      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope={{ urlencode(vars.scope) }}&audience={{ urlencode(vars.audience) }}&state={{ urlencode(vars.state) }}&nonce={{ urlencode(vars.nonce) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
+      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope={{ urlencode(vars.scope) }}&audience={{ urlencode(vars.audience) }}&resource={{ urlencode(vars.tenant_resource) }}&state={{ urlencode(vars.state) }}&nonce={{ urlencode(vars.nonce) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
         get:
           headers:
             Accept: text/html

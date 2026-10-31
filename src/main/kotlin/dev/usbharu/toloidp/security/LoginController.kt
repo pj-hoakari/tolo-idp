@@ -9,7 +9,6 @@ import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.resource.ResourceValidationException
-import dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.slf4j.LoggerFactory
@@ -113,7 +112,6 @@ class LoginController(
             httpRequest.changeSessionId()
         }
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context)
-        session.setAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE, request.tenantId)
         log.structuredInfo(
             "Login completed",
             "event" to "login_completed",

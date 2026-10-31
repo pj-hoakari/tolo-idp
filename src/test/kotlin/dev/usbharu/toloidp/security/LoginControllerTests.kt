@@ -143,6 +143,7 @@ class LoginControllerTests(
                 .queryParam("state", "state")
                 .queryParam("nonce", "nonce")
                 .queryParam("audience", "backend-api")
+                .queryParam("resource", "https://api.example.com/tenants/tenant-a")
                 .queryParam("code_challenge", CODE_CHALLENGE)
                 .queryParam("code_challenge_method", "S256"),
         )
