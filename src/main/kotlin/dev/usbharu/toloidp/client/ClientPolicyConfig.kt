@@ -12,6 +12,7 @@ data class ClientPolicyConfig(
     val allowedTokenExchangeTransitions: Set<String> = emptySet(),
     val tenantAccessTtl: Duration = Duration.ofMinutes(15),
     val eventAccessTtl: Duration = Duration.ofMinutes(10),
+    val tokenIntrospectionAllowed: Boolean = false,
 ) {
     fun toPolicy(clientId: String, client: OAuth2AuthorizationServerProperties.Client): ClientPolicy {
         val registration = client.registration
@@ -30,6 +31,7 @@ data class ClientPolicyConfig(
         }
         val exchange = AuthorizationGrantType.TOKEN_EXCHANGE.value in registration.authorizationGrantTypes
         require(!isPublic || !exchange) { "Public client '$clientId' must not enable token exchange." }
+        require(!isPublic || !tokenIntrospectionAllowed) { "Public client '$clientId' must not enable token introspection." }
         require(allowedTokenExchangeTransitions.all { it == "tenant_access:event_access" }) {
             "Client '$clientId' contains an unsupported token exchange transition."
         }
@@ -48,6 +50,7 @@ data class ClientPolicyConfig(
             allowedScopes = registration.scopes,
             tenantAccessTtl = tenantAccessTtl,
             eventAccessTtl = eventAccessTtl,
+            tokenIntrospectionAllowed = tokenIntrospectionAllowed,
         )
     }
 }

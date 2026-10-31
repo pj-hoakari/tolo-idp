@@ -58,7 +58,11 @@ export async function POST(request: Request) {
     if (accessToken) {
       const introspection = await fetch(`${config.baseUrl}/oauth2/introspect`, {
         method: "POST",
-        body: new URLSearchParams({ ...clientParams, token: accessToken }),
+        body: new URLSearchParams({
+          client_id: config.gatewayClientId,
+          client_secret: config.gatewayClientSecret,
+          token: accessToken,
+        }),
         cache: "no-store",
       });
       if (introspection.ok) accessTokenActive = (await introspection.json()).active === true;

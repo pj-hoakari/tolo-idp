@@ -48,7 +48,7 @@ class TokenIntrospectionEndpointTests(
     }
 
     @Test
-    fun confidentialClientCanIntrospectActiveTenantAccessTokenUsingClientSecretPost() {
+    fun serviceGatewayCanIntrospectActiveTenantAccessTokenUsingClientSecretPost() {
         val tokenValue = "tenant-token-post-${UUID.randomUUID()}"
         saveAuthorization(
             tokenValue = tokenValue,
@@ -59,7 +59,7 @@ class TokenIntrospectionEndpointTests(
             ),
         )
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue, useClientSecretPost = true))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, tokenValue, useClientSecretPost = true))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(true))
             .andExpect(jsonPath("$.client_id").value("client-123"))
@@ -69,7 +69,7 @@ class TokenIntrospectionEndpointTests(
     }
 
     @Test
-    fun confidentialClientCanIntrospectActiveTenantAccessToken() {
+    fun serviceGatewayCanIntrospectActiveTenantAccessToken() {
         val tokenValue = "tenant-token-${UUID.randomUUID()}"
         saveAuthorization(
             tokenValue = tokenValue,
@@ -80,7 +80,7 @@ class TokenIntrospectionEndpointTests(
             ),
         )
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, tokenValue))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(true))
             .andExpect(jsonPath("$.client_id").value("client-123"))
@@ -100,7 +100,7 @@ class TokenIntrospectionEndpointTests(
     }
 
     @Test
-    fun confidentialClientCanIntrospectActiveEventAccessToken() {
+    fun serviceGatewayCanIntrospectActiveEventAccessToken() {
         val tokenValue = "event-token-${UUID.randomUUID()}"
         saveAuthorization(
             tokenValue = tokenValue,
@@ -112,7 +112,7 @@ class TokenIntrospectionEndpointTests(
             ),
         )
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, tokenValue))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(true))
             .andExpect(jsonPath("$.client_id").value("client-123"))
@@ -133,7 +133,7 @@ class TokenIntrospectionEndpointTests(
             claims = tokenClaims(includeForbiddenRoleClaims = true),
         )
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, tokenValue))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(true))
             .andExpect(jsonPath("$.role").doesNotExist())
@@ -152,7 +152,7 @@ class TokenIntrospectionEndpointTests(
         saveAuthorization(tokenValue = expiredToken, expiresAt = Instant.now().minusSeconds(60))
         saveAuthorization(tokenValue = revokedToken, invalidated = true)
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", "missing-token"))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, "missing-token"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(false))
             .andExpect(jsonPath("$.error").doesNotExist())
@@ -160,7 +160,7 @@ class TokenIntrospectionEndpointTests(
             .andExpect(jsonPath("$.token_use").doesNotExist())
             .andExpect(content().string(not(containsString("missing-token"))))
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", expiredToken))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, expiredToken))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(false))
             .andExpect(jsonPath("$.error").doesNotExist())
@@ -168,7 +168,7 @@ class TokenIntrospectionEndpointTests(
             .andExpect(jsonPath("$.token_use").doesNotExist())
             .andExpect(content().string(not(containsString(expiredToken))))
 
-        mockMvc.perform(introspectionRequest("client-123", "secret", revokedToken))
+        mockMvc.perform(introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, revokedToken))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.active").value(false))
             .andExpect(jsonPath("$.error").doesNotExist())
@@ -178,14 +178,41 @@ class TokenIntrospectionEndpointTests(
     }
 
     @Test
-    fun publicPolicyClientCanIntrospectTokens() {
-        val tokenValue = "public-accepted-token-${UUID.randomUUID()}"
+    fun publicPolicyClientCannotIntrospectTokens() {
+        val tokenValue = "public-rejected-token-${UUID.randomUUID()}"
         saveAuthorization(tokenValue = tokenValue)
 
         mockMvc.perform(introspectionRequest(PUBLIC_POLICY_CLIENT_ID, PUBLIC_POLICY_CLIENT_SECRET, tokenValue))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.active").value(true))
-            .andExpect(jsonPath("$.client_id").value("client-123"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_client"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+            .andExpect(content().string(not(containsString(tokenValue))))
+    }
+
+    @Test
+    fun confidentialClientWithoutIntrospectionPermissionCannotIntrospectTokens() {
+        val tokenValue = "unpermitted-token-${UUID.randomUUID()}"
+        saveAuthorization(tokenValue = tokenValue)
+
+        for (useClientSecretPost in listOf(false, true)) {
+            mockMvc.perform(introspectionRequest("client-123", "secret", tokenValue, useClientSecretPost))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_client"))
+                .andExpect(jsonPath("$.error_description").doesNotExist())
+                .andExpect(content().string(not(containsString(tokenValue))))
+                .andExpect(content().string(not(containsString("secret"))))
+        }
+    }
+
+    @Test
+    fun clientWithMissingPolicySettingsCannotIntrospectTokens() {
+        val tokenValue = "missing-policy-token-${UUID.randomUUID()}"
+        saveAuthorization(tokenValue = tokenValue)
+        registeredClientRepository.clearPolicy(PUBLIC_POLICY_CLIENT_ID)
+
+        mockMvc.perform(introspectionRequest(PUBLIC_POLICY_CLIENT_ID, PUBLIC_POLICY_CLIENT_SECRET, tokenValue))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_client"))
             .andExpect(content().string(not(containsString(tokenValue))))
     }
 
@@ -193,7 +220,7 @@ class TokenIntrospectionEndpointTests(
     fun invalidTokenParametersAreRejected() {
         mockMvc.perform(
             post("/oauth2/introspect")
-                .with(httpBasic("client-123", "secret"))
+                .with(httpBasic(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET))
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED),
         )
             .andExpect(status().isBadRequest)
@@ -203,7 +230,7 @@ class TokenIntrospectionEndpointTests(
 
         mockMvc.perform(
             post("/oauth2/introspect")
-                .with(httpBasic("client-123", "secret"))
+                .with(httpBasic(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET))
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .param("token", ""),
         )
@@ -214,7 +241,7 @@ class TokenIntrospectionEndpointTests(
 
         mockMvc.perform(
             post("/oauth2/introspect")
-                .with(httpBasic("client-123", "secret"))
+                .with(httpBasic(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET))
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .param("token", "one", "two"),
         )
@@ -231,7 +258,7 @@ class TokenIntrospectionEndpointTests(
         val tokenValue = "hint-token-${UUID.randomUUID()}"
 
         mockMvc.perform(
-            introspectionRequest("client-123", "secret", tokenValue)
+            introspectionRequest(GATEWAY_CLIENT_ID, GATEWAY_CLIENT_SECRET, tokenValue)
                 .param("token_type_hint", "access_token", "refresh_token"),
         )
             .andExpect(status().isBadRequest)
@@ -356,5 +383,7 @@ class TokenIntrospectionEndpointTests(
     private companion object {
         const val PUBLIC_POLICY_CLIENT_ID = "public-introspection-client"
         const val PUBLIC_POLICY_CLIENT_SECRET = "public-secret"
+        const val GATEWAY_CLIENT_ID = "service-gateway"
+        const val GATEWAY_CLIENT_SECRET = "gateway-secret"
     }
 }

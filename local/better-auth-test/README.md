@@ -31,6 +31,8 @@ docker compose -f docker-compose.dev.native.yaml up -d --build
 
 The example environment uses `http://localhost:18080` for both IdP URLs. The Better Auth callback is `http://localhost:3000/api/auth/callback/tolo-idp`, which is registered for the development client `client-123`.
 
+After a revocation, the app checks the access token through Introspection with the development Service Gateway client `service-gateway`. Only that client may call the Introspection endpoint. Set `TOLO_IDP_GATEWAY_CLIENT_ID` and `TOLO_IDP_GATEWAY_CLIENT_SECRET` to use other credentials.
+
 ## Run this app
 
 ```bash

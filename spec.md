@@ -290,17 +290,20 @@ allowed_audiences
 allowed_scopes
 tenant_access_ttl_seconds
 event_access_ttl_seconds
+token_introspection_allowed
 ```
 
 ### 8.1 設定の保持と構成ファイル
 
 `allowed_grant_types` と `allowed_scopes` は、それぞれ RegisteredClient の `authorizationGrantTypes` と `scopes` を正とする。
 
-`client_type`、`allowed_audiences`、`allowed_token_exchange_transitions` は ClientSettings の `tolo-idp.*` 拡張設定に保存する。構成管理クライアントの `client_type` は認証方式から決める。`none` のみなら public、それ以外は confidential とし、`none` と他の認証方式の混在は拒否する。
+`client_type`、`allowed_audiences`、`allowed_token_exchange_transitions`、`token_introspection_allowed` は ClientSettings の `tolo-idp.*` 拡張設定に保存する。構成管理クライアントの `client_type` は認証方式から決める。`none` のみなら public、それ以外は confidential とし、`none` と他の認証方式の混在は拒否する。
 
 `tenant_access_ttl_seconds` は TokenSettings の標準 `accessTokenTimeToLive`、`event_access_ttl_seconds` は `tolo-idp.event-access-ttl-seconds` に保存する。認可処理はこれらを型付きの ClientPolicy ビューで読み取る。拡張設定が不足・不正の場合は token 発行を拒否し、既定値で補わない。
 
 構成管理では、Spring Boot 標準の登録設定と `tolo-idp.clients` を同じ登録キーで対応付ける。登録キーと `client-id` は別の値でもよい。
+
+`token_introspection_allowed` は `tolo-idp.clients.<登録キー>.token-introspection-allowed` で指定し、未指定時は false とする。Service Gateway の client だけを true にする（13.1 節）。
 
 ```yaml
 spring:
@@ -329,7 +332,7 @@ tolo-idp:
       event-access-ttl: 10m
 ```
 
-両設定の登録キーは完全に一致させる。`tolo-idp` 配下の未知の設定キーはバインド時に拒否し、誤記を既定値で補わない。独自設定の欠落・登録設定のないキー・空の audience・不正な TTL・未知 scope・未知の交換遷移・public client の Token Exchange・JWT 以外の access token 形式を、DB 更新前に拒否する。TTL は正の整数秒とし、未指定時は tenant 15 分・event 10 分とする。tenant TTL は上記の独自構成を正とし、RegisteredClient の標準 access token TTL に反映する。
+両設定の登録キーは完全に一致させる。`tolo-idp` 配下の未知の設定キーはバインド時に拒否し、誤記を既定値で補わない。独自設定の欠落・登録設定のないキー・空の audience・不正な TTL・未知 scope・未知の交換遷移・public client の Token Exchange・public client の Introspection 許可・JWT 以外の access token 形式を、DB 更新前に拒否する。TTL は正の整数秒とし、未指定時は tenant 15 分・event 10 分とする。tenant TTL は上記の独自構成を正とし、RegisteredClient の標準 access token TTL に反映する。
 
 同期対象は完成した RegisteredClient 全体とし、標準項目と独自項目を同一トランザクションで保存する。構成管理外クライアントの設定は起動時に変更しない。
 
@@ -689,12 +692,20 @@ Access Token はすべて JWT とする。
 ```text
 - Opaque Token は使用しない
 - Resource Server は JWT を自己検証できる
-- 認証済み client 向けに Token Introspection を提供する
+- Service Gateway 向けに Token Introspection を提供する
 ```
 
 Token Introspection は RFC 7662 の `POST /oauth2/introspect` とする。
 
-Introspection Request は登録済み client の認証を必須とする。confidential client と public client のどちらも Introspection を利用できる。
+Introspection を利用できるのは Service Gateway だけとする。Introspection Request は client 認証を必須とし、認証した client が confidential client で、`token_introspection_allowed` が true の場合だけ受け付ける。
+
+client 認証に失敗した場合は `401 Unauthorized` とする。認証に成功しても上記を満たさない client は、`400 Bad Request` と以下で拒否する。public client、許可のない confidential client、拡張設定が不足・不正な client がこれにあたる。Token Revocation の public client 拒否（17.1 節）と同じ error code を使う。
+
+```json
+{
+  "error": "invalid_client"
+}
+```
 
 存在しない token、失効済み token、期限切れ token、nbf より前の token は以下のように返す。
 
@@ -1172,13 +1183,13 @@ tolo-idp.clients.client-123.tenant-access-ttl=15m
 tolo-idp.clients.client-123.event-access-ttl=10m
 ```
 
-RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev-jvm / dev-native / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
+RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev-jvm / dev-native / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。開発用 Service Gateway の `service-gateway` も dev-jvm / dev-native / test の構成で定義する。secret は環境変数 `TOLO_IDP_SERVICE_GATEWAY_CLIENT_SECRET`（未設定時は `gateway-secret`）を使う。`service-gateway` は Introspection だけを許可する。登録には grant が 1 つ以上必要なため、`refresh_token` だけを設定する。authorization code grant を持たないので、この client は Refresh Token を得られず、token を取得できない。本番では運用側が Service Gateway の client を構成する。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
 
 `client_secret_basic` / `client_secret_post` / `client_secret_jwt` のいずれかを使う構成管理クライアントは、空白のみではない client secret を必須とする。未設定・空文字・空白のみの場合、DB 更新前に同期を拒否し、起動を失敗させる。既存の secret を暗黙に保持したり、空文字を開発用の既定値へ置き換えたりしない。`none` や `private_key_jwt` など secret を使わない認証方式のみの場合は、secret の未設定を許可する。
 
 同じ登録キーの `client-id` を変更した場合は、旧クライアントの削除と新クライアントの登録として扱う。削除予定の構成管理クライアントが使用する内部 ID は、旧データの削除後に再利用できる。構成管理外クライアント、または構成に残る別クライアントとの内部 ID 衝突は拒否する。
 
-構成管理クライアントの削除時は、その内部 ID に紐付く保存済み authorization と consent も同一トランザクションで削除する。他のクライアントのデータは変更しない。削除された authorization の token を、認証済みの別クライアントが Introspection した場合は `200 OK` と `{"active": false}` を返す。この削除による JWT の denylist 登録は行わず、Resource Server における自己検証時の失効方針は 17 節に従う。
+構成管理クライアントの削除時は、その内部 ID に紐付く保存済み authorization と consent も同一トランザクションで削除する。他のクライアントのデータは変更しない。削除された authorization の token を、Introspection を許可された別クライアントが Introspection した場合は `200 OK` と `{"active": false}` を返す。この削除による JWT の denylist 登録は行わず、Resource Server における自己検証時の失効方針は 17 節に従う。
 
 seed data が有効な場合の開発用デフォルト:
 
@@ -1189,6 +1200,8 @@ client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
 allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
+gateway_client_id=service-gateway
+gateway_client_secret=gateway-secret
 ```
 
 ### 22.1 RegisteredClient 設定の集約
