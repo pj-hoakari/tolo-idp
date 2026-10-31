@@ -52,15 +52,10 @@ class TenantScopedUserFlowTests(
                     .andExpect(jsonPath("$.sub").value(subject)).andReturn().request.session as MockHttpSession
                 // A session from one tenant must not authorize a resource in the other tenant.
                 val otherTenant = if (tenant == "tenant-a") "tenant-b" else "tenant-a"
-                session.setAttribute(dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE, otherTenant)
-                try {
-                    mvc.perform(authorize(session, otherTenant))
-                        .andExpect(status().isFound)
-                        .andExpect(header().string("Location", org.hamcrest.Matchers.containsString("error=access_denied")))
-                        .andExpect(header().string("Location", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("code="))))
-                } finally {
-                    session.setAttribute(dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE, tenant)
-                }
+                mvc.perform(authorize(session, otherTenant))
+                    .andExpect(status().isFound)
+                    .andExpect(header().string("Location", org.hamcrest.Matchers.containsString("error=access_denied")))
+                    .andExpect(header().string("Location", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("code="))))
                 val location = mvc.perform(authorize(session, tenant)).andExpect(status().isFound).andReturn().response.redirectedUrl!!
                 val code = UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
                 val issued = mvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))

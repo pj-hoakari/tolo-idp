@@ -27,7 +27,7 @@ class OidcAuthenticationRequestValidator(private val hintDecoder: JwtDecoder, pr
             // Request Objects must never be silently replaced by the outer parameters.
             if (parameters.containsKey("request")) reject("request_not_supported", "request")
             if (parameters.containsKey("request_uri") ||
-                (request as? TenantAuthorizationRequestToken)?.httpRequest?.parameterMap?.containsKey("request_uri") == true
+                (request as? AuthorizationRequestToken)?.httpRequest?.parameterMap?.containsKey("request_uri") == true
             ) reject("request_uri_not_supported", "request_uri")
             parameter("response_mode")?.let {
                 if (it != "query") reject("invalid_request", "response_mode")
@@ -47,7 +47,7 @@ class OidcAuthenticationRequestValidator(private val hintDecoder: JwtDecoder, pr
         val now = clock.instant().epochSecond
         val authTime = authenticationTime(principal)
         val loginId = (principal.details as? Map<*, *>)?.get(LOGIN_ID) as? String
-        val httpRequest = (request as? TenantAuthorizationRequestToken)?.httpRequest
+        val httpRequest = (request as? AuthorizationRequestToken)?.httpRequest
         val fingerprint = httpRequest?.parameterMap?.toSortedMap()?.let { parameters ->
             buildString {
                 append(parameters.size).append(';')

@@ -218,6 +218,12 @@ class OidcRequestContractTests(
     }
 
     @Test
+    fun loggedInRequestWithoutTenantResourceIsRejected() {
+        val session = login()
+        assertError(mvc.perform(authorize(session, resource = null)), "invalid_request")
+    }
+
+    @Test
     fun scopeAndMembershipErrorsReturnToClientWithState() {
         val session = login()
         cache.deleteAll()
@@ -283,10 +289,14 @@ class OidcRequestContractTests(
         if (session != null) request.session(session)
         return mvc.perform(request).andExpect(status().isOk).andReturn().request.session as MockHttpSession
     }
-    private fun authorize(session: MockHttpSession? = null, scope: String = "openid tenant.read", clientId: String = "client-123", redirectUri: String = REDIRECT): MockHttpServletRequestBuilder {
+    private fun authorize(
+        session: MockHttpSession? = null, scope: String = "openid tenant.read", clientId: String = "client-123",
+        redirectUri: String = REDIRECT, resource: String? = "https://api.example.com/tenants/tenant-a",
+    ): MockHttpServletRequestBuilder {
         val request = get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", clientId)
             .queryParam("redirect_uri", redirectUri).queryParam("scope", scope).queryParam("state", "request-state")
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
+        if (resource != null) request.queryParam("resource", resource)
         if (session != null) request.session(session)
         return request
     }
