@@ -23,7 +23,6 @@ class CorsConfig {
             allowCredentials = true
         }
         source.registerCorsConfiguration("/api/login", configuration)
-        source.registerCorsConfiguration("/api/logout", configuration)
         return source
     }
 

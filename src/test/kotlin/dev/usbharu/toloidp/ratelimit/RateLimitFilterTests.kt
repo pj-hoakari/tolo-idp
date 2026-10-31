@@ -77,8 +77,8 @@ class RateLimitFilterTests(
 
     @Test
     fun authenticatedRequestsUsePrincipalForUserDimensions() {
-        mockMvc.perform(post("/api/logout").with(user("user-123")).withRemoteAddr("192.0.2.11"))
-            .andExpect(status().isNoContent)
+        mockMvc.perform(get("/actuator/health").with(user("user-123")).withRemoteAddr("192.0.2.11"))
+            .andExpect(status().isOk)
 
         assertEquals(RateLimitIdentity("192.0.2.11", "user-123"), rateLimitService.lastIdentity.get())
     }

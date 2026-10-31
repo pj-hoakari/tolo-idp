@@ -1,8 +1,6 @@
 package dev.usbharu.toloidp.security
 
 import jakarta.servlet.http.HttpServletRequest
-import jakarta.servlet.http.HttpServletResponse
-import jakarta.servlet.http.HttpSession
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
@@ -131,28 +129,6 @@ class LoginController(
                 authorities = user.authorities.mapNotNull { it.authority },
             ),
         )
-    }
-
-    @PostMapping("/logout")
-    fun logout(
-        session: HttpSession?,
-        response: HttpServletResponse,
-    ): ResponseEntity<Void> {
-        log.structuredInfo(
-            "Logout started",
-            "event" to "logout_started",
-            "session_present" to (session != null),
-        )
-        SecurityContextHolder.clearContext()
-        session?.invalidate()
-        response.status = HttpStatus.NO_CONTENT.value()
-        log.structuredInfo(
-            "Logout completed",
-            "event" to "logout_completed",
-            "session_invalidated" to (session != null),
-            "result" to "success",
-        )
-        return ResponseEntity.noContent().build()
     }
 
     companion object {

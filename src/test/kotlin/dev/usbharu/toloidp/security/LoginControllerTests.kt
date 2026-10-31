@@ -112,18 +112,6 @@ class LoginControllerTests(
             .andExpect(status().isBadRequest)
     }
 
-    @Test
-    fun logoutInvalidatesExistingSession() {
-        val session = mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
-            .andExpect(status().isOk)
-            .andReturn()
-            .request
-            .session as MockHttpSession
-
-        mockMvc.perform(post("/api/logout").session(session))
-            .andExpect(status().isNoContent)
-    }
-
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun openIdAuthorizationCodeCanBeUsedAtUserInfoEndpoint(profile: Boolean) {

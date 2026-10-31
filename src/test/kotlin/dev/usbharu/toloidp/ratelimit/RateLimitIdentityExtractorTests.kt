@@ -41,7 +41,7 @@ class RateLimitIdentityExtractorTests(
     fun usesAuthenticatedPrincipalNameAsUserId() {
         SecurityContextHolder.getContext().authentication =
             UsernamePasswordAuthenticationToken.authenticated("user-123", null, emptyList())
-        val request = MockHttpServletRequest("GET", "/api/logout").apply {
+        val request = MockHttpServletRequest("GET", "/userinfo").apply {
             remoteAddr = "192.0.2.10"
         }
 
