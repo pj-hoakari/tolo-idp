@@ -124,3 +124,6 @@ tolo-idp:
     allowed-origins:
       - http://localhost:3000
       - http://127.0.0.1:3000
+  login:
+    page-url: http://localhost:3000/login
+    error-page-url: http://localhost:3000/auth/error

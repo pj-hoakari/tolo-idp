@@ -66,21 +66,24 @@ Content-Type: application/json
 {
   "username": "user-123",
   "password": "password",
-  "tenantId": "tenant-a"
+  "challenge": "<認可 endpoint が発行した login challenge>"
 }
 ```
 
-`/api/login` は未認証で呼び出せる。現行実装ではアプリケーション API の CSRF 検証は無効化する。
+`/api/login` は未認証で呼び出せる。呼び出すのは Web のログイン画面だけとし、OIDC client には呼び出させない。現行実装ではアプリケーション API の CSRF 検証は無効化する。
 
 Authorization Server は以下を確認する。
 
 ```text
-- tenantId が ID 形式に一致する
-- (tenantId, username) で特定した IdP 内の user の password が一致する
+- challenge が発行済みで、期限内で、まだ認証されていない
+- challenge と組にした認可要求の tenant resource から tenant を決める
+- (tenant, username) で特定した IdP 内の user の password が一致する
 - relation service 上で user が tenant に所属している
 ```
 
-成功時は Spring Security セッションを作成する。セッションに tenant を保存しない。
+tenant は challenge だけから決め、本文の `tenantId` などからは受け取らない。
+
+成功時は Spring Security セッションを作成し、challenge をこのログインで認証済みにする。セッションに tenant を保存しない。
 
 レスポンス:
 
@@ -94,7 +97,7 @@ Authorization Server は以下を確認する。
 }
 ```
 
-認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
+challenge が未知・期限切れ・認証済みの場合と本文が不正な場合は `400 Bad Request`、認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。Web のログイン画面は `401` だけを資格情報の誤りとして扱い、ほかの失敗では認可をやり直させる。認証失敗では challenge を認証済みにしないので、同じ challenge で再入力できる。
 
 ログイン成功時には、パスワードを検証した時刻とログインごとの識別子をサーバー側で記録する。認証時刻は ID Token の `auth_time` に使い、Refresh Token による更新でも元の認証時刻を維持する。token の更新を再ログインとして扱わない。
 
@@ -104,7 +107,7 @@ Authorization Server は以下を確認する。
 
 権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, username)` を渡し、サロゲートキーを渡さない。
 
-ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も `(tenantId, username)` ごとに分離する。
+ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。ログインでは challenge から決めた tenant を使う。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も challenge から決めた tenantId と username の組ごとに分離する。challenge が未知・期限切れ・認証済みの要求には、IP 単位の制限だけを適用する。
 
 開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId は従来どおり `user-123` とする。
 
@@ -127,23 +130,39 @@ access token に `profile` scope が含まれる場合、現在の username を 
 }
 ```
 
-### 4.1.3 OIDC の認可要求と再認証
+### 4.1.3 OIDC の認可要求と login challenge
 
-ログイン画面と `/api/login` の呼び出しは別フロントエンドの責務とする。IdP はログイン画面を提供しない。
+ログイン画面とエラー画面は Web が提供し、IdP は画面を提供しない。IdP はリダイレクトと JSON だけを返す。ログイン画面の URL は `tolo-idp.login.page-url`、エラー画面の URL は `tolo-idp.login.error-page-url` に設定する。
 
-認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
+認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。
 
-認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。ログインしたユーザーの tenant と異なる tenant の要求、および tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
+認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
-`prompt=login` と `max_age=0` は再ログインを要求する。正の `max_age` は認証からの経過秒数を検証し、超過時は再ログインを要求する。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、画面を表示せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。
+ログイン状態がない要求、ログインしたユーザーが要求の tenant のユーザーでない要求、再ログインが必要な要求には、一回限りの login challenge を発行する。発行の前に、client policy、`resource`、`audience`、OIDC のパラメータを検証する。membership と role による scope の検証は、ログイン後に要求を再開したときに行う。IdP は challenge を元の認可要求のパラメータと組にして保存し、ブラウザを `<ログイン画面の URL>?challenge=<challenge>` へ `302` でリダイレクトする。ほかのパラメータは付けない。
 
-フロントエンドは `login_required` を受けたら、同じブラウザセッションで `/api/login` を呼び、元の認可要求を再送する。IdP はセッションごとに1件、5分間だけ再認証待ちの要求を保持する。要求の全パラメータに結び付け、新たなパスワード認証を確認してから認可を再開する。完了した要求で同じ再認証結果を再利用しない。`state` などのパラメータを変更した要求は別の要求として扱う。
+challenge は 256 bit の乱数を base64url で表した値とし、発行から10分で期限が切れる。IdP は challenge の SHA-256 ハッシュだけを DB の `idp_login_challenge` に保存し、challenge の値をログに出さない。期限切れの challenge は次の challenge を発行するときに削除する。保存する認可要求は JSON で 8 KiB までとし、超える要求には challenge を発行せず、エラー画面へ `error=invalid_request` でリダイレクトする。
+
+Web のログイン画面は資格情報と challenge を `/api/login`（4.1 節）へ送り、成功したらブラウザで `<authorization_endpoint>?challenge=<challenge>` を開く。認可 endpoint はこの要求で `challenge` だけを受け付け、次をすべて満たすときに challenge を使用済みにして、保存した元の認可要求を同じ検証で再開する。
+
+```text
+- challenge が期限内で、まだ使われていない
+- challenge が /api/login で認証済みである
+- challenge を認証したログインが、現在のセッションのログインである
+```
+
+満たさない要求と、`challenge` 以外のパラメータを伴う要求は、元の認可要求を再開せず、エラー画面へ `error=invalid_challenge` でリダイレクトする。client の redirect URI へは返さない。照合に失敗した challenge は使用済みにしない。
+
+`prompt=login` と `max_age=0` は、ログイン状態があっても新しい challenge を発行する。その challenge を認証して再開した要求だけが満たし、ほかの challenge の認証や以前のログインでは満たさない。正の `max_age` は認証からの経過秒数を検証し、超過時は新しい challenge を発行する。再開した要求では経過秒数を改めて検証しない。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、challenge を発行せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。再開した要求の ID Token の `auth_time` は、challenge を認証したログインの時刻とする。
+
+challenge の発行、認証、使用、拒否は、`login_challenge_issued`、`login_challenge_authenticated`、`login_challenge_consumed`、`login_challenge_rejected` の構造化ログに記録する。challenge は値ではなくハッシュ（`challenge_id`）で識別する。
+
+challenge は DB に保存するので、どの IdP インスタンスでも照合できる。ログイン状態は各インスタンスのメモリ上のセッションに保存するので、複数のインスタンスで動かす場合は、セッションを1つのインスタンスに固定するか共有する。
 
 `id_token_hint` は署名、issuer、対象 client、ID Token の形式を検証する。過去に発行された期限切れ ID Token も hint として受け付けるが、access token や署名不正の値は受け付けない。hint の `sub` と認証済みユーザーが異なる場合は `login_required` とし、別ユーザーの token を発行しない。
 
 `nonce` は省略可能とし、指定時は単一の文字列を要求する。重複は認可コード発行前に `invalid_request` とする。空文字列は省略と同じ扱いにする。空白を含む値はそのまま受け付け、変更せず ID Token の `nonce` に含める。
 
-同意画面とアカウント選択画面は提供しない。認証済み要求の `prompt=consent` は `consent_required`、`prompt=select_account` は `account_selection_required` とし、要求された対話を省略して認可コードを発行しない。未知の prompt 値は `invalid_request` とする。再認証が必要な要求では、先に `login_required` を返す。
+同意画面とアカウント選択画面は提供しない。認証済み要求の `prompt=consent` は `consent_required`、`prompt=select_account` は `account_selection_required` とし、要求された対話を省略して認可コードを発行しない。未知の prompt 値は `invalid_request` とする。再ログインが必要な要求では、先に challenge でログインさせ、再開した要求にこれらのエラーを返す。
 
 OIDC Request Object は提供しない。`request` を指定した OIDC 認可要求は `request_not_supported`、`request_uri` を指定した OIDC 認可要求は `request_uri_not_supported` とし、外側のパラメータだけで認可を続行しない。Discovery の `request_parameter_supported` と `request_uri_parameter_supported` は明示的に `false` とする。
 
@@ -1162,6 +1181,8 @@ token_invalid_claims
 ```text
 tolo-idp.issuer=http://localhost:8080
 tolo-idp.resource.allowed-hosts=api.example.com
+tolo-idp.login.page-url=（必須。dev-jvm / dev-native / test は http://localhost:3000/login）
+tolo-idp.login.error-page-url=（必須。dev-jvm / dev-native / test は http://localhost:3000/auth/error）
 tolo-idp.relation.base-url=http://localhost:8081
 tolo-idp.relation.connect-timeout=2s
 tolo-idp.relation.read-timeout=3s

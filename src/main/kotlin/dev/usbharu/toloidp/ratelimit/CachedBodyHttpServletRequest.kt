@@ -24,7 +24,7 @@ class CachedBodyHttpServletRequest(
         BufferedReader(InputStreamReader(inputStream, characterEncoding ?: Charsets.UTF_8.name()))
 
     companion object {
-        /** Login JSON carries only username, password, and tenantId. */
+        /** Login JSON carries only username, password, and challenge. */
         const val MAX_LOGIN_JSON_BYTES: Int = 8 * 1024
     }
 }

@@ -60,6 +60,8 @@ Native は `ghcr.io/pj-hoakari/tolo-idp`、JVM は `ghcr.io/pj-hoakari/tolo-idp-
 | `TOLO_IDP_POSTGRES_PASSWORD` | PostgreSQL パスワード。必須 |
 | `TOLO_IDP_POSTGRES_USER` | PostgreSQL ユーザー。既定値 `tolo_idp` |
 | `TOLO_IDP_ISSUER` | 外部に公開する issuer URL。必須 |
+| `TOLO_IDP_LOGIN_PAGE_URL` | Web のログイン画面の URL。例: `https://example.com/login`。必須 |
+| `TOLO_IDP_LOGIN_ERROR_PAGE_URL` | Web の認可エラー画面の URL。例: `https://example.com/auth/error`。必須 |
 | `TOLO_IDP_JWK_PRIVATE_KEY_HOST_PATH` | ホスト側の RSA 秘密鍵ファイルの絶対パス。必須 |
 | `TOLO_IDP_JWK_PRIVATE_KEY_LOCATION` | コンテナ内の秘密鍵ファイルの絶対パス。例: `/run/tolo-idp/private.pem`。必須 |
 
@@ -103,5 +105,7 @@ docker compose -f docker-compose.dev-jvm.yaml down
 CI と公開手順は [CI.md](CI.md) を参照してください。
 
 ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service には `(tenantId, username)` を渡します。開発用 seed は `(tenant-a, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
+
+認可要求には `resource` に tenant resource（例: `https://api.example.com/tenants/tenant-a`）を指定します。ログイン状態がない要求と `prompt=login` の要求は、Web のログイン画面（開発環境では `http://localhost:3000/login`）へ `challenge` を付けてリダイレクトします。ログイン画面は `POST /api/login` に `username`、`password`、`challenge` を送り、成功したら `/oauth2/authorize?challenge=...` を開いて元の認可要求を再開します。詳しくは [spec.md](spec.md) の 4.1 節と 4.1.3 節を参照してください。
 
 ログイン名の取得には、認可時に `openid profile` scope を要求し、その access token で `GET /userinfo` を呼び出してください。`preferred_username` に現在のログイン名、`sub` に UUID の user ID を返します。

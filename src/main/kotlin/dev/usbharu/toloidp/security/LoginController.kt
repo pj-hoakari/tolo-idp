@@ -8,7 +8,6 @@ import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
-import dev.usbharu.toloidp.resource.ResourceValidationException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.slf4j.LoggerFactory
@@ -34,6 +33,7 @@ class LoginController(
     private val passwordEncoder: PasswordEncoder,
     private val relationService: RelationService,
     private val resourceParser: ResourceParser,
+    private val challenges: LoginChallenges,
     private val clock: Clock,
 ) {
     @PostMapping("/login")
@@ -45,30 +45,17 @@ class LoginController(
             "Login started",
             "event" to "login_started",
             "username" to request.username,
-            "tenant_id" to request.tenantId,
         )
-        try {
-            resourceParser.requireValidId(request.tenantId)
-        } catch (ex: ResourceValidationException) {
-            log.structuredWarn(
-                "Login rejected",
-                ex,
-                "event" to "login_rejected",
-                "username" to request.username,
-                "tenant_id" to request.tenantId,
-                "failure_reason" to "invalid_tenant_id",
-            )
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenantId")
-        }
+        val tenantId = challenges.tenant(request.challenge) ?: rejectChallenge(request)
         val user = try {
-            userDetailsService.loadUserByUsername(request.tenantId, request.username)
+            userDetailsService.loadUserByUsername(tenantId, request.username)
         } catch (ex: RuntimeException) {
             log.structuredWarn(
                 "Login rejected",
                 ex,
                 "event" to "login_rejected",
                 "username" to request.username,
-                "tenant_id" to request.tenantId,
+                "tenant_id" to tenantId,
                 "failure_reason" to "user_lookup_failed",
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
@@ -78,24 +65,26 @@ class LoginController(
                 "Login rejected",
                 "event" to "login_rejected",
                 "username" to request.username,
-                "tenant_id" to request.tenantId,
+                "tenant_id" to tenantId,
                 "failure_reason" to "bad_credentials",
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         try {
-            relationService.getMembership(request.tenantId, user.username)
+            relationService.getMembership(tenantId, user.username)
         } catch (ex: RelationLookupException) {
             log.structuredWarn(
                 "Login rejected",
                 ex,
                 "event" to "login_rejected",
                 "username" to user.username,
-                "tenant_id" to request.tenantId,
+                "tenant_id" to tenantId,
                 "failure_reason" to ex.reason,
             )
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not allowed")
         }
+        val loginId = UUID.randomUUID().toString()
+        if (!challenges.authenticate(request.challenge, loginId, user.id)) rejectChallenge(request)
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
             user.id,
             null,
@@ -103,7 +92,7 @@ class LoginController(
         )
         authentication.details = linkedMapOf(
             OidcAuthenticationRequestValidator.AUTH_TIME to clock.instant().epochSecond.toString(),
-            OidcAuthenticationRequestValidator.LOGIN_ID to UUID.randomUUID().toString(),
+            OidcAuthenticationRequestValidator.LOGIN_ID to loginId,
         )
         val context = SecurityContextImpl(authentication)
         SecurityContextHolder.setContext(context)
@@ -116,7 +105,7 @@ class LoginController(
             "Login completed",
             "event" to "login_completed",
             "username" to user.username,
-            "tenant_id" to request.tenantId,
+            "tenant_id" to tenantId,
             "authority_count" to user.authorities.size,
             "result" to "success",
         )
@@ -124,11 +113,21 @@ class LoginController(
             LoginResponse(
                 username = user.username,
                 sub = user.id,
-                tenantId = request.tenantId,
-                resource = resourceParser.tenantResource(request.tenantId),
+                tenantId = tenantId,
+                resource = resourceParser.tenantResource(tenantId),
                 authorities = user.authorities.mapNotNull { it.authority },
             ),
         )
+    }
+
+    private fun rejectChallenge(request: LoginRequest): Nothing {
+        log.structuredWarn(
+            "Login rejected",
+            "event" to "login_rejected",
+            "username" to request.username,
+            "failure_reason" to "login_challenge_invalid",
+        )
+        throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid login challenge")
     }
 
     @PostMapping("/logout")
@@ -161,7 +160,7 @@ class LoginController(
 data class LoginRequest(
     val username: String,
     val password: String,
-    val tenantId: String,
+    val challenge: String,
 )
 
 data class LoginResponse(

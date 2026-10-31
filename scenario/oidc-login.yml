@@ -19,6 +19,8 @@ vars:
   username: user-123
   password: password
   tenant_id: tenant-a
+  web_origin: http://localhost:3000
+  login_page: http://localhost:3000/login
   client_id: client-123
   client_secret: secret
   redirect_uri: http://127.0.0.1:8080/login/oauth2/code/client-123
@@ -36,6 +38,7 @@ secrets:
   - vars.password
   - vars.client_secret
   - vars.code_verifier
+  - challenge
   - '"Basic " + toBase64(vars.client_id + ":" + vars.client_secret)'
   - authorization_code
   - tenant_access_token
@@ -84,20 +87,37 @@ steps:
       token_path: trimPrefix(current.res.body.token_endpoint, vars.issuer)
       introspection_path: trimPrefix(current.res.body.introspection_endpoint, vars.issuer)
 
+  authorize:
+    desc: ログイン状態のない認可要求は Web のログイン画面へ challenge だけを付けてリダイレクトする
+    idp:
+      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope={{ urlencode(vars.scope) }}&audience={{ urlencode(vars.audience) }}&resource={{ urlencode(vars.tenant_resource) }}&state={{ urlencode(vars.state) }}&nonce={{ urlencode(vars.nonce) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
+        get:
+          headers:
+            Accept: text/html
+          body: null
+    test: |
+      current.res.status == 302
+      && current.res.headers["Location"] != nil
+      && hasPrefix(current.res.headers["Location"][0], vars.login_page + "?challenge=")
+      && len(url(current.res.headers["Location"][0]).Query()) == 1
+      && len(url(current.res.headers["Location"][0]).Query().Get("challenge")) >= 43
+    bind:
+      challenge: url(current.res.headers["Location"][0]).Query().Get("challenge")
+
   login:
-    desc: 同一オリジンのログイン API でセッションを作る
+    desc: ログイン画面と同じ形で challenge と資格情報を送り、セッションを作る
     idp:
       /api/login:
         post:
           headers:
-            Origin: "{{ vars.issuer }}"
-            Referer: "{{ vars.issuer }}/login"
+            Origin: "{{ vars.web_origin }}"
+            Referer: "{{ vars.login_page }}"
             Accept: application/json
           body:
             application/json:
               username: "{{ vars.username }}"
               password: "{{ vars.password }}"
-              tenantId: "{{ vars.tenant_id }}"
+              challenge: "{{ challenge }}"
 
   inspect_login:
     desc: ログインのレスポンスと HttpOnly cookie を確認する
@@ -111,10 +131,10 @@ steps:
       && steps.login.res.cookies["JSESSIONID"] != nil
       && steps.login.res.cookies["JSESSIONID"].HttpOnly
 
-  authorize:
-    desc: セッションと PKCE を使って認可コードを取得する
+  resume:
+    desc: 認証した challenge で元の認可要求を再開し、認可コードを取得する
     idp:
-      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope={{ urlencode(vars.scope) }}&audience={{ urlencode(vars.audience) }}&resource={{ urlencode(vars.tenant_resource) }}&state={{ urlencode(vars.state) }}&nonce={{ urlencode(vars.nonce) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
+      "{{ authorization_path }}?challenge={{ urlencode(challenge) }}":
         get:
           headers:
             Accept: text/html

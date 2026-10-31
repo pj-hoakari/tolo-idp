@@ -13,10 +13,11 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import dev.usbharu.toloidp.security.challengeFrom
+import dev.usbharu.toloidp.security.loginWithChallenge
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.time.Instant
@@ -59,19 +60,15 @@ class CorsConfigTests(
 
     @Test
     fun loginPostIncludesCorsHeadersForConfiguredOrigin() {
+        val challenge = mockMvc.challengeFrom(
+            get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
+                .queryParam("redirect_uri", "http://127.0.0.1:8080/login/oauth2/code/client-123")
+                .queryParam("scope", "openid tenant.read").queryParam("resource", "https://api.example.com/tenants/tenant-a")
+                .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
+        )
         mockMvc.perform(
-            post("/api/login")
-                .header("Origin", "http://localhost:3000")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    """
-                    {
-                      "username": "user-123",
-                      "password": "password",
-                      "tenantId": "tenant-a"
-                    }
-                    """.trimIndent(),
-                ),
+            loginWithChallenge(challenge)
+                .header("Origin", "http://localhost:3000"),
         )
             .andExpect(status().isOk)
             .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))

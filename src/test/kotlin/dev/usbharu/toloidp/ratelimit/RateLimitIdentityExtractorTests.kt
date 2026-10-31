@@ -17,7 +17,9 @@ import kotlin.test.assertNull
 class RateLimitIdentityExtractorTests(
     @Autowired private val objectMapper: ObjectMapper,
 ) {
-    private val extractor = RateLimitIdentityExtractor(objectMapper)
+    private val extractor = RateLimitIdentityExtractor(objectMapper) { challenge ->
+        mapOf("challenge-a" to "tenant-a", "challenge-b" to "tenant-b")[challenge]
+    }
 
     @AfterEach
     fun tearDown() {
@@ -52,7 +54,7 @@ class RateLimitIdentityExtractorTests(
 
     @Test
     fun extractsLoginUsernameFromCachedJsonBody() {
-        val request = loginRequest("""{"username":"user-123","password":"secret","tenantId":"tenant-a"}""")
+        val request = loginRequest("""{"username":"user-123","password":"secret","challenge":"challenge-a"}""")
 
         val identity = extractor.identity(CachedBodyHttpServletRequest(request))
 
@@ -60,14 +62,18 @@ class RateLimitIdentityExtractorTests(
     }
 
     @Test
-    fun loginRateLimitSeparatesTenantsAndRequiresTenantContext() {
+    fun loginRateLimitSeparatesChallengeTenantsAndRequiresAKnownChallenge() {
         val first = extractor.identity(CachedBodyHttpServletRequest(loginRequest(
-            """{"username":"same","tenantId":"tenant-a"}""")))
+            """{"username":"same","challenge":"challenge-a"}""")))
         val second = extractor.identity(CachedBodyHttpServletRequest(loginRequest(
-            """{"username":"same","tenantId":"tenant-b"}""")))
+            """{"username":"same","challenge":"challenge-b"}""")))
         kotlin.test.assertNotEquals(first.userId, second.userId)
         assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(
             """{"username":"same"}"""))).userId)
+        assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":"same","challenge":"unknown"}"""))).userId)
+        assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":"same","tenantId":"tenant-a"}"""))).userId)
     }
 
     @Test

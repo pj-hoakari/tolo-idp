@@ -18,6 +18,8 @@ import dev.usbharu.toloidp.security.TenantAuthorizationValidator
 import dev.usbharu.toloidp.security.ToloJwtCustomizer
 import dev.usbharu.toloidp.security.OidcAuthenticationRequestValidator
 import dev.usbharu.toloidp.security.AuthorizationRequestConverter
+import dev.usbharu.toloidp.security.AuthorizationErrorResponseHandler
+import dev.usbharu.toloidp.security.LoginChallenges
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
@@ -82,6 +84,7 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import org.springframework.security.web.context.SecurityContextHolderFilter
+import jakarta.servlet.DispatcherType
 import tools.jackson.databind.JacksonModule
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator
@@ -170,6 +173,8 @@ class SecurityConfig {
         @Qualifier("specTokenRevocationAuthenticationProvider")
         specTokenRevocationAuthenticationProvider: AuthenticationProvider,
         settings: AuthorizationServerSettings,
+        loginChallenges: LoginChallenges,
+        properties: IdpProperties,
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
@@ -227,8 +232,15 @@ class SecurityConfig {
                 .authorizationEndpoint { authorizationEndpoint ->
                 authorizationEndpoint.authorizationRequestConverters { converters ->
                     converters.removeIf { it is OAuth2AuthorizationCodeRequestAuthenticationConverter }
-                    converters.add(0, AuthorizationRequestConverter())
+                    converters.add(0, AuthorizationRequestConverter(loginChallenges))
                 }
+                authorizationEndpoint.errorResponseHandler(
+                    AuthorizationErrorResponseHandler(
+                        loginChallenges,
+                        properties.login.pageUri(),
+                        properties.login.errorPageUri(),
+                    ),
+                )
                 authorizationEndpoint.authenticationProviders { providers ->
                     providers.filterIsInstance<OAuth2AuthorizationCodeRequestAuthenticationProvider>()
                         .forEach {
@@ -309,7 +321,8 @@ class SecurityConfig {
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         http.authorizeHttpRequests {
-            it.requestMatchers("/actuator/health").permitAll()
+            it.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                .requestMatchers("/actuator/health").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/logout").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/login").permitAll()
                 .anyRequest().authenticated()

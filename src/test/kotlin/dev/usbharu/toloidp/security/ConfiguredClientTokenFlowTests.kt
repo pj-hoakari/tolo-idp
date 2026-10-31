@@ -68,8 +68,6 @@ class ConfiguredClientTokenFlowTests(
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))
         HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
-            val login = send(http, "/api/login", body = """{"username":"user-123","password":"password","tenantId":"tenant-a"}""", contentType = "application/json")
-            assertEquals(200, login.statusCode())
             try {
                 val redirect = "https://example.invalid/callback"
                 val query = form(mapOf(
@@ -79,7 +77,7 @@ class ConfiguredClientTokenFlowTests(
                     "state" to "fixture-state", "nonce" to "fixture-nonce",
                     "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
                 ))
-                val authorize = send(http, "/oauth2/authorize?$query")
+                val authorize = authorize(http, query)
                 assertEquals(302, authorize.statusCode())
                 val location = URI.create(authorize.headers().firstValue("Location").orElseThrow())
                 val parameters = location.rawQuery.split('&').associate { entry ->
@@ -236,6 +234,26 @@ class ConfiguredClientTokenFlowTests(
         }
     }
 
+    @Test
+    fun loginFailureStatusesSurviveTheServletErrorDispatch() {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val unknown = send(http, "/api/login", body = """{"username":"user-123","password":"password","challenge":"unknown"}""", contentType = "application/json")
+            assertEquals(400, unknown.statusCode())
+            val query = form(mapOf(
+                "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to "https://example.invalid/callback",
+                "scope" to "openid tenant.read", "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a",
+                "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
+            ))
+            val challenge = loginChallenge(send(http, "/oauth2/authorize?$query").headers().firstValue("Location").orElseThrow())
+            val wrong = send(http, "/api/login", body = """{"username":"user-123","password":"wrong","challenge":"$challenge"}""", contentType = "application/json")
+            assertEquals(401, wrong.statusCode())
+            memberships.deleteAll()
+            val forbidden = send(http, "/api/login", body = """{"username":"user-123","password":"password","challenge":"$challenge"}""", contentType = "application/json")
+            assertEquals(403, forbidden.statusCode())
+        }
+    }
+
     private fun seedMembership(role: RelationRole) {
         memberships.deleteAll()
         memberships.save(RelationMembershipCache(
@@ -246,7 +264,6 @@ class ConfiguredClientTokenFlowTests(
     }
 
     private fun issueTokens(http: HttpClient, scope: String): Map<String, Any> {
-        assertEquals(200, send(http, "/api/login", body = """{"username":"user-123","password":"password","tenantId":"tenant-a"}""", contentType = "application/json").statusCode())
         val redirect = "https://example.invalid/callback"
         val query = form(mapOf(
             "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
@@ -254,7 +271,7 @@ class ConfiguredClientTokenFlowTests(
             "resource" to "https://api.example.com/tenants/tenant-a",
             "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
         ))
-        val authorize = send(http, "/oauth2/authorize?$query")
+        val authorize = authorize(http, query)
         assertEquals(302, authorize.statusCode())
         val location = URI.create(authorize.headers().firstValue("Location").orElseThrow())
         val params = location.rawQuery.split('&').associate {
@@ -267,6 +284,15 @@ class ConfiguredClientTokenFlowTests(
         )), authenticate = true)
         assertEquals(200, response.statusCode())
         return json(response)
+    }
+
+    private fun authorize(http: HttpClient, query: String): HttpResponse<String> {
+        val challenged = send(http, "/oauth2/authorize?$query")
+        assertEquals(302, challenged.statusCode())
+        val challenge = loginChallenge(challenged.headers().firstValue("Location").orElseThrow())
+        val login = send(http, "/api/login", body = """{"username":"user-123","password":"password","challenge":"$challenge"}""", contentType = "application/json")
+        assertEquals(200, login.statusCode())
+        return send(http, "/oauth2/authorize?challenge=$challenge")
     }
 
     private fun refresh(http: HttpClient, token: String, scope: String? = null): HttpResponse<String> {
