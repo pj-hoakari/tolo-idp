@@ -52,7 +52,7 @@ secrets:
   - current.res.body.access_token
   - current.res.body.id_token
   - current.res.body.refresh_token
-  - current.res.cookies["JSESSIONID"].Value
+  - current.res.cookies["tolo_idp_session"].Value
   - current.res.headers["Set-Cookie"][0]
   - 'url(current.res.headers["Location"][0]).Query().Get("code")'
 steps:
@@ -128,8 +128,8 @@ steps:
       && steps.login.res.body.tenantId == vars.tenant_id
       && steps.login.res.body.resource == vars.tenant_resource
       && "ROLE_USER" in steps.login.res.body.authorities
-      && steps.login.res.cookies["JSESSIONID"] != nil
-      && steps.login.res.cookies["JSESSIONID"].HttpOnly
+      && steps.login.res.cookies["tolo_idp_session"] != nil
+      && steps.login.res.cookies["tolo_idp_session"].HttpOnly
 
   resume:
     desc: 認証した challenge で元の認可要求を再開し、認可コードを取得する

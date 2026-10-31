@@ -7,9 +7,10 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
-import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -45,18 +46,37 @@ class CorsConfigTests(
         )
     }
     @Test
-    fun loginPreflightAllowsConfiguredOriginWithCredentials() {
-        mockMvc.perform(
-            options("/api/login")
-                .header("Origin", "http://localhost:3000")
-                .header("Access-Control-Request-Method", "POST")
-                .header("Access-Control-Request-Headers", "content-type"),
-        )
+    fun loginPreflightAllowsTheLoginPageOriginWithCredentials() {
+        mockMvc.perform(preflight("http://localhost:3000"))
             .andExpect(status().isOk)
             .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
             .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
-            .andExpect(header().string("Access-Control-Allow-Methods", containsString("POST")))
+            .andExpect(header().string("Access-Control-Allow-Methods", "POST"))
+            .andExpect(header().string("Access-Control-Allow-Headers", "content-type"))
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["http://127.0.0.1:3000", "https://localhost:3000", "https://tenant-a.localhost:3000", "http://localhost:18080"])
+    fun loginPreflightRejectsOtherOrigins(origin: String) {
+        mockMvc.perform(preflight(origin))
+            .andExpect(status().isForbidden)
+            .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+    }
+
+    @Test
+    fun loginPreflightAllowsNoHeaderBeyondContentType() {
+        mockMvc.perform(preflight("http://localhost:3000", "authorization"))
+            .andExpect(status().isForbidden)
+            .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+        mockMvc.perform(preflight("http://localhost:3000", "content-type, authorization"))
+            .andExpect(header().string("Access-Control-Allow-Headers", "content-type"))
+    }
+
+    private fun preflight(origin: String, headers: String = "content-type") =
+        options("/api/login")
+            .header("Origin", origin)
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", headers)
 
     @Test
     fun loginPostIncludesCorsHeadersForConfiguredOrigin() {

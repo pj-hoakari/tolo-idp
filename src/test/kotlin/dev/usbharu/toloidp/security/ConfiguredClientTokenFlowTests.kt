@@ -36,6 +36,7 @@ import kotlin.test.assertFalse
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = [
         "server.address=127.0.0.1",
+        "server.servlet.session.cookie.secure=false",
         "spring.datasource.url=jdbc:h2:mem:configured-client-flow;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.client-id=configured-web-client",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.client-secret=dummy-web-secret",

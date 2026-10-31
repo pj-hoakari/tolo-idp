@@ -168,6 +168,14 @@ OIDC Request Object は提供しない。`request` を指定した OIDC 認可�
 
 認可応答は query 形式のみ提供する。`response_mode` の省略または単一の `query` を受け付け、それ以外の値・空値・重複は `invalid_request` とする。Discovery の `response_modes_supported` は `["query"]` とし、未対応形式の要求を query 形式へ暗黙に変更しない。
 
+### 4.1.4 ログイン状態の cookie、CORS、転送ヘッダ
+
+IdP のログイン状態は Spring Security のセッションに保持し、セッションの cookie 名を `__Host-tolo_idp_session` とする。cookie には `Secure`、`HttpOnly`、`SameSite=Lax`、`Path=/` を付け、`Domain` を付けない。dev-jvm / dev-native プロファイルは平文の HTTP で動かすので、cookie 名を `tolo_idp_session` とし、`Secure` を付けない。
+
+`/api/login` の CORS は `tolo-idp.login.page-url` のオリジン（Web のルートドメイン）だけを許可する。許可するのは資格情報付きの `POST` と `content-type` ヘッダで、preflight にも同じ条件で応答する。tenant のサブドメインなど、ほかのオリジンは許可しない。
+
+送信元の IP アドレスと scheme は Tomcat の RemoteIpValve（`server.forward-headers-strategy=native`）で決める。`X-Forwarded-For` と `X-Forwarded-Proto` は `server.tomcat.remoteip.internal-proxies` に一致する接続元から届いたときだけ使い、ほかの接続元から届いた値は無視する。既定値は Spring Boot のプライベートアドレス帯なので、本番では前段の ingress のアドレスに絞る。ログインのレート制限はこうして決めた送信元 IP ごとに数える。
+
 ### 4.2 ログアウト
 
 ```http
@@ -1183,6 +1191,11 @@ tolo-idp.issuer=http://localhost:8080
 tolo-idp.resource.allowed-hosts=api.example.com
 tolo-idp.login.page-url=（必須。dev-jvm / dev-native / test は http://localhost:3000/login）
 tolo-idp.login.error-page-url=（必須。dev-jvm / dev-native / test は http://localhost:3000/auth/error）
+server.servlet.session.cookie.name=__Host-tolo_idp_session（dev-jvm / dev-native は tolo_idp_session）
+server.servlet.session.cookie.secure=true（dev-jvm / dev-native は false）
+server.servlet.session.cookie.same-site=lax
+server.forward-headers-strategy=native
+server.tomcat.remoteip.internal-proxies=（Spring Boot の既定値。プライベートアドレス帯）
 tolo-idp.relation.base-url=http://localhost:8081
 tolo-idp.relation.connect-timeout=2s
 tolo-idp.relation.read-timeout=3s

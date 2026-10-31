@@ -14,7 +14,6 @@ data class IdpProperties(
     val seed: Seed = Seed(),
     val jwk: Jwk = Jwk(),
     val rateLimit: RateLimit = RateLimit(),
-    val cors: Cors = Cors(),
     val login: Login = Login(),
     val clients: Map<String, ClientPolicyConfig> = emptyMap(),
 ) {
@@ -26,6 +25,8 @@ data class IdpProperties(
 
         fun errorPageUri(): URI = webUri(errorPageUrl, "error-page-url")
 
+        fun origin(): String = pageUri().let { "${it.scheme}://${it.rawAuthority}" }
+
         private fun webUri(value: String, name: String): URI {
             val uri = runCatching { URI(value) }.getOrNull()
             require(uri != null && uri.scheme in setOf("http", "https") && !uri.host.isNullOrEmpty() &&
@@ -36,9 +37,6 @@ data class IdpProperties(
         }
     }
 
-    data class Cors(
-        val allowedOrigins: Set<String> = emptySet(),
-    )
     data class Resource(
         val allowedHosts: Set<String> = setOf("api.example.com"),
     )

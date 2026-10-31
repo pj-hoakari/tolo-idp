@@ -12,6 +12,8 @@ Spring 設定は `src/main/resources/application.yaml` に集約しています�
 | dev-native | `docker-compose.dev-native.yaml` | Gradle Buildpacks で Native イメージを作成して実行 |
 | production | `docker-compose.production.yaml` | 検証済みの Native または JVM イメージを実行 |
 
+開発環境は平文の HTTP で動かすため、IdP のログイン状態の cookie を `tolo_idp_session` という名前で、`Secure` を付けずに発行します。本番の cookie 名は `__Host-tolo_idp_session` です。
+
 開発環境には PostgreSQL・Redis・relation-stub が含まれます。IdP は `http://localhost:18080`、PostgreSQL は `localhost:15432`、Redis は `localhost:16379`、relation-stub は `http://localhost:18081` で利用できます。seed user は `user-123` / `password`、client は `client-123` / `secret` です。
 
 ### dev-jvm
@@ -62,6 +64,7 @@ Native は `ghcr.io/pj-hoakari/tolo-idp`、JVM は `ghcr.io/pj-hoakari/tolo-idp-
 | `TOLO_IDP_ISSUER` | 外部に公開する issuer URL。必須 |
 | `TOLO_IDP_LOGIN_PAGE_URL` | Web のログイン画面の URL。例: `https://example.com/login`。必須 |
 | `TOLO_IDP_LOGIN_ERROR_PAGE_URL` | Web の認可エラー画面の URL。例: `https://example.com/auth/error`。必須 |
+| `SERVER_TOMCAT_REMOTEIP_INTERNALPROXIES` | `X-Forwarded-For` と `X-Forwarded-Proto` を信頼する前段の ingress のアドレス（CIDR）。未設定ならプライベートアドレス帯をすべて信頼するので、本番では ingress のアドレスに絞る |
 | `TOLO_IDP_JWK_PRIVATE_KEY_HOST_PATH` | ホスト側の RSA 秘密鍵ファイルの絶対パス。必須 |
 | `TOLO_IDP_JWK_PRIVATE_KEY_LOCATION` | コンテナ内の秘密鍵ファイルの絶対パス。例: `/run/tolo-idp/private.pem`。必須 |
 
