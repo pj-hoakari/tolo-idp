@@ -151,13 +151,28 @@ OIDC Request Object は提供しない。`request` を指定した OIDC 認可�
 
 ### 4.2 ログアウト
 
+ログアウトは OIDC RP-Initiated Logout 1.0 の end_session endpoint だけで提供する。IdP 独自のログアウト API は提供しない。endpoint の URL は Discovery の `end_session_endpoint` で公開し、RP はそこから取得する。
+
 ```http
-POST /api/logout
+GET /connect/logout?id_token_hint=...&post_logout_redirect_uri=...&state=...
+POST /connect/logout
 ```
 
-認証済みセッションから呼び出す。
+POST では同じパラメータを `application/x-www-form-urlencoded` の本文で送る。RP はブラウザをこの endpoint へ遷移させる。IdP のセッション cookie を送るため、fetch ではなくトップレベルの遷移で呼ぶ。
 
-セッションを破棄し、`204 No Content` を返す。
+`id_token_hint` は必須とする。IdP が発行した認可の最新の ID Token と一致する値だけを受け付ける。Refresh で ID Token を再発行した後は、前の ID Token を受け付けない。期限切れの ID Token は受け付ける。`client_id` は省略でき、指定する場合は ID Token の発行先 client と一致させる。
+
+`post_logout_redirect_uri` は、ID Token の発行先 client に登録した値と完全に一致する場合だけ受け付ける。client 設定の `post-logout-redirect-uris` で登録する。`state` を指定した場合は、リダイレクト先の query に `state` として付ける。
+
+検証に成功すると、IdP は現在のセッションを破棄し、`302` で `post_logout_redirect_uri` へリダイレクトする。ログアウト後に IdP の画面は表示しない。セッションがない場合は、何も破棄せずにリダイレクトする。hint が現在のセッションに対応しない場合も、何も破棄せずにリダイレクトする。対応しないのは、セッションのユーザーが ID Token の認可のユーザーと異なる場合と、`sid` が現在のセッションと一致しない場合である。`post_logout_redirect_uri` を省略すると IdP の `/` へリダイレクトするため、RP は常に指定する。
+
+hint が IdP の発行した最新の ID Token でない場合、未登録の `post_logout_redirect_uri`、必須パラメータの欠落は `400` とし、OAuth2 のエラーコード（`invalid_token` または `invalid_request`）だけを JSON で返す。このときはリダイレクトせず、セッションも破棄しない。
+
+ログアウトで終了するのは IdP のセッションだけである。発行済みの Access Token と Refresh Token は失効しないため、失効には revocation endpoint を使う。
+
+`openid` を含む認可要求で発行する ID Token には、認可したセッションの ID のハッシュを `sid` claim に入れる。Refresh で再発行した ID Token も同じ `sid` を引き継ぐ。現在のセッションで `openid` の認可をしていれば、end_session は hint の `sid` が現在のセッションと一致するかを確かめる。`/api/login` で再ログインするとセッション ID が変わるため、その後に認可を受けると、再ログインの前に発行した ID Token は現在のセッションと一致しない。この ID Token による end_session は、現在のセッションを破棄せずにリダイレクトする。
+
+ログアウトの開始・完了・拒否は `logout_started`、`logout_completed`、`logout_rejected` の構造化ログに残す。hint が現在のセッションに対応せずセッションを破棄しなかった場合、`logout_completed` の `result` は `session_mismatch_not_ended` とする。
 
 ---
 
@@ -317,6 +332,7 @@ spring:
                 - authorization_code
                 - urn:ietf:params:oauth:grant-type:token-exchange
               redirect-uris: [https://app.example.com/callback]
+              post-logout-redirect-uris: [https://app.example.com/auth/logged-out]
               scopes: [openid, tenant.read, events.read]
             require-proof-key: true
 

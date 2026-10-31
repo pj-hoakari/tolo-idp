@@ -52,7 +52,7 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 7. staff の event-2 への設計・構成の書き込みは `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
 8. Refresh Token による更新、ローテーション、旧 token の再利用拒否、新 token での再更新と scope 縮小を確認する。
 9. Refresh Token を revoke し、更新が `invalid_grant`、現在の Access Token の Introspection が `active: false` になることを確認する。
-10. 終了時にセッションを破棄する。ログインが200を返した場合は、レスポンスや cookie の検証が失敗しても logout を試行する。
+10. 終了時に、発行された最新の ID Token を `id_token_hint` にして Discovery の `end_session_endpoint` を呼び、登録済みの `post_logout_redirect_uri` へ `state` 付きでリダイレクトされることを確認する。ID Token が発行されていれば、後続の検証が失敗してもログアウトを試行する。
 
 scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
 
@@ -64,12 +64,12 @@ GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動き
 
 両 runtime のイメージは `docker-compose.production.yaml` の別プロジェクトでも起動し、`production/startup.yml` で Health と Discovery の issuer を検証します。新規 DB と一時署名鍵を用意し、seed は無効のまま実行します。終了時は CI 専用 volume と署名鍵を削除します。本番 Compose には任意の `scenario` profile として runn が含まれています。
 
-ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
+token の scope の検証失敗時と token 発行後の検証失敗時に、セッション cookie と ID Token を送ってログアウトすることも合成 HTTP レスポンスで検証します。ID Token が発行される前に失敗した場合は、ログアウトを呼ばないことを確認します。end_session endpoint は `id_token_hint` を必須とするためです。このときのセッションはタイムアウトで破棄されます。runn の失敗はジョブの失敗になります。
 
 CI は実行 ID・runtime・architecture ごとの Compose project を使います。各 runtime のシナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
 
 バージョンタグのリリース CI も同じ再利用ワークフローを呼びます。イメージのビルドと公開については [CI とリリース手順](../CI.md) を参照してください。
 
-失敗時の logout だけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
+失敗時のログアウトだけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
 
 ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS はこのシナリオの対象外です。

@@ -70,56 +70,52 @@ class ConfiguredClientTokenFlowTests(
         HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
             val login = send(http, "/api/login", body = """{"username":"user-123","password":"password","tenantId":"tenant-a"}""", contentType = "application/json")
             assertEquals(200, login.statusCode())
-            try {
-                val redirect = "https://example.invalid/callback"
-                val query = form(mapOf(
-                    "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
-                    "scope" to "openid tenant.read events.read", "audience" to "configured-api",
-                    "state" to "fixture-state", "nonce" to "fixture-nonce",
-                    "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
-                ))
-                val authorize = send(http, "/oauth2/authorize?$query")
-                assertEquals(302, authorize.statusCode())
-                val location = URI.create(authorize.headers().firstValue("Location").orElseThrow())
-                val parameters = location.rawQuery.split('&').associate { entry ->
-                    val pair = entry.split('=', limit = 2)
-                    pair[0] to URLDecoder.decode(pair[1], Charsets.UTF_8)
-                }
-                assertEquals("fixture-state", parameters["state"])
-                val tokens = send(http, "/oauth2/token", form(mapOf(
-                    "grant_type" to "authorization_code", "code" to parameters.getValue("code"), "redirect_uri" to redirect,
-                    "code_verifier" to "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-                )), authenticate = true)
-                assertEquals(200, tokens.statusCode())
-                val tenantToken = json(tokens).getValue("access_token") as String
-                val tenant = decoder.decode(tenantToken)
-                assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, tenant.subject)
-                assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, decoder.decode(json(tokens).getValue("id_token") as String).subject)
-                assertEquals(listOf("configured-api"), tenant.audience)
-                assertEquals(123, Duration.between(tenant.issuedAt, tenant.expiresAt).seconds.toInt())
-                assertEquals("tenant_access", tenant.claims["token_use"])
-                val exchange = send(http, "/oauth2/token", form(mapOf(
-                    "grant_type" to "urn:ietf:params:oauth:grant-type:token-exchange",
-                    "subject_token" to tenantToken, "subject_token_type" to "urn:ietf:params:oauth:token-type:access_token",
-                    "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a/events/event-1",
-                    "scope" to "events.read",
-                )), authenticate = true)
-                assertEquals(200, exchange.statusCode())
-                val eventToken = json(exchange).getValue("access_token") as String
-                val event = decoder.decode(eventToken)
-                assertEquals(tenant.subject, event.subject)
-                assertEquals(listOf("configured-api"), event.audience)
-                assertEquals(45, Duration.between(event.issuedAt, event.expiresAt).seconds.toInt())
-                assertEquals("event_access", event.claims["token_use"])
-                val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to eventToken)), authenticate = true)
-                assertEquals(200, introspection.statusCode())
-                assertEquals(true, json(introspection)["active"])
-                assertEquals(0, jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE LOWER(TABLE_NAME) = 'idp_client_policy'", Int::class.java,
-                ))
-            } finally {
-                send(http, "/api/logout", "")
+            val redirect = "https://example.invalid/callback"
+            val query = form(mapOf(
+                "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
+                "scope" to "openid tenant.read events.read", "audience" to "configured-api",
+                "state" to "fixture-state", "nonce" to "fixture-nonce",
+                "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
+            ))
+            val authorize = send(http, "/oauth2/authorize?$query")
+            assertEquals(302, authorize.statusCode())
+            val location = URI.create(authorize.headers().firstValue("Location").orElseThrow())
+            val parameters = location.rawQuery.split('&').associate { entry ->
+                val pair = entry.split('=', limit = 2)
+                pair[0] to URLDecoder.decode(pair[1], Charsets.UTF_8)
             }
+            assertEquals("fixture-state", parameters["state"])
+            val tokens = send(http, "/oauth2/token", form(mapOf(
+                "grant_type" to "authorization_code", "code" to parameters.getValue("code"), "redirect_uri" to redirect,
+                "code_verifier" to "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+            )), authenticate = true)
+            assertEquals(200, tokens.statusCode())
+            val tenantToken = json(tokens).getValue("access_token") as String
+            val tenant = decoder.decode(tenantToken)
+            assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, tenant.subject)
+            assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, decoder.decode(json(tokens).getValue("id_token") as String).subject)
+            assertEquals(listOf("configured-api"), tenant.audience)
+            assertEquals(123, Duration.between(tenant.issuedAt, tenant.expiresAt).seconds.toInt())
+            assertEquals("tenant_access", tenant.claims["token_use"])
+            val exchange = send(http, "/oauth2/token", form(mapOf(
+                "grant_type" to "urn:ietf:params:oauth:grant-type:token-exchange",
+                "subject_token" to tenantToken, "subject_token_type" to "urn:ietf:params:oauth:token-type:access_token",
+                "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a/events/event-1",
+                "scope" to "events.read",
+            )), authenticate = true)
+            assertEquals(200, exchange.statusCode())
+            val eventToken = json(exchange).getValue("access_token") as String
+            val event = decoder.decode(eventToken)
+            assertEquals(tenant.subject, event.subject)
+            assertEquals(listOf("configured-api"), event.audience)
+            assertEquals(45, Duration.between(event.issuedAt, event.expiresAt).seconds.toInt())
+            assertEquals("event_access", event.claims["token_use"])
+            val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to eventToken)), authenticate = true)
+            assertEquals(200, introspection.statusCode())
+            assertEquals(true, json(introspection)["active"])
+            assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE LOWER(TABLE_NAME) = 'idp_client_policy'", Int::class.java,
+            ))
         }
     }
 
@@ -134,7 +130,7 @@ class ConfiguredClientTokenFlowTests(
             val original = decoder.decode(initial.getValue("access_token") as String)
             val refresh = initial.getValue("refresh_token") as String
             assertEquals(oidc, initial.containsKey("id_token"))
-            assertEquals(204, send(http, "/api/logout", "").statusCode())
+            (http.cookieHandler().orElseThrow() as CookieManager).cookieStore.removeAll()
             val expanded = refresh(http, refresh, "tenant.write")
             assertEquals(400, expanded.statusCode())
             assertEquals("invalid_scope", json(expanded)["error"])
@@ -183,14 +179,10 @@ class ConfiguredClientTokenFlowTests(
         seedMembership(RelationRole.OWNER)
         HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
             val initial = issueTokens(http, "tenant.write")
-            try {
-                seedMembership(RelationRole.STAFF)
-                val rejected = refresh(http, initial.getValue("refresh_token") as String)
-                assertEquals(400, rejected.statusCode())
-                assertEquals("invalid_scope", json(rejected)["error"])
-            } finally {
-                send(http, "/api/logout", "")
-            }
+            seedMembership(RelationRole.STAFF)
+            val rejected = refresh(http, initial.getValue("refresh_token") as String)
+            assertEquals(400, rejected.statusCode())
+            assertEquals("invalid_scope", json(rejected)["error"])
         }
     }
 
@@ -200,38 +192,34 @@ class ConfiguredClientTokenFlowTests(
         seedMembership(RelationRole.OWNER)
         HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
             val initial = issueTokens(http, "openid tenant.read events.read")
-            try {
-                val refresh = initial.getValue("refresh_token") as String
-                // Revoke the current token after rotation, rather than just the initial token.
-                val refreshed = refresh(http, refresh)
-                assertEquals(200, refreshed.statusCode())
-                val current = json(refreshed)
-                val currentRefresh = current.getValue("refresh_token") as String
-                val access = current.getValue("access_token") as String
-                val params = mutableMapOf("token" to currentRefresh)
-                if (hint.isNotEmpty()) params["token_type_hint"] = hint
-                val revoked = send(http, "/oauth2/revoke", form(params), authenticate = true)
-                assertEquals(200, revoked.statusCode())
-                assertEquals("", revoked.body())
-                val rejected = refresh(http, currentRefresh)
-                assertEquals(400, rejected.statusCode())
-                assertEquals("invalid_grant", json(rejected)["error"])
-                for (token in listOf(currentRefresh, access)) {
-                    val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to token)), authenticate = true)
-                    assertEquals(200, introspection.statusCode())
-                    assertEquals(mapOf("active" to false), json(introspection))
-                }
-                val exchange = send(http, "/oauth2/token", form(mapOf(
-                    "grant_type" to "urn:ietf:params:oauth:grant-type:token-exchange",
-                    "subject_token" to access, "subject_token_type" to "urn:ietf:params:oauth:token-type:access_token",
-                    "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a/events/event-1",
-                    "scope" to "events.read",
-                )), authenticate = true)
-                assertEquals(400, exchange.statusCode())
-                assertEquals("invalid_grant", json(exchange)["error"])
-            } finally {
-                send(http, "/api/logout", "")
+            val refresh = initial.getValue("refresh_token") as String
+            // Revoke the current token after rotation, rather than just the initial token.
+            val refreshed = refresh(http, refresh)
+            assertEquals(200, refreshed.statusCode())
+            val current = json(refreshed)
+            val currentRefresh = current.getValue("refresh_token") as String
+            val access = current.getValue("access_token") as String
+            val params = mutableMapOf("token" to currentRefresh)
+            if (hint.isNotEmpty()) params["token_type_hint"] = hint
+            val revoked = send(http, "/oauth2/revoke", form(params), authenticate = true)
+            assertEquals(200, revoked.statusCode())
+            assertEquals("", revoked.body())
+            val rejected = refresh(http, currentRefresh)
+            assertEquals(400, rejected.statusCode())
+            assertEquals("invalid_grant", json(rejected)["error"])
+            for (token in listOf(currentRefresh, access)) {
+                val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to token)), authenticate = true)
+                assertEquals(200, introspection.statusCode())
+                assertEquals(mapOf("active" to false), json(introspection))
             }
+            val exchange = send(http, "/oauth2/token", form(mapOf(
+                "grant_type" to "urn:ietf:params:oauth:grant-type:token-exchange",
+                "subject_token" to access, "subject_token_type" to "urn:ietf:params:oauth:token-type:access_token",
+                "audience" to "configured-api", "resource" to "https://api.example.com/tenants/tenant-a/events/event-1",
+                "scope" to "events.read",
+            )), authenticate = true)
+            assertEquals(400, exchange.statusCode())
+            assertEquals("invalid_grant", json(exchange)["error"])
         }
     }
 
