@@ -145,16 +145,14 @@ class OidcRequestContractTests(
     @Test
     fun unsupportedRequestObjectIsRejectedInsteadOfIgnoringItsClaims() {
         assertError(mvc.perform(authorize(login()).queryParam("request", "unsupported-request-object")), "request_not_supported")
-        mvc.perform(authorize(clientId = "unknown-client").queryParam("request", "unsupported-request-object"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+        assertLoginErrorPage(mvc.perform(authorize(clientId = "unknown-client").queryParam("request", "unsupported-request-object")), "invalid_request")
     }
 
     @Test
     fun unsupportedRequestUriReturnsOidcErrorOnlyToTrustedRedirect() {
         assertError(mvc.perform(authorize(login()).queryParam("request_uri", "https://rp.invalid/request.jwt")), "request_uri_not_supported")
-        mvc.perform(authorize(login(), redirectUri = "https://attacker.invalid/callback")
-            .queryParam("request_uri", "https://rp.invalid/request.jwt"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+        assertLoginErrorPage(mvc.perform(authorize(login(), redirectUri = "https://attacker.invalid/callback")
+            .queryParam("request_uri", "https://rp.invalid/request.jwt")), "invalid_request")
     }
 
     @ParameterizedTest
@@ -185,12 +183,12 @@ class OidcRequestContractTests(
     }
 
     @Test
-    fun invalidRedirectAndUnknownClientNeverRedirect() {
-        mvc.perform(authorize(clientId = "unknown-client"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
-        mvc.perform(get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
-            .queryParam("redirect_uri", "https://attacker.invalid/callback").queryParam("scope", "openid"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+    fun unreturnableAuthorizationErrorsGoToTheWebErrorPage() {
+        assertLoginErrorPage(mvc.perform(authorize(clientId = "unknown-client", redirectUri = "https://attacker.invalid/callback")), "invalid_request")
+        assertLoginErrorPage(mvc.perform(authorize(redirectUri = "https://attacker.invalid/callback")), "invalid_request")
+        assertLoginErrorPage(mvc.perform(get("/oauth2/authorize").queryParam("response_type", "code")
+            .queryParam("redirect_uri", "https://attacker.invalid/callback").queryParam("scope", "openid")
+            .queryParam("state", "request-state")), "invalid_request")
     }
 
     @Test
