@@ -88,7 +88,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
                 "username": "user-123", "tenantId": "tenant-a",
                 "resource": "https://api.example.com/tenants/tenant-a", "authorities": ["ROLE_USER"],
-            }, {"Set-Cookie": f"JSESSIONID={COOKIE}; Path=/{suffix}"})
+            }, {"Set-Cookie": f"tolo_idp_session={COOKIE}; Path=/{suffix}"})
         elif path == "/oauth2/token":
             if self.server.failure == "token-status":
                 self.respond(500, None)
@@ -143,7 +143,7 @@ class RunnCleanupTests(unittest.TestCase):
         requests = [path for path, _ in server.requests]
         self.assertIn(last_path, requests, "The intended assertion must be reached")
         if cleanup:
-            self.assertEqual(server.logouts, [(f"JSESSIONID={COOKIE}", {
+            self.assertEqual(server.logouts, [(f"tolo_idp_session={COOKIE}", {
                 "id_token_hint": [ID_TOKEN],
                 "post_logout_redirect_uri": [POST_LOGOUT_REDIRECT_URI],
                 "state": ["scenario-state-0123456789"],

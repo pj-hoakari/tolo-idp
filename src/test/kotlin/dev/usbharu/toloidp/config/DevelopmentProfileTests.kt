@@ -34,7 +34,14 @@ class DevelopmentProfileTests {
                 "spring.security.oauth2.authorizationserver.client.client-123.registration.client-id",
             ),
         )
-        assertNull(environment.getProperty("tolo-idp.cors.allowed-origins[0]"))
+        assertNull(environment.getProperty("tolo-idp.login.page-url"))
+        assertNull(environment.getProperty("tolo-idp.login.error-page-url"))
+        assertEquals("__Host-tolo_idp_session", environment.getProperty("server.servlet.session.cookie.name"))
+        assertEquals("true", environment.getProperty("server.servlet.session.cookie.secure"))
+        assertEquals("true", environment.getProperty("server.servlet.session.cookie.http-only"))
+        assertEquals("lax", environment.getProperty("server.servlet.session.cookie.same-site"))
+        assertEquals("/", environment.getProperty("server.servlet.session.cookie.path"))
+        assertEquals("native", environment.getProperty("server.forward-headers-strategy"))
     }
 
     @Test
@@ -60,6 +67,8 @@ class DevelopmentProfileTests {
                 "spring.security.oauth2.authorizationserver.client.client-123.registration.client-id",
             ),
         )
+        assertEquals("tolo_idp_session", environment.getProperty("server.servlet.session.cookie.name"))
+        assertEquals("false", environment.getProperty("server.servlet.session.cookie.secure"))
     }
 
     private fun loadProfile(vararg profiles: String): ConfigurableEnvironment {
@@ -109,5 +118,11 @@ class DevelopmentProfileTests {
         assertEquals("true", environment.getProperty("tolo-idp.jwk.allow-ephemeral"))
         assertEquals("org.postgresql.Driver", environment.getProperty("spring.datasource.driver-class-name"))
         assertEquals("classpath:db/postgresql", environment.getProperty("spring.flyway.locations"))
+        assertEquals("http://localhost:3000/login", environment.getProperty("tolo-idp.login.page-url"))
+        assertEquals("http://localhost:3000/auth/error", environment.getProperty("tolo-idp.login.error-page-url"))
+        assertEquals("tolo_idp_session", environment.getProperty("server.servlet.session.cookie.name"))
+        assertEquals("false", environment.getProperty("server.servlet.session.cookie.secure"))
+        assertEquals("true", environment.getProperty("server.servlet.session.cookie.http-only"))
+        assertEquals("lax", environment.getProperty("server.servlet.session.cookie.same-site"))
     }
 }
