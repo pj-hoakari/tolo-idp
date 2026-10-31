@@ -24,7 +24,7 @@ import java.util.function.Consumer
 /**
  * tenant scope の access token 発行に使う Authorization Code request validator。
  *
- * Spring Authorization Server のデフォルト検証に加えて、tenant access JWT 発行前に必要な
+ * Spring Authorization Server の redirect_uri 検証に加えて、tenant access JWT 発行前に必要な
  * client policy / tenant resource / audience / relation membership / scope を検証する。
  */
 class TenantAuthorizationValidator(
@@ -34,14 +34,12 @@ class TenantAuthorizationValidator(
     private val scopePolicy: ScopePolicy,
     private val oidcRequests: OidcAuthenticationRequestValidator,
 ) : Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> {
-    private val defaultValidator = OAuth2AuthorizationCodeRequestAuthenticationValidator()
-
     /**
      * tenant や membership の詳細を OAuth2 error code 以上に漏らさず、authorization request を検証する。
      */
     override fun accept(context: OAuth2AuthorizationCodeRequestAuthenticationContext) {
         log.structuredTrace("Tenant authorization validation started", "event" to "tenant_authorization_validation_started", "client_id" to context.registeredClient.clientId)
-        defaultValidator.accept(context)
+        OAuth2AuthorizationCodeRequestAuthenticationValidator.DEFAULT_REDIRECT_URI_VALIDATOR.accept(context)
         val authentication = context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
         try {
             validateTrustedRequest(context, authentication)
@@ -105,7 +103,6 @@ class TenantAuthorizationValidator(
 
         val requestedScopes = authentication.scopes.orEmpty()
         try {
-            scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
             val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name).username)
             log.structuredDebug(
                 "Authorization request membership loaded",
@@ -116,7 +113,8 @@ class TenantAuthorizationValidator(
                 "tenant_role" to membership.tenantRole,
                 "scope_count" to requestedScopes.size,
             )
-            scopePolicy.requireTenantAccessScopes(requestedScopes, membership.tenantRole, "scope_not_allowed_for_role")
+            val grantedScopes = scopePolicy.grantTenantAccessScopes(requestedScopes, membership.tenantRole, policy.allowedScopes)
+            (authentication as? TenantAuthorizationRequestToken)?.grantScopes(grantedScopes)
         } catch (ex: ScopeNotAllowedException) {
             log.structuredWarn(
                 "Authorization request scope validation failed",

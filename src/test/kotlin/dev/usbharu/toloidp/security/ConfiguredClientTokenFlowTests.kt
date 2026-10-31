@@ -9,6 +9,8 @@ import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -42,7 +44,7 @@ import kotlin.test.assertFalse
         "spring.security.oauth2.authorizationserver.client.web-app.registration.client-authentication-methods=client_secret_basic",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.authorization-grant-types=authorization_code,refresh_token,urn:ietf:params:oauth:grant-type:token-exchange",
         "spring.security.oauth2.authorizationserver.client.web-app.registration.redirect-uris=https://example.invalid/callback",
-        "spring.security.oauth2.authorizationserver.client.web-app.registration.scopes=openid,tenant.read,tenant.write,events.read",
+        "spring.security.oauth2.authorizationserver.client.web-app.registration.scopes=openid,tenant.read,tenant.write,events.read,events.manage,events.operate,events.report",
         "spring.security.oauth2.authorizationserver.client.web-app.require-proof-key=true",
         "spring.security.oauth2.authorizationserver.client.web-app.token.reuse-refresh-tokens=false",
         "spring.security.oauth2.authorizationserver.client.web-app.token.refresh-token-time-to-live=1h",
@@ -50,6 +52,22 @@ import kotlin.test.assertFalse
         "tolo-idp.clients.web-app.allowed-token-exchange-transitions=tenant_access:event_access",
         "tolo-idp.clients.web-app.tenant-access-ttl=123s",
         "tolo-idp.clients.web-app.event-access-ttl=45s",
+        "spring.security.oauth2.authorizationserver.client.staff-app.registration.client-id=configured-staff-client",
+        "spring.security.oauth2.authorizationserver.client.staff-app.registration.client-secret=dummy-staff-secret",
+        "spring.security.oauth2.authorizationserver.client.staff-app.registration.client-authentication-methods=client_secret_basic",
+        "spring.security.oauth2.authorizationserver.client.staff-app.registration.authorization-grant-types=authorization_code,refresh_token",
+        "spring.security.oauth2.authorizationserver.client.staff-app.registration.redirect-uris=https://example.invalid/callback",
+        "spring.security.oauth2.authorizationserver.client.staff-app.registration.scopes=openid,tenant.read,events.read,events.operate",
+        "spring.security.oauth2.authorizationserver.client.staff-app.require-proof-key=true",
+        "tolo-idp.clients.staff-app.allowed-audiences=configured-api",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.registration.client-id=configured-no-oidc-client",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.registration.client-secret=dummy-no-oidc-secret",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.registration.client-authentication-methods=client_secret_basic",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.registration.authorization-grant-types=authorization_code",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.registration.redirect-uris=https://example.invalid/callback",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.registration.scopes=tenant.read,events.read",
+        "spring.security.oauth2.authorizationserver.client.no-oidc-app.require-proof-key=true",
+        "tolo-idp.clients.no-oidc-app.allowed-audiences=configured-api",
     ],
 )
 class ConfiguredClientTokenFlowTests(
@@ -178,6 +196,75 @@ class ConfiguredClientTokenFlowTests(
         }
     }
 
+    @ParameterizedTest
+    @CsvSource(
+        "STAFF, openid tenant.read events.read events.manage events.operate events.report",
+        "OWNER, openid tenant.read tenant.write events.read events.manage events.operate events.report",
+    )
+    fun requestingEveryBusinessScopeIssuesTheRoleIntersection(role: RelationRole, expected: String) {
+        seedMembership(role)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val tokens = issueTokens(http, "openid tenant.read tenant.write events.read events.manage events.operate events.report")
+            try {
+                val expectedScopes = expected.split(' ').toSet()
+                assertEquals(expectedScopes, (tokens.getValue("scope") as String).split(' ').toSet())
+                val jwt = decoder.decode(tokens.getValue("access_token") as String)
+                assertEquals(expectedScopes, (jwt.claims["scope"] as String).split(' ').toSet())
+                val refreshed = refresh(http, tokens.getValue("refresh_token") as String)
+                assertEquals(200, refreshed.statusCode())
+                assertEquals(expectedScopes, (json(refreshed).getValue("scope") as String).split(' ').toSet())
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RelationRole::class, names = ["OWNER", "STAFF"])
+    fun requestingEveryBusinessScopeIssuesTheIntersectionWithTheClientRegistration(role: RelationRole) {
+        seedMembership(role)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val tokens = issueTokens(
+                http, "openid profile tenant.read tenant.write events.read events.manage events.operate events.report", STAFF_CLIENT,
+            )
+            try {
+                val expected = setOf("openid", "tenant.read", "events.read", "events.operate")
+                assertEquals(expected, (tokens.getValue("scope") as String).split(' ').toSet())
+                assertEquals(expected, (decoder.decode(tokens.getValue("access_token") as String).claims["scope"] as String).split(' ').toSet())
+                val refreshed = refresh(http, tokens.getValue("refresh_token") as String, client = STAFF_CLIENT)
+                assertEquals(200, refreshed.statusCode())
+                assertEquals(expected, (json(refreshed).getValue("scope") as String).split(' ').toSet())
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["tenant.write events.manage events.report", "events.read events.write", "events.read admin.read"])
+    fun requestWithOnlyScopesOutsideTheClientRegistrationOrAnUnknownScopeIsRejected(scope: String) {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            try {
+                assertEquals("invalid_scope", authorize(http, scope, STAFF_CLIENT)["error"])
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
+    @Test
+    fun openIdIsRejectedForClientNotRegisteredForIt() {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            try {
+                assertEquals("invalid_scope", authorize(http, "openid tenant.read", NO_OIDC_CLIENT)["error"])
+            } finally {
+                send(http, "/api/logout", "")
+            }
+        }
+    }
+
     @Test
     fun refreshRechecksCurrentRoleRatherThanReusingPreviouslyGrantedScopes() {
         seedMembership(RelationRole.OWNER)
@@ -244,39 +331,42 @@ class ConfiguredClientTokenFlowTests(
         ))
     }
 
-    private fun issueTokens(http: HttpClient, scope: String): Map<String, Any> {
+    private fun issueTokens(http: HttpClient, scope: String, client: String = WEB_CLIENT): Map<String, Any> {
+        val params = authorize(http, scope, client)
+        val response = send(http, "/oauth2/token", form(mapOf(
+            "grant_type" to "authorization_code", "code" to params.getValue("code"), "redirect_uri" to REDIRECT_URI,
+            "code_verifier" to "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        )), basicCredentials = client)
+        assertEquals(200, response.statusCode())
+        return json(response)
+    }
+
+    private fun authorize(http: HttpClient, scope: String, client: String): Map<String, String> {
         assertEquals(200, send(http, "/api/login", body = """{"username":"user-123","password":"password","tenantId":"tenant-a"}""", contentType = "application/json").statusCode())
-        val redirect = "https://example.invalid/callback"
         val query = form(mapOf(
-            "response_type" to "code", "client_id" to "configured-web-client", "redirect_uri" to redirect,
+            "response_type" to "code", "client_id" to client.substringBefore(':'), "redirect_uri" to REDIRECT_URI,
             "scope" to scope, "audience" to "configured-api", "nonce" to "refresh-test-nonce",
             "code_challenge" to "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method" to "S256",
         ))
         val authorize = send(http, "/oauth2/authorize?$query")
         assertEquals(302, authorize.statusCode())
         val location = URI.create(authorize.headers().firstValue("Location").orElseThrow())
-        val params = location.rawQuery.split('&').associate {
+        return location.rawQuery.split('&').associate {
             val pair = it.split('=', limit = 2)
             pair[0] to URLDecoder.decode(pair[1], Charsets.UTF_8)
         }
-        val response = send(http, "/oauth2/token", form(mapOf(
-            "grant_type" to "authorization_code", "code" to params.getValue("code"), "redirect_uri" to redirect,
-            "code_verifier" to "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-        )), authenticate = true)
-        assertEquals(200, response.statusCode())
-        return json(response)
     }
 
-    private fun refresh(http: HttpClient, token: String, scope: String? = null): HttpResponse<String> {
+    private fun refresh(http: HttpClient, token: String, scope: String? = null, client: String = WEB_CLIENT): HttpResponse<String> {
         val params = mutableMapOf("grant_type" to "refresh_token", "refresh_token" to token)
         if (scope != null) params["scope"] = scope
-        return send(http, "/oauth2/token", form(params), authenticate = true)
+        return send(http, "/oauth2/token", form(params), basicCredentials = client)
     }
 
     private fun send(http: HttpClient, path: String, body: String? = null, contentType: String = "application/x-www-form-urlencoded", authenticate: Boolean = false, basicCredentials: String? = null): HttpResponse<String> {
         val builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port$path")).timeout(Duration.ofSeconds(10))
         if (body != null) builder.header("Content-Type", contentType).POST(HttpRequest.BodyPublishers.ofString(body))
-        val credentials = basicCredentials ?: if (authenticate) "configured-web-client:dummy-web-secret" else null
+        val credentials = basicCredentials ?: if (authenticate) WEB_CLIENT else null
         if (credentials != null) builder.header("Authorization", "Basic " + Base64.getEncoder().encodeToString(credentials.toByteArray()))
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
     }
@@ -285,5 +375,12 @@ class ConfiguredClientTokenFlowTests(
 
     private fun form(values: Map<String, String>): String = values.entries.joinToString("&") {
         URLEncoder.encode(it.key, Charsets.UTF_8) + "=" + URLEncoder.encode(it.value, Charsets.UTF_8)
+    }
+
+    companion object {
+        const val REDIRECT_URI = "https://example.invalid/callback"
+        const val WEB_CLIENT = "configured-web-client:dummy-web-secret"
+        const val STAFF_CLIENT = "configured-staff-client:dummy-staff-secret"
+        const val NO_OIDC_CLIENT = "configured-no-oidc-client:dummy-no-oidc-secret"
     }
 }

@@ -383,23 +383,6 @@ class TokenExchangeEndpointTests(
         assertEquals("scope_exceeds_subject_token", latestAudit()["failure_reason"])
     }
 
-    @Test
-    fun rejectsManageScopeForStaffEventMemberAsInvalidScope() {
-        val subjectToken = saveTenantAuthorization()
-
-        mockMvc.perform(
-            tokenExchangeRequest(
-                subjectToken = subjectToken,
-                resource = "https://api.example.com/tenants/tenant-a/events/event-staff",
-                scope = "events.manage",
-            ),
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_scope"))
-
-        assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
-    }
-
     @ParameterizedTest
     @CsvSource(
         "event-1, events.manage",
@@ -408,7 +391,8 @@ class TokenExchangeEndpointTests(
         "event-1, events.read events.manage events.operate events.report",
         "event-staff, events.operate",
         "event-staff, events.report",
-        "event-staff, events.read events.operate events.report",
+        "event-staff, events.manage",
+        "event-staff, events.read events.manage events.operate events.report",
         "event-1, tenant.read tenant.write",
         "event-staff, tenant.read",
     )

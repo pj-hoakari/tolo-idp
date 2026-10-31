@@ -80,7 +80,7 @@ Kotlin の package root は `dev.usbharu.toloidp` です。新規コードはこ
 - Token Exchange の段階は `login -> tenant_access -> event_access` のみ許可する。
 - `tenant_id` / `event_id` は `scope` に含めず、`resource` から解釈して JWT claim として発行する。
 - `x_tenant_id` / `x_event_id` は使わない。
-- requested scope を暗黙に縮小しない。許可外 scope は `invalid_scope` にする。
+- 認可要求では requested scope と tenant role と client の登録 scope の積を発行する（`spec.md` 11.1）。それ以外では requested scope を暗黙に縮小せず、許可外 scope は `invalid_scope` にする。
 - Token Exchange は confidential client のみ許可する。public client からの Token Exchange は禁止する。
 - `audience` は必須、client ごとの許可対象に含まれることを検証する。
 - 1 access token に複数 audience を入れない。
