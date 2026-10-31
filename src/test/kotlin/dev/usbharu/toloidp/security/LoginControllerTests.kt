@@ -11,13 +11,12 @@ import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
+import org.springframework.test.json.JsonCompareMode
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -124,9 +123,8 @@ class LoginControllerTests(
             .andExpect(status().isNoContent)
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = [false, true])
-    fun openIdAuthorizationCodeCanBeUsedAtUserInfoEndpoint(profile: Boolean) {
+    @Test
+    fun openIdAuthorizationCodeCanBeUsedAtUserInfoEndpoint() {
         val session = mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
             .andExpect(status().isOk)
             .andReturn()
@@ -139,7 +137,7 @@ class LoginControllerTests(
                 .queryParam("response_type", "code")
                 .queryParam("client_id", "client-123")
                 .queryParam("redirect_uri", REDIRECT_URI)
-                .queryParam("scope", if (profile) "openid profile tenant.read" else "openid tenant.read")
+                .queryParam("scope", "openid tenant.read")
                 .queryParam("state", "state")
                 .queryParam("nonce", "nonce")
                 .queryParam("audience", "backend-api")
@@ -172,38 +170,9 @@ class LoginControllerTests(
 
         mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
-            .andExpect(if (profile) jsonPath("$.preferred_username").value("user-123") else jsonPath("$.preferred_username").doesNotExist())
-            .andExpect(jsonPath("$.password").doesNotExist())
-            .andExpect(jsonPath("$.authorities").doesNotExist())
+            .andExpect(content().json("""{"sub":"${IdpUserDetailsManager.DEVELOPMENT_USER_ID}"}""", JsonCompareMode.STRICT))
 
         assertUserInfoRejectsUnavailableUser(accessToken)
-
-        if (profile) {
-            users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "userinfo-renamed")
-            try {
-                mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
-                    .andExpect(status().isOk)
-                    .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
-                    .andExpect(jsonPath("$.preferred_username").value("userinfo-renamed"))
-            } finally {
-                users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "user-123")
-            }
-
-            val refreshToken = jsonMapper.readTree(tokenResponse.contentAsString)["refresh_token"].stringValue()
-            val refreshed = mockMvc.perform(post("/oauth2/token")
-                .with(httpBasic("client-123", "secret"))
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .param("grant_type", "refresh_token")
-                .param("refresh_token", refreshToken)
-                .param("scope", "openid tenant.read"))
-                .andExpect(status().isOk).andReturn().response
-            val narrowedToken = jsonMapper.readTree(refreshed.contentAsString)["access_token"].stringValue()
-            mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $narrowedToken"))
-                .andExpect(status().isOk)
-                .andExpect(jsonPath("$.preferred_username").doesNotExist())
-            assertUserInfoRejectsUnavailableUser(narrowedToken)
-        }
     }
 
     private fun assertUserInfoRejectsUnavailableUser(accessToken: String) {

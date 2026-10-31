@@ -74,7 +74,6 @@ class TenantScopedUserFlowTests(
                 assertEquals(tenant, decoder.decode(access).getClaimAsString("tenant_id"))
                 mvc.perform(get("/userinfo").header("Authorization", "Bearer $access"))
                     .andExpect(status().isOk).andExpect(jsonPath("$.sub").value(subject))
-                    .andExpect(jsonPath("$.preferred_username").value("same-login"))
                 val refreshed = mvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
                     .param("grant_type", "refresh_token").param("refresh_token", tokens["refresh_token"].stringValue()))
                     .andExpect(status().isOk).andReturn().response.contentAsString
@@ -100,7 +99,7 @@ class TenantScopedUserFlowTests(
 
     private fun authorize(session: MockHttpSession, tenant: String) = get("/oauth2/authorize").session(session)
         .queryParam("response_type", "code").queryParam("client_id", "client-123").queryParam("redirect_uri", REDIRECT)
-        .queryParam("scope", "openid profile tenant.read events.read").queryParam("audience", "backend-api")
+        .queryParam("scope", "openid tenant.read events.read").queryParam("audience", "backend-api")
         .queryParam("resource", "https://api.example.com/tenants/$tenant")
         .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
 

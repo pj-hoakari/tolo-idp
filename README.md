@@ -104,4 +104,4 @@ CI と公開手順は [CI.md](CI.md) を参照してください。
 
 ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service には `(tenantId, username)` を渡します。開発用 seed は `(tenant-a, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
 
-ログイン名の取得には、認可時に `openid profile` scope を要求し、その access token で `GET /userinfo` を呼び出してください。`preferred_username` に現在のログイン名、`sub` に UUID の user ID を返します。
+`GET /userinfo` は `sub` に UUID の user ID だけを返します。`profile` / `email` scope は扱いません。

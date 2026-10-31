@@ -47,7 +47,7 @@ class AuthorizationServerSurfaceTests(
                 jsonPath(
                     "$.scopes_supported",
                     containsInAnyOrder(
-                        "openid", "profile", "tenant.read", "tenant.write", "tenant.claim",
+                        "openid", "tenant.read", "tenant.write", "tenant.claim",
                         "events.read", "events.manage", "events.operate", "events.report",
                     ),
                 ),
@@ -110,7 +110,7 @@ class AuthorizationServerSurfaceTests(
                 jsonPath(
                     "$.scopes_supported",
                     containsInAnyOrder(
-                        "openid", "profile", "tenant.read", "tenant.write", "tenant.claim",
+                        "openid", "tenant.read", "tenant.write", "tenant.claim",
                         "events.read", "events.manage", "events.operate", "events.report",
                     ),
                 ),

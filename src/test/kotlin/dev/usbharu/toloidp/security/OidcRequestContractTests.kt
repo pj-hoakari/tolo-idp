@@ -228,6 +228,13 @@ class OidcRequestContractTests(
     }
 
     @Test
+    fun profileAndEmailScopesAreRejected() {
+        val session = login()
+        assertError(mvc.perform(authorize(session, "openid profile tenant.read")), "invalid_scope")
+        assertError(mvc.perform(authorize(session, "openid email tenant.read")), "invalid_scope")
+    }
+
+    @Test
     fun previousJwtCanBeRevokedAfterRefreshWithoutRevokingCurrentToken() {
         val tokens = exchange(mvc.perform(authorize(login())))
         val old = tokens["access_token"].stringValue()

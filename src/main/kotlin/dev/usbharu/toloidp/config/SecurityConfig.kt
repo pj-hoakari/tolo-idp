@@ -198,11 +198,7 @@ class SecurityConfig {
                                 throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
                             }
                             if (!user.isEnabled) throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
-                            val claims = OidcUserInfo.builder().subject(subject)
-                            if (IdpScopes.PROFILE in context.accessToken.scopes) {
-                                claims.preferredUsername(user.username)
-                            }
-                            claims.build()
+                            OidcUserInfo.builder().subject(subject).build()
                         }
                     }
                     oidc.providerConfigurationEndpoint { providerConfigurationEndpoint ->

@@ -76,6 +76,8 @@ steps:
       && "authorization_code" in current.res.body.grant_types_supported
       && "urn:ietf:params:oauth:grant-type:token-exchange" in current.res.body.grant_types_supported
       && "openid" in current.res.body.scopes_supported
+      && !("profile" in current.res.body.scopes_supported)
+      && !("email" in current.res.body.scopes_supported)
       && "S256" in current.res.body.code_challenge_methods_supported
       && "RS256" in current.res.body.id_token_signing_alg_values_supported
       && "client_secret_basic" in current.res.body.token_endpoint_auth_methods_supported
