@@ -372,7 +372,7 @@ staff
 
 `owner` / `staff` は relation service から取得する外部 role である。
 
-`admin` は IdP 内部設定または将来の本番 relation service で扱う可能性がある role であり、現時点の `tolo-relation-stub` からは返却されない。
+`admin` は IdP 内部設定または将来の relation service で扱う可能性がある role である。relation service（tolo-tenant-management）では予約語で、現時点では付与できず、返却されない。
 
 ### 9.2 scope
 
@@ -416,14 +416,14 @@ relation service から取得した role は、JWT claim へ転記せず、scope
 
 Authorization Server は tenant / event の所属関係、および subject user の role を relation service から取得する。
 
-現時点では `tolo-relation-stub` を暫定 relation service 契約として扱う。
+relation service は tolo-tenant-management が提供し、Authorization Server はその所属参照 HTTP API の契約に従う。開発環境とシナリオでは、同じ契約で応答する `tolo-relation-stub` を使う。
 
 ### 10.1 参照 API
 
 Authorization Server は、resource から得た `tenantId` と subject user id を用いて、以下の API を参照する。
 
 ```http
-GET /tenants/{tenantId}/users/{userId}
+GET /tenants/{tenantId}/users/{userId}/memberships
 ```
 
 ログイン時は認証済み user の username を `userId` として渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで username を渡す。未知・無効・別 tenant の subject は拒否する。`sub` を Relation Service の userId として扱わない。
@@ -434,17 +434,22 @@ relation service は以下の JSON を返す。
 
 ```json
 {
-  "tenant": { "id": "tenant-a", "role": "owner" },
-  "user": { "id": "user-123" },
-  "events": [
-    { "id": "event-1", "role": "staff" }
+  "memberships": [
+    {
+      "user_id": "user-123",
+      "tenant_id": "tenant-a",
+      "tenant_role": "owner",
+      "event_roles": [
+        { "event_id": "event-1", "role": "staff" }
+      ]
+    }
   ]
 }
 ```
 
-`tenant.role` は、user が対象 tenant に role を持たない場合 `null` である。
+`memberships` の要素は 0 件または 1 件である。user が対象 tenant に role を持たない場合は空配列である。
 
-`events` は、対象 tenant 配下の event のうち、user が role を持つもののみを含む。該当 event がない場合は空配列である。
+`event_roles` は、対象 tenant 配下の event のうち、user が role を持つもののみを含む。該当 event がない場合は空配列である。
 
 relation service が返す外部 role は以下のみとする。
 
@@ -471,10 +476,11 @@ relation service のモデル制約は以下とする。
 Authorization Server は relation service の結果を以下のように扱う。
 
 ```text
-- tenant.role == null の場合、subject user は対象 tenant の member ではない
-- resource の eventId が events[].id に存在しない場合、subject user は対象 event にアクセスできない
-- event_access token の scope 判定には、該当 events[].role を使う
-- tenant_access token の scope 判定には、tenant.role を使う
+- memberships が空配列の場合、subject user は対象 tenant の member ではない
+- memberships が 2 件以上の場合、または memberships[0].tenant_id / user_id が問い合わせた tenantId / userId と一致しない場合、不正 response とする
+- resource の eventId が memberships[0].event_roles[].event_id に存在しない場合、subject user は対象 event にアクセスできない
+- event_access token の scope 判定には、該当 event_roles[].role を使う
+- tenant_access token の scope 判定には、memberships[0].tenant_role を使う
 ```
 
 relation service が `404` を返した場合、対象 tenant は token 発行対象として扱わない。
@@ -483,7 +489,7 @@ relation service への通信失敗、timeout、不正 response、未知 role �
 
 ### 10.5 IdP 側の入口制約
 
-`tolo-relation-stub` は ID 値を単純な文字列として扱うが、Authorization Server は本仕様の ID 形式制限を入口で必ず適用する。
+relation service は ID 値を本仕様と異なる形式で扱う場合があるが、Authorization Server は本仕様の ID 形式制限を入口で必ず適用する。
 
 Authorization Server は、ID 形式検証に失敗した値を relation service へ問い合わせてはならない。
 
@@ -505,6 +511,8 @@ user_id
 - cached_at
 - expires_at
 ```
+
+`TenantMembership` は relation service の response を検証・正規化した IdP 内部の model であり、relation service の response をそのまま保存しない。relation service の契約が変わっても、保存形式は変わらない。
 
 キャッシュ TTL は `tolo-idp.relation.cache.ttl` で設定し、デフォルトは 5 分とする。
 
@@ -568,9 +576,9 @@ requested_scope ⊆ client.allowed_scopes
 requested_scope ⊆ tenant_role.allowed_scopes
 ```
 
-`tenant_role` は relation service の `tenant.role` から取得する。`tenant.role == null` の場合、tenant_access token は発行しない。
+`tenant_role` は relation service の `memberships[0].tenant_role` から取得する。`memberships` が空配列の場合、tenant_access token は発行しない。
 
-`admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `tenant_role` へ割り当てる。`tolo-relation-stub` の response から `admin` を推定してはならない。
+`admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `tenant_role` へ割り当てる。relation service の response から `admin` を推定してはならない。
 
 ### 11.2 event_access token 発行時
 
@@ -586,11 +594,11 @@ requested_scope ⊆ subject_token.scope
 requested_scope ⊆ event_role.allowed_scopes
 ```
 
-`event_role` は relation service の `events[].role` から取得する。
+`event_role` は relation service の `memberships[0].event_roles[].role` から取得する。
 
-resource の `eventId` に一致する event が `events` に存在しない場合、event_access token は発行しない。
+resource の `eventId` に一致する event が `event_roles` に存在しない場合、event_access token は発行しない。
 
-`admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `event_role` へ割り当てる。`tolo-relation-stub` の response から `admin` を推定してはならない。
+`admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `event_role` へ割り当てる。relation service の response から `admin` を推定してはならない。
 
 ### 11.3 tenant.claim token 発行時
 
@@ -794,8 +802,8 @@ Authorization Server は以下を確認する。
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
 - subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の username) を問い合わせる
-- relation service の tenant.role が null ではない
-- resource の eventId が relation service の events[].id に存在する
+- relation service の memberships が空配列ではない
+- resource の eventId が relation service の memberships[0].event_roles[].event_id に存在する
 - requested_scope が subject_token.scope を超えていない
 - requested_scope が client / event_role に許可されている
 ```
@@ -1222,7 +1230,7 @@ role:
 
 relation service:
   tenant / event の所属関係と subject user の role を返す
-  現時点の暫定契約は tolo-relation-stub に合わせる
+  tolo-tenant-management の所属参照 HTTP API が提供する
 
 Authorization Server:
   tenant_access token を発行する

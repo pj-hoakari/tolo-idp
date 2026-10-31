@@ -48,7 +48,7 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
 
         BindingReflectionHintsRegistrar().registerReflectionHints(
             reflection,
-            HttpRelationService.MembershipResponse::class.java,
+            HttpRelationService.MembershipsResponse::class.java,
             UsernamePasswordAuthenticationToken::class.java,
             SimpleGrantedAuthority::class.java,
             FactorGrantedAuthority::class.java,
