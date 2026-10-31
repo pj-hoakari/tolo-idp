@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
@@ -92,6 +93,8 @@ class ConfiguredClientTokenFlowTests(
                 assertEquals(200, tokens.statusCode())
                 val tenantToken = json(tokens).getValue("access_token") as String
                 val tenant = decoder.decode(tenantToken)
+                assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, tenant.subject)
+                assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, decoder.decode(json(tokens).getValue("id_token") as String).subject)
                 assertEquals(listOf("configured-api"), tenant.audience)
                 assertEquals(123, Duration.between(tenant.issuedAt, tenant.expiresAt).seconds.toInt())
                 assertEquals("tenant_access", tenant.claims["token_use"])
@@ -104,6 +107,7 @@ class ConfiguredClientTokenFlowTests(
                 assertEquals(200, exchange.statusCode())
                 val eventToken = json(exchange).getValue("access_token") as String
                 val event = decoder.decode(eventToken)
+                assertEquals(tenant.subject, event.subject)
                 assertEquals(listOf("configured-api"), event.audience)
                 assertEquals(45, Duration.between(event.issuedAt, event.expiresAt).seconds.toInt())
                 assertEquals("event_access", event.claims["token_use"])

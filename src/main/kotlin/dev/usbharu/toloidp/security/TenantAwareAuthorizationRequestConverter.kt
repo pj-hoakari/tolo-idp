@@ -30,18 +30,25 @@ class TenantAwareAuthorizationRequestConverter(
             return converted
         }
 
-        val tenantId = request.getSession(false)?.getAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE) as? String
-            ?: return converted
         val additionalParameters = converted.additionalParameters.toMutableMap()
-        additionalParameters[OAuth2ParameterNames.RESOURCE] = resourceParser.tenantResource(tenantId)
-        return OAuth2AuthorizationCodeRequestAuthenticationToken(
-            converted.authorizationUri,
-            converted.clientId,
-            converted.principal as Authentication,
-            converted.redirectUri,
-            converted.state,
-            converted.scopes,
-            additionalParameters,
-        )
+        if ("openid" in converted.scopes.orEmpty()) {
+            // OIDC Request URI is unsupported. Keep it on the request-local context so
+            // our validator can reject it after client/redirect validation, rather than
+            // letting the framework interpret it as a pushed authorization request.
+            additionalParameters.remove(OAuth2ParameterNames.REQUEST_URI)
+        }
+        val tenantId = request.getSession(false)?.getAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE) as? String
+        if (tenantId != null) additionalParameters[OAuth2ParameterNames.RESOURCE] = resourceParser.tenantResource(tenantId)
+        return TenantAuthorizationRequestToken(converted, additionalParameters, request)
     }
 }
+
+/** Request-local context only; it is never stored in an authorization or token. */
+class TenantAuthorizationRequestToken(
+    original: OAuth2AuthorizationCodeRequestAuthenticationToken,
+    parameters: Map<String, Any>,
+    val httpRequest: HttpServletRequest,
+) : OAuth2AuthorizationCodeRequestAuthenticationToken(
+    original.authorizationUri, original.clientId, original.principal as Authentication,
+    original.redirectUri, original.state, original.scopes, parameters,
+)

@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
@@ -27,9 +28,11 @@ import java.util.function.Consumer
  * client policy / tenant resource / audience / relation membership / scope を検証する。
  */
 class TenantAuthorizationValidator(
+    private val users: IdpUserDetailsManager,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
+    private val oidcRequests: OidcAuthenticationRequestValidator,
 ) : Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> {
     private val defaultValidator = OAuth2AuthorizationCodeRequestAuthenticationValidator()
 
@@ -40,6 +43,26 @@ class TenantAuthorizationValidator(
         log.structuredTrace("Tenant authorization validation started", "event" to "tenant_authorization_validation_started", "client_id" to context.registeredClient.clientId)
         defaultValidator.accept(context)
         val authentication = context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
+        try {
+            validateTrustedRequest(context, authentication)
+        } catch (ex: OAuth2AuthorizationCodeRequestAuthenticationException) {
+            // Only attach a redirect after the standard client / redirect validator succeeded.
+            val redirect = authentication.redirectUri ?: context.registeredClient.redirectUris.singleOrNull()
+            val response = OAuth2AuthorizationCodeRequestAuthenticationToken(
+                authentication.authorizationUri, authentication.clientId,
+                authentication.principal as org.springframework.security.core.Authentication,
+                redirect, authentication.state, authentication.scopes, authentication.additionalParameters,
+            )
+            response.isAuthenticated = true
+            throw OAuth2AuthorizationCodeRequestAuthenticationException(ex.error, response)
+        }
+    }
+
+    private fun validateTrustedRequest(
+        context: OAuth2AuthorizationCodeRequestAuthenticationContext,
+        authentication: OAuth2AuthorizationCodeRequestAuthenticationToken,
+    ) {
+        val completeReauthentication = oidcRequests.validate(authentication, context.registeredClient)
         val clientId = context.registeredClient.clientId
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throwAuthorizationError(OAuth2ErrorCodes.INVALID_REQUEST, "client_id")
@@ -83,7 +106,7 @@ class TenantAuthorizationValidator(
         val requestedScopes = authentication.scopes.orEmpty()
         try {
             scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
-            val membership = relationService.getMembership(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name)
+            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name).username)
             log.structuredDebug(
                 "Authorization request membership loaded",
                 "event" to "authorization_request_membership_loaded",
@@ -114,7 +137,7 @@ class TenantAuthorizationValidator(
                 "tenant_id" to tenantResource.tenantId,
                 "failure_reason" to ex.reason,
             )
-            throwAuthorizationError(OAuth2ErrorCodes.INVALID_GRANT, OAuth2ParameterNames.RESOURCE)
+            throwAuthorizationError(OAuth2ErrorCodes.ACCESS_DENIED, OAuth2ParameterNames.RESOURCE)
         }
         log.structuredDebug(
             "Authorization request validation completed",
@@ -126,6 +149,7 @@ class TenantAuthorizationValidator(
             "result" to "success",
         )
         log.structuredTrace("Tenant authorization validation completed", "event" to "tenant_authorization_validation_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
+        completeReauthentication()
     }
 
     private fun throwAuthorizationError(errorCode: String, parameter: String): Nothing {

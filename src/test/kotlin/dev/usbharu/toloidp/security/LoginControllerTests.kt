@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
@@ -10,6 +11,8 @@ import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -32,6 +35,7 @@ class LoginControllerTests(
     @Autowired private val mockMvc: MockMvc,
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
     @Autowired private val jsonMapper: JsonMapper,
+    @Autowired private val users: IdpUserDetailsManager,
 ) {
     @BeforeEach
     fun setUp() {
@@ -55,6 +59,7 @@ class LoginControllerTests(
         mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
+            .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
             .andExpect(jsonPath("$.tenantId").value("tenant-a"))
             .andExpect(jsonPath("$.resource").value("https://api.example.com/tenants/tenant-a"))
             .andExpect(jsonPath("$.authorities[0]").value("ROLE_USER"))
@@ -71,6 +76,18 @@ class LoginControllerTests(
     }
 
     @Test
+    fun disabledUserCannotCreateSession() {
+        users.createUser("tenant-a", org.springframework.security.core.userdetails.User.withUsername("disabled-user")
+            .password("{noop}password").roles("USER").disabled(true).build())
+        try {
+            mockMvc.perform(loginRequest("disabled-user", "password", "tenant-a"))
+                .andExpect(status().isUnauthorized)
+        } finally {
+            users.deleteUser("tenant-a", "disabled-user")
+        }
+    }
+
+    @Test
     fun loginRejectsBadCredentials() {
         mockMvc.perform(loginRequest("user-123", "wrong-password", "tenant-a"))
             .andExpect(status().isUnauthorized)
@@ -84,7 +101,8 @@ class LoginControllerTests(
 
     @Test
     fun loginRejectsTenantWithoutMembership() {
-        mockMvc.perform(loginRequest("user-123", "password", "tenant-missing"))
+        cacheRepository.deleteAll()
+        mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
             .andExpect(status().isForbidden)
     }
 
@@ -106,8 +124,9 @@ class LoginControllerTests(
             .andExpect(status().isNoContent)
     }
 
-    @Test
-    fun openIdAuthorizationCodeCanBeUsedAtUserInfoEndpoint() {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun openIdAuthorizationCodeCanBeUsedAtUserInfoEndpoint(profile: Boolean) {
         val session = mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
             .andExpect(status().isOk)
             .andReturn()
@@ -120,7 +139,7 @@ class LoginControllerTests(
                 .queryParam("response_type", "code")
                 .queryParam("client_id", "client-123")
                 .queryParam("redirect_uri", REDIRECT_URI)
-                .queryParam("scope", "openid tenant.read")
+                .queryParam("scope", if (profile) "openid profile tenant.read" else "openid tenant.read")
                 .queryParam("state", "state")
                 .queryParam("nonce", "nonce")
                 .queryParam("audience", "backend-api")
@@ -153,7 +172,64 @@ class LoginControllerTests(
 
         mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.sub").value("user-123"))
+            .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
+            .andExpect(if (profile) jsonPath("$.preferred_username").value("user-123") else jsonPath("$.preferred_username").doesNotExist())
+            .andExpect(jsonPath("$.password").doesNotExist())
+            .andExpect(jsonPath("$.authorities").doesNotExist())
+
+        assertUserInfoRejectsUnavailableUser(accessToken)
+
+        if (profile) {
+            users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "userinfo-renamed")
+            try {
+                mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+                    .andExpect(status().isOk)
+                    .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
+                    .andExpect(jsonPath("$.preferred_username").value("userinfo-renamed"))
+            } finally {
+                users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "user-123")
+            }
+
+            val refreshToken = jsonMapper.readTree(tokenResponse.contentAsString)["refresh_token"].stringValue()
+            val refreshed = mockMvc.perform(post("/oauth2/token")
+                .with(httpBasic("client-123", "secret"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("grant_type", "refresh_token")
+                .param("refresh_token", refreshToken)
+                .param("scope", "openid tenant.read"))
+                .andExpect(status().isOk).andReturn().response
+            val narrowedToken = jsonMapper.readTree(refreshed.contentAsString)["access_token"].stringValue()
+            mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $narrowedToken"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.preferred_username").doesNotExist())
+            assertUserInfoRejectsUnavailableUser(narrowedToken)
+        }
+    }
+
+    private fun assertUserInfoRejectsUnavailableUser(accessToken: String) {
+        val enabledUser = users.loadUserById(IdpUserDetailsManager.DEVELOPMENT_USER_ID)
+        users.updateUser("tenant-a", org.springframework.security.core.userdetails.User.withUserDetails(enabledUser).disabled(true).build())
+        try {
+            mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.error").value("invalid_token"))
+                .andExpect(header().string("WWW-Authenticate", "Bearer error=\"invalid_token\""))
+        } finally {
+            users.updateUser("tenant-a", enabledUser)
+        }
+
+        // Keep the token valid while changing only the subject's availability.
+        mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+            .andExpect(status().isOk)
+        users.deleteUser("tenant-a", enabledUser.username)
+        try {
+            mockMvc.perform(get("/userinfo").header("Authorization", "Bearer $accessToken"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.error").value("invalid_token"))
+                .andExpect(header().string("WWW-Authenticate", "Bearer error=\"invalid_token\""))
+        } finally {
+            users.createUser("tenant-a", enabledUser, enabledUser.id)
+        }
     }
 
     private fun loginRequest(username: String, password: String, tenantId: String) =

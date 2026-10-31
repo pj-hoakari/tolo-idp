@@ -17,7 +17,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.FactorGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.core.context.SecurityContextImpl
-import org.springframework.security.core.userdetails.UserDetailsService
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository
 import org.springframework.web.bind.annotation.PostMapping
@@ -25,14 +25,17 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
+import java.time.Clock
+import java.util.UUID
 
 @RestController
 @RequestMapping("/api")
 class LoginController(
-    private val userDetailsService: UserDetailsService,
+    private val userDetailsService: IdpUserDetailsManager,
     private val passwordEncoder: PasswordEncoder,
     private val relationService: RelationService,
     private val resourceParser: ResourceParser,
+    private val clock: Clock,
 ) {
     @PostMapping("/login")
     fun login(
@@ -59,7 +62,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenantId")
         }
         val user = try {
-            userDetailsService.loadUserByUsername(request.username)
+            userDetailsService.loadUserByUsername(request.tenantId, request.username)
         } catch (ex: RuntimeException) {
             log.structuredWarn(
                 "Login rejected",
@@ -71,7 +74,7 @@ class LoginController(
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
-        if (!passwordEncoder.matches(request.password, user.password)) {
+        if (!user.isEnabled || !passwordEncoder.matches(request.password, user.password)) {
             log.structuredWarn(
                 "Login rejected",
                 "event" to "login_rejected",
@@ -95,9 +98,13 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not allowed")
         }
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            user.username,
+            user.id,
             null,
             user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
+        )
+        authentication.details = linkedMapOf(
+            OidcAuthenticationRequestValidator.AUTH_TIME to clock.instant().epochSecond.toString(),
+            OidcAuthenticationRequestValidator.LOGIN_ID to UUID.randomUUID().toString(),
         )
         val context = SecurityContextImpl(authentication)
         SecurityContextHolder.setContext(context)
@@ -118,6 +125,7 @@ class LoginController(
         return ResponseEntity.ok(
             LoginResponse(
                 username = user.username,
+                sub = user.id,
                 tenantId = request.tenantId,
                 resource = resourceParser.tenantResource(request.tenantId),
                 authorities = user.authorities.mapNotNull { it.authority },
@@ -159,6 +167,7 @@ data class LoginRequest(
 )
 
 data class LoginResponse(
+    val sub: String,
     val username: String,
     val tenantId: String,
     val resource: String,

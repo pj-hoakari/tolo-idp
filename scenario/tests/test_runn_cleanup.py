@@ -75,6 +75,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 return
             suffix = "" if self.server.failure == "cookie" else "; HttpOnly"
             self.respond(200, {
+                "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
                 "username": "user-123", "tenantId": "tenant-a",
                 "resource": "https://api.example.com/tenants/tenant-a", "authorities": ["ROLE_USER"],
             }, {"Set-Cookie": f"JSESSIONID={COOKIE}; Path=/{suffix}"})

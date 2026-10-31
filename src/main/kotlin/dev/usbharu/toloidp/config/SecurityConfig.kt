@@ -17,6 +17,7 @@ import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.security.TenantAuthorizationValidator
 import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
 import dev.usbharu.toloidp.security.ToloJwtCustomizer
+import dev.usbharu.toloidp.security.OidcAuthenticationRequestValidator
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
@@ -25,6 +26,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
+import org.springframework.http.HttpHeaders
 import org.springframework.http.converter.HttpMessageConverter
 import org.springframework.http.server.ServletServerHttpResponse
 import org.springframework.jdbc.core.JdbcTemplate
@@ -37,6 +39,9 @@ import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.jackson.SecurityJacksonModules
+import org.springframework.security.oauth2.core.oidc.OidcUserInfo
+import org.springframework.security.oauth2.core.oidc.OidcIdToken
+import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
@@ -48,6 +53,8 @@ import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMe
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.JwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenIntrospection
 import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationConsentService
 import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationService
@@ -68,8 +75,7 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Refr
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.authentication.AuthenticationProvider
-import org.springframework.security.provisioning.JdbcUserDetailsManager
-import org.springframework.security.provisioning.UserDetailsManager
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.AuthenticationFailureHandler
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler
@@ -153,6 +159,8 @@ class SecurityConfig {
         registeredClientRepository: RegisteredClientRepository,
         authorizationService: OAuth2AuthorizationService,
         authorizationConsentService: OAuth2AuthorizationConsentService,
+        users: IdpUserDetailsManager,
+        oidcRequests: OidcAuthenticationRequestValidator,
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
         resourceParser: ResourceParser,
         relationService: RelationService,
@@ -168,9 +176,41 @@ class SecurityConfig {
         http.with(authorizationServerConfigurer) { authorizationServer ->
             authorizationServer
                 .oidc { oidc ->
+                    oidc.userInfoEndpoint { endpoint ->
+                        endpoint.errorResponseHandler { _, response, exception ->
+                            val error = (exception as? OAuth2AuthenticationException)?.error
+                                ?: OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN)
+                            val status = when (error.errorCode) {
+                                OAuth2ErrorCodes.INVALID_TOKEN -> HttpStatus.UNAUTHORIZED
+                                OAuth2ErrorCodes.INSUFFICIENT_SCOPE -> HttpStatus.FORBIDDEN
+                                else -> HttpStatus.BAD_REQUEST
+                            }
+                            response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer error=\"${error.errorCode}\"")
+                            val httpResponse = ServletServerHttpResponse(response)
+                            httpResponse.setStatusCode(status)
+                            OAuth2ErrorHttpMessageConverter().write(OAuth2Error(error.errorCode), null, httpResponse)
+                        }
+                        endpoint.userInfoMapper { context ->
+                            val subject = context.authorization.getToken(OidcIdToken::class.java)!!.token.subject
+                            val user = try {
+                                users.loadUserById(subject)
+                            } catch (_: UsernameNotFoundException) {
+                                throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
+                            }
+                            if (!user.isEnabled) throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
+                            val claims = OidcUserInfo.builder().subject(subject)
+                            if (IdpScopes.PROFILE in context.accessToken.scopes) {
+                                claims.preferredUsername(user.username)
+                            }
+                            claims.build()
+                        }
+                    }
                     oidc.providerConfigurationEndpoint { providerConfigurationEndpoint ->
                         providerConfigurationEndpoint.providerConfigurationCustomizer { metadata ->
                             metadata.claims(discoveryMetadataClaimsCustomizer())
+                            metadata.claim("request_parameter_supported", false)
+                            metadata.claim("request_uri_parameter_supported", false)
+                            metadata.claim("response_modes_supported", listOf("query"))
                         }
                     }
                 }
@@ -194,9 +234,11 @@ class SecurityConfig {
                         .forEach {
                             it.setAuthenticationValidator(
                                 TenantAuthorizationValidator(
+                                    users,
                                     resourceParser,
                                     relationService,
                                     scopePolicy,
+                                    oidcRequests,
                                 ),
                             )
                         }
@@ -401,6 +443,7 @@ class SecurityConfig {
      */
     @Bean
     fun specTokenExchangeAuthenticationProvider(
+        users: IdpUserDetailsManager,
         authorizationService: OAuth2AuthorizationService,
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
         resourceParser: ResourceParser,
@@ -411,6 +454,7 @@ class SecurityConfig {
         clock: Clock,
     ): SpecTokenExchangeAuthenticationProvider =
         SpecTokenExchangeAuthenticationProvider(
+            users,
             authorizationService,
             tokenGenerator,
             resourceParser,
@@ -430,13 +474,27 @@ class SecurityConfig {
         jtiDenylistRepository: JtiDenylistRepository,
         auditService: AuditService,
         clock: Clock,
+        jwtDecoder: JwtDecoder,
+        properties: IdpProperties,
     ): AuthenticationProvider =
         SpecTokenRevocationAuthenticationProvider(
             authorizationService,
             jtiDenylistRepository,
             auditService,
             clock,
+            jwtDecoder,
+            properties.issuer,
         )
+
+    @Bean
+    fun oidcAuthenticationRequestValidator(
+        jwkSource: JWKSource<SecurityContext>, properties: IdpProperties, clock: Clock,
+    ): OidcAuthenticationRequestValidator {
+        val decoder = OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource) as NimbusJwtDecoder
+        // A previously issued, expired ID Token can still identify the requested user.
+        decoder.setJwtValidator(JwtIssuerValidator(properties.issuer))
+        return OidcAuthenticationRequestValidator(decoder, clock)
+    }
 
     /**
      * 設定された issuer を Authorization Server metadata と JWT claim 生成へ反映する。
@@ -449,8 +507,8 @@ class SecurityConfig {
      * login API と Spring Security session 認証で使う JDBC ベースの user store。
      */
     @Bean
-    fun userDetailsService(dataSource: DataSource): UserDetailsManager =
-        JdbcUserDetailsManager(dataSource)
+    fun userDetailsService(dataSource: DataSource, passwordEncoder: PasswordEncoder): IdpUserDetailsManager =
+        IdpUserDetailsManager(dataSource, passwordEncoder)
 
     /**
      * 保存済み user password に `{bcrypt}` などの encoder id を含められる delegating password encoder。
