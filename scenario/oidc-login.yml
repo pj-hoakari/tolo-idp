@@ -281,8 +281,8 @@ steps:
       && "tenant_role" not in current.res.body
       && "event_role" not in current.res.body
 
-  reject_event_manage:
-    desc: staff の event-2 に対する設計・構成の書き込み要求を拒否する
+  exchange_staff_event_manage:
+    desc: staff の event-2 に対する設計・構成の書き込み scope を発行する
     idp:
       "{{ token_path }}":
         post:
@@ -297,7 +297,7 @@ steps:
               audience: "{{ vars.audience }}"
               resource: https://api.example.com/tenants/tenant-a/events/event-2
               scope: events.manage
-    test: current.res.status == 400 && current.res.body == {"error":"invalid_scope"}
+    test: current.res.status == 200 && current.res.body.scope == "events.manage"
 
   reject_nonmember_event:
     desc: 未所属の event-3 への交換を詳細を漏らさず拒否する

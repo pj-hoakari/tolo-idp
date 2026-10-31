@@ -26,7 +26,7 @@ class UnknownRelationRoleException : RuntimeException("relation_role_unknown")
 /**
  * relation role から scope を導出し、要求 scope を検証する中心的な policy。
  *
- * 呼び出し側は requested scope を明示的に渡す。許可外 scope は暗黙に縮小せず拒否する。
+ * 呼び出し側は requested scope を明示的に渡す。tenant_access の認可要求ではロールと client の登録 scope を超える scope を発行対象から外し、それ以外の許可外 scope は拒否する。
  */
 @Component
 class ScopePolicy(
@@ -57,12 +57,30 @@ class ScopePolicy(
 
     /** 所有権取得用 scope と通常の業務 scope の併用を拒否し、tenant role を検証する。 */
     fun requireTenantAccessScopes(requested: Set<String>, role: RelationRole, reason: String) {
+        requireClaimNotMixed(requested, reason)
+        requireAllowed(requested - IDENTITY_SCOPES, allowedScopes(role), reason)
+    }
+
+    fun grantTenantAccessScopes(requested: Set<String>, role: RelationRole, clientScopes: Set<String>): Set<String> {
+        requireAllowed(requested, IdpScopes.SUPPORTED, "scope_not_allowed_for_role")
+        requireClaimNotMixed(requested, "scope_not_allowed_for_role")
+        if (IdpScopes.OPENID in requested && IdpScopes.OPENID !in clientScopes) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_client")
+        }
+        val allowed = (IDENTITY_SCOPES + allowedScopes(role)) intersect clientScopes
+        val granted = requested.filterTo(linkedSetOf()) { it in allowed }
+        if (granted.isEmpty() && requested.isNotEmpty()) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_role")
+        }
+        return granted
+    }
+
+    private fun requireClaimNotMixed(requested: Set<String>, reason: String) {
         if (IdpScopes.TENANT_CLAIM in requested &&
             (requested - IDENTITY_SCOPES - IdpScopes.TENANT_CLAIM).isNotEmpty()
         ) {
             throw ScopeNotAllowedException(reason)
         }
-        requireAllowed(requested - IDENTITY_SCOPES, allowedScopes(role), reason)
     }
 
     /** client / subject の保存済み設定にかかわらず、廃止済み scope と tenant.claim を拒否する。 */
@@ -84,12 +102,11 @@ class ScopePolicy(
                 ROLE_OWNER > ROLE_STAFF
                 ROLE_ADMIN > ROLE_STAFF
                 ROLE_OWNER > SCOPE_${IdpScopes.TENANT_WRITE}
-                ROLE_OWNER > SCOPE_${IdpScopes.EVENTS_MANAGE}
                 ROLE_ADMIN > SCOPE_${IdpScopes.TENANT_WRITE}
-                ROLE_ADMIN > SCOPE_${IdpScopes.EVENTS_MANAGE}
                 ROLE_STAFF > SCOPE_${IdpScopes.TENANT_READ}
                 ROLE_STAFF > SCOPE_${IdpScopes.TENANT_CLAIM}
                 ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_READ}
+                ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_MANAGE}
                 ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_OPERATE}
                 ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_REPORT}
                 """.trimIndent(),
