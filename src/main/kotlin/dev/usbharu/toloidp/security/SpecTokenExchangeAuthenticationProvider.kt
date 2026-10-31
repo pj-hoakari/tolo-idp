@@ -2,6 +2,7 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.audit.TokenAuditEvent
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredDebug
@@ -48,6 +49,7 @@ import java.time.Instant
  * 1 つの認可境界で強制する。
  */
 open class SpecTokenExchangeAuthenticationProvider(
+    private val users: IdpUserDetailsManager,
     private val authorizationService: OAuth2AuthorizationService,
     private val tokenGenerator: OAuth2TokenGenerator<out OAuth2Token>,
     private val resourceParser: ResourceParser,
@@ -189,7 +191,7 @@ open class SpecTokenExchangeAuthenticationProvider(
                 scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
                 scopePolicy.requireEventAccessScopes(requestedScopes)
                 scopePolicy.requireAllowed(requestedScopes, subjectScopes, "scope_exceeds_subject_token")
-                val membership = relationService.getMembership(eventResource.tenantId, subject)
+                val membership = relationService.getMembership(eventResource.tenantId, users.requireTenantUser(eventResource.tenantId, subject).username)
                 log.structuredDebug(
                     "Relation membership lookup completed",
                     "event" to "relation_membership_lookup_completed",

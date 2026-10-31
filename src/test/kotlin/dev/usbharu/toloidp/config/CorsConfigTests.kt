@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId

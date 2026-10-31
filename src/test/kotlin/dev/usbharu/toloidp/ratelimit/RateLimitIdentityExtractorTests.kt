@@ -56,7 +56,18 @@ class RateLimitIdentityExtractorTests(
 
         val identity = extractor.identity(CachedBodyHttpServletRequest(request))
 
-        assertEquals("user-123", identity.userId)
+        assertEquals("[\"tenant-a\",\"user-123\"]", identity.userId)
+    }
+
+    @Test
+    fun loginRateLimitSeparatesTenantsAndRequiresTenantContext() {
+        val first = extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":"same","tenantId":"tenant-a"}""")))
+        val second = extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":"same","tenantId":"tenant-b"}""")))
+        kotlin.test.assertNotEquals(first.userId, second.userId)
+        assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":"same"}"""))).userId)
     }
 
     @Test

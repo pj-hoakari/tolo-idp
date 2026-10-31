@@ -76,7 +76,7 @@ Authorization Server は以下を確認する。
 
 ```text
 - tenantId が ID 形式に一致する
-- username / password が IdP 内の user と一致する
+- (tenantId, username) で特定した IdP 内の user の password が一致する
 - relation service 上で user が tenant に所属している
 ```
 
@@ -86,6 +86,7 @@ Authorization Server は以下を確認する。
 
 ```json
 {
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "username": "user-123",
   "tenantId": "tenant-a",
   "resource": "https://api.example.com/tenants/tenant-a",
@@ -94,6 +95,51 @@ Authorization Server は以下を確認する。
 ```
 
 認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
+
+ログイン成功時には、パスワードを検証した時刻とログインごとの識別子をサーバー側で記録する。認証時刻は ID Token の `auth_time` に使い、Refresh Token による更新でも元の認証時刻を維持する。token の更新を再ログインとして扱わない。
+
+### 4.1.1 ユーザーの識別
+
+ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内の userId（ログイン名）であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
+
+権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, username)` を渡し、サロゲートキーを渡さない。
+
+ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も `(tenantId, username)` ごとに分離する。
+
+開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId は従来どおり `user-123` とする。
+
+V6 は未リリースの開発用スキーマ変更としてユーザーテーブルを作り直す。旧テーブルには tenantId がないため所属を推測せず、旧ユーザー・権限・対応する authorization / consent・relation cache を削除する。開発用ユーザーは seed で再作成する。DB 以外の移行・旧識別方式との互換性対応は行わない。
+
+### 4.1.2 UserInfo
+
+`GET /userinfo` は `openid` scope を持つ有効な OIDC access token を Bearer 認証で受け付ける。`sub` は UUID の user ID とする。
+
+access token に `profile` scope が含まれる場合、現在の username を `preferred_username` として返す。username の変更は次の UserInfo 参照から反映する。対象ユーザーが存在しない、または無効な場合は `invalid_token` とする。`profile` がない場合は `sub` のみを返す。Refresh Token で `profile` を除外した場合もログイン名は返さない。
+
+認証失敗時は `401 Unauthorized` と `WWW-Authenticate: Bearer error="invalid_token"` を返す。`openid` scope が不足する場合は `403 Forbidden` と Bearer challenge の `insufficient_scope` を返す。
+
+`profile` は client の登録 scope に明示的に含める。tenant_access では role 判定から除外し、event_access では許可しない。ユーザーの一意な識別には変更可能な `preferred_username` ではなく `sub` を使う。ID Token に `preferred_username` は追加しない。
+
+```json
+{
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
+  "preferred_username": "user-123"
+}
+```
+
+### 4.1.3 OIDC の認可要求と再認証
+
+ログイン画面と `/api/login` の呼び出しは別フロントエンドの責務とする。IdP はログイン画面を提供しない。
+
+認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
+
+認可要求の tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
+
+`prompt=login` と `max_age=0` は再ログインを要求する。正の `max_age` は認証からの経過秒数を検証し、超過時は再ログインを要求する。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、画面を表示せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。
+
+フロントエンドは `login_required` を受けたら、同じブラウザセッションで `/api/login` を呼び、元の認可要求を再送する。IdP はセッションごとに1件、5分間だけ再認証待ちの要求を保持する。要求の全パラメータに結び付け、新たなパスワード認証を確認してから認可を再開する。完了した要求で同じ再認証結果を再利用しない。`state` などのパラメータを変更した要求は別の要求として扱う。
+
+`id_token_hint` は署名、issuer、対象 client、ID Token の形式を検証する。過去に発行された期限切れ ID Token も hint として受け付けるが、access token や署名不正の値は受け付けない。hint の `sub` と認証済みユーザーが異なる場合は `login_required` とし、別ユーザーの token を発行しない。
 
 ### 4.2 ログアウト
 
@@ -125,7 +171,7 @@ POST /api/logout
 ```json
 {
   "iss": "https://auth.example.com",
-  "sub": "user-123",
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "aud": "backend-api",
   "client_id": "client-123",
   "scope": "tenant.read tenant.write events.read events.manage events.operate events.report",
@@ -164,7 +210,7 @@ POST /api/logout
 ```json
 {
   "iss": "https://auth.example.com",
-  "sub": "user-123",
+  "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "aud": "backend-api",
   "client_id": "client-123",
   "scope": "events.read events.manage events.operate events.report",
@@ -334,7 +380,7 @@ staff
 | `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
 | `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
 
-OIDC の `openid` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
+OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
 
 旧 `events.write` は廃止する。新しい発行要求では、登録設定に残っていても拒否する。新スコープへの暗黙の変換は行わない。
 
@@ -372,7 +418,7 @@ Authorization Server は、resource から得た `tenantId` と subject user id 
 GET /tenants/{tenantId}/users/{userId}
 ```
 
-Token Exchange では `userId` に JWT の `sub` をそのまま使う。ログイン時は認証済み user の username をそのまま使う。
+ログイン時は認証済み user の username を `userId` として渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで username を渡す。未知・無効・別 tenant の subject は拒否する。`sub` を Relation Service の userId として扱わない。
 
 ### 10.2 response
 
@@ -522,7 +568,7 @@ requested_scope ⊆ tenant_role.allowed_scopes
 
 `tenant.claim` は発行しない。要求に含まれる場合は `invalid_scope` とする。
 
-既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` は event role の許可 scope に含まれず、発行しない。
+既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` / `profile` は event role の許可 scope に含まれず、発行しない。
 
 `event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
 
@@ -546,7 +592,9 @@ resource の `eventId` に一致する event が `events` に存在しない場�
 
 ```text
 tenant.claim
+profile tenant.claim
 openid tenant.claim
+openid profile tenant.claim
 ```
 
 他の業務 scope との混在は `invalid_scope` とする。認可リクエスト時と JWT 発行時の両方で検証する。
@@ -737,7 +785,7 @@ Authorization Server は以下を確認する。
 - requested audience が client に許可されている
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- relation service cache または relation service に subject_token.sub と resource の tenantId を問い合わせる
+- subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の username) を問い合わせる
 - relation service の tenant.role が null ではない
 - resource の eventId が relation service の events[].id に存在する
 - requested_scope が subject_token.scope を超えていない
@@ -816,7 +864,7 @@ token=...
 token_type_hint=access_token
 ```
 
-`token_type_hint` は未指定、`access_token`、`refresh_token` を許可する。それ以外は `unsupported_token_type` を返す。
+`token_type_hint` は未指定、`access_token`、`refresh_token` を受け付ける。未知の値は RFC 7009 に従って無視する。
 hint は検索順の指定とし、指定種別で見つからない場合は、もう一方の対応済み種別も検索する。Authorization Code や ID Token は検索しない。
 
 Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。
@@ -838,6 +886,8 @@ Refresh Token の revocation では保存済み token を無効化し、その�
 
 別の authorization に保存された event_access、更新前の古い access token、別ログインの token はこの連動失効の対象外とする。ローテーションで置き換え済みの Refresh Token は保存されていないため、未知 token と同じ扱いとし、現在の Refresh Token へ遡及しない。
 
+更新前の古い access token を明示的に revocation した場合は、その JWT の `jti` を denylist に登録する。DB に token が見つからない場合も、JWT の署名、issuer、発行先 `client_id`、`token_use`、`jti`、有効期間を検証する。有効な `tenant_access` / `event_access` だけを対象とし、ID Token は対象にしない。現在の access token と Refresh Token は、この操作では失効させない。Resource Server は即時失効を必要とする場合に denylist を確認する。
+
 Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスとする。
 
 ```text
@@ -848,7 +898,7 @@ Revocation は RFC 7009 に従い、以下は `200 OK` の空レスポンスと�
 ```
 
 別 client が発行した token の revocation、client 認証不正、public client からの
-revocation、未対応の hint は OAuth2 error とする。
+revocation は OAuth2 error とする。
 
 Revocation endpoint は token 本体、client secret、authorization code、password を
 レスポンスおよびログへ出力してはならない。
@@ -1009,7 +1059,7 @@ token_invalid_claims
   "timestamp": "2026-05-20T10:00:00Z",
   "request_id": "req-abc",
   "client_id": "client-123",
-  "subject": "user-123",
+  "subject": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "source_token_use": "tenant_access",
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
@@ -1033,7 +1083,7 @@ token_invalid_claims
   "timestamp": "2026-05-20T10:00:00Z",
   "request_id": "req-def",
   "client_id": "client-123",
-  "subject": "user-123",
+  "subject": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "source_token_use": "tenant_access",
   "requested_token_use": "event_access",
   "requested_audience": "backend-api",
@@ -1122,7 +1172,7 @@ password=password
 client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
-allowed_scopes=openid,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
+allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
 ```
 
 ### 22.1 RegisteredClient 設定の集約

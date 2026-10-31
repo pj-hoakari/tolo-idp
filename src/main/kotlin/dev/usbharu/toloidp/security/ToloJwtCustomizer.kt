@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredDebug
@@ -33,6 +34,7 @@ import java.util.UUID
  */
 @Component
 class ToloJwtCustomizer(
+    private val users: IdpUserDetailsManager,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
@@ -42,6 +44,12 @@ class ToloJwtCustomizer(
      */
     override fun customize(context: JwtEncodingContext) {
         if (context.tokenType != OAuth2TokenType.ACCESS_TOKEN) {
+            if (context.tokenType.value == "id_token") {
+                val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
+                OidcAuthenticationRequestValidator.authenticationTime(principal)?.let {
+                    context.claims.claim("auth_time", java.util.Date.from(Instant.ofEpochSecond(it)))
+                }
+            }
             return
         }
         when (context.authorizationGrantType) {
@@ -105,7 +113,7 @@ class ToloJwtCustomizer(
 
         try {
             val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
-            val membership = relationService.getMembership(tenantResource.tenantId, principal.name)
+            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, principal.name).username)
             log.structuredDebug(
                 "Tenant access membership loaded",
                 "event" to "tenant_access_membership_loaded",

@@ -11,7 +11,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
-import org.springframework.security.provisioning.UserDetailsManager
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -26,15 +26,15 @@ import kotlin.test.assertTrue
 )
 class SeedDataRunnerTests(
     @Autowired private val registeredClients: RegisteredClientRepository,
-    @Autowired private val users: UserDetailsManager,
+    @Autowired private val users: IdpUserDetailsManager,
     @Autowired private val passwordEncoder: PasswordEncoder,
     @Autowired private val jdbc: JdbcClient,
 ) {
     @BeforeEach
     fun clearSeedData() {
         jdbc.sql("delete from oauth2_registered_client").update()
-        if (users.userExists("user-123")) {
-            users.deleteUser("user-123")
+        if (users.userExists("tenant-a", "user-123")) {
+            users.deleteUser("tenant-a", "user-123")
         }
     }
 
@@ -42,7 +42,7 @@ class SeedDataRunnerTests(
     fun createsDevelopmentUserOnlyAndIsIdempotent() {
         runSeed()
         runSeed()
-        assertTrue(users.userExists("user-123"))
+        assertTrue(users.userExists("tenant-a", "user-123"))
         assertNull(registeredClients.findByClientId("client-123"))
         assertEquals(0L, jdbc.sql("select count(*) from oauth2_registered_client").query(Long::class.java).single())
     }
@@ -72,7 +72,7 @@ class SeedDataRunnerTests(
     fun disabledSeedDoesNotCreateData() {
         runSeed(enabled = false)
         assertNull(registeredClients.findByClientId("client-123"))
-        assertFalse(users.userExists("user-123"))
+        assertFalse(users.userExists("tenant-a", "user-123"))
     }
 
     private fun runSeed(enabled: Boolean = true) {

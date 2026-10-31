@@ -71,7 +71,7 @@ class ScopePolicyTests {
     @Test
     fun identityScopeIsNotSubjectToRoleCheck() {
         policy.requireTenantAccessScopes(setOf("openid", "tenant.read"), RelationRole.STAFF, "scope_not_allowed_for_role")
-        policy.requireTenantAccessScopes(setOf("openid"), RelationRole.STAFF, "scope_not_allowed_for_role")
+        policy.requireTenantAccessScopes(setOf("openid", "profile"), RelationRole.STAFF, "scope_not_allowed_for_role")
     }
 
     @Test

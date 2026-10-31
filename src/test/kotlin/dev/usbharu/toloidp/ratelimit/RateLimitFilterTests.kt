@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.ratelimit
 
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
@@ -101,7 +102,7 @@ class RateLimitFilterTests(
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
 
-        assertEquals(RateLimitIdentity("192.0.2.12", "user-123"), rateLimitService.lastIdentity.get())
+        assertEquals(RateLimitIdentity("192.0.2.12", "[\"tenant-a\",\"user-123\"]"), rateLimitService.lastIdentity.get())
     }
 
     @Test

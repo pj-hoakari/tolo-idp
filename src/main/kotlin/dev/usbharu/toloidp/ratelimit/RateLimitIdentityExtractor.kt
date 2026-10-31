@@ -35,7 +35,10 @@ class RateLimitIdentityExtractor(
             return null
         }
         return try {
-            objectMapper.readTree(body)["username"]?.stringValue()?.takeIf { it.isNotBlank() }
+            val json = objectMapper.readTree(body)
+            val username = json["username"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
+            val tenantId = json["tenantId"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
+            objectMapper.writeValueAsString(listOf(tenantId, username))
         } catch (_: RuntimeException) {
             null
         }

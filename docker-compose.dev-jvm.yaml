@@ -38,7 +38,8 @@ services:
     restart: "no"
 
   relation-stub:
-    image: ghcr.io/pj-hoakari/tolo-relation-stub:latest
+    # Pin the legacy /users/{userId} API; latest uses a different membership contract.
+    image: ghcr.io/pj-hoakari/tolo-relation-stub@sha256:c65b5602c0f8ff74a2682cedfb84afed040ce25fd46c9a267a2c7d379ed50601
     ports:
       - "18081:8080"
     environment:
