@@ -134,7 +134,7 @@ access token に `profile` scope が含まれる場合、現在の username を 
 
 ログイン画面とエラー画面は Web が提供し、IdP は画面を提供しない。IdP はリダイレクトと JSON だけを返す。ログイン画面の URL は `tolo-idp.login.page-url`、エラー画面の URL は `tolo-idp.login.error-page-url` に設定する。
 
-認可 endpoint は最初に client と redirect URI を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。
+認可 endpoint は最初に client と redirect URI を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。client へ返せない失敗（未登録または欠けた client、登録外の redirect URI など）は、エラー画面へ `error=<エラーコード>` だけを付けてリダイレクトする。要求の redirect URI、`state`、そのほかの要求の値はエラー画面の URL に含めない。
 
 認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
@@ -624,6 +624,8 @@ Authorization Code フローの認可要求では、要求 scope のうち tenan
 requested_scope ⊆ supported_scopes
 openid ∈ requested_scope ならば openid ∈ client.allowed_scopes
 ```
+
+この 2 つと `tenant.claim` との混在（11.3）は、ユーザーによらず判断できるので、login challenge を発行する前に検証する。満たさない要求は、ログイン画面へ送らずに client へ `invalid_scope` を返す。
 
 発行する scope は以下とする。
 

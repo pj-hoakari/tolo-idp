@@ -2,7 +2,6 @@ package dev.usbharu.toloidp.security
 
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
-import org.springframework.http.HttpStatus
 import org.springframework.security.core.AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes
@@ -63,7 +62,7 @@ class AuthorizationErrorResponseHandler(
         val authorization = exception.authorizationCodeRequestAuthentication
         val redirectUri = authorization?.redirectUri
         if (authorization == null || redirectUri.isNullOrEmpty()) {
-            response.sendError(HttpStatus.BAD_REQUEST.value(), error.toString())
+            redirects.sendRedirect(request, response, errorPage(error.errorCode))
             return
         }
         val location = UriComponentsBuilder.fromUriString(redirectUri).queryParam(OAuth2ParameterNames.ERROR, error.errorCode)

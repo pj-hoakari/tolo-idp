@@ -51,7 +51,7 @@ fun resumeAuthorization(challenge: String, session: MockHttpSession? = null): Mo
     return request
 }
 
-fun assertLoginErrorPage(result: ResultActions) {
+fun assertLoginErrorPage(result: ResultActions, error: String = "invalid_challenge") {
     val location = result.andExpect(status().isFound).andReturn().response.redirectedUrl!!
-    assertEquals("$LOGIN_ERROR_PAGE?error=invalid_challenge", location)
+    assertEquals("$LOGIN_ERROR_PAGE?error=$error", location)
 }
