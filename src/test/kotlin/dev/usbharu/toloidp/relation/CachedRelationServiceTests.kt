@@ -79,6 +79,41 @@ class CachedRelationServiceTests(
     }
 
     @Test
+    fun cachedMembershipWithoutRequestedEventIsRefetchedOnceAndThenHits() {
+        cacheMembership("tenant-a", "user-123", sampleMembership("tenant-a", "event-old"), now, now.plusSeconds(300))
+        val delegate = RecordingRelationService()
+        val service = service(delegate)
+
+        assertEquals(sampleMembership("tenant-a"), service.getMembership("tenant-a", "user-123", "event-1"))
+        assertEquals(sampleMembership("tenant-a"), service.getMembership("tenant-a", "user-123", "event-1"))
+
+        assertEquals(listOf("tenant-a" to "user-123"), delegate.calls)
+        assertEquals(sampleMembership("tenant-a"), cachedMembership("tenant-a", "user-123"))
+    }
+
+    @Test
+    fun eventStillMissingAfterRefetchCallsDelegateExactlyOnce() {
+        cacheMembership("tenant-a", "user-123", sampleMembership("tenant-a", "event-old"), now, now.plusSeconds(300))
+        val delegate = RecordingRelationService()
+        val service = service(delegate)
+
+        val membership = service.getMembership("tenant-a", "user-123", "event-unknown")
+
+        assertEquals(sampleMembership("tenant-a"), membership)
+        assertEquals(listOf("tenant-a" to "user-123"), delegate.calls)
+    }
+
+    @Test
+    fun cachedMembershipWithRequestedEventDoesNotCallDelegate() {
+        cacheMembership("tenant-a", "user-123", sampleMembership("tenant-a", "event-old"), now, now.plusSeconds(300))
+        val delegate = RecordingRelationService()
+
+        service(delegate).getMembership("tenant-a", "user-123", "event-old")
+
+        assertEquals(emptyList(), delegate.calls)
+    }
+
+    @Test
     fun delegateFailuresAreNotCached() {
         val delegate = RecordingRelationService(failure = RelationLookupException("relation_lookup_failed"))
         val service = service(delegate)
@@ -122,7 +157,19 @@ class CachedRelationServiceTests(
         }
     }
 
-    private fun assertPurgeDuringMissDoesNotWriteBack(purge: () -> Unit) {
+    @Test
+    fun purgeDuringEventRefetchDoesNotWriteBackFetchedMembership() {
+        cacheMembership("tenant-a", "user-1", sampleMembership("tenant-a", "event-old"), now, now.plusSeconds(300))
+        assertPurgeDuringMissDoesNotWriteBack(
+            lookup = { it.getMembership("tenant-a", "user-1", "event-1") },
+            purge = { cacheController.purgeOne("tenant-a", "user-1") },
+        )
+    }
+
+    private fun assertPurgeDuringMissDoesNotWriteBack(
+        lookup: (CachedRelationService) -> TenantMembership = { it.getMembership("tenant-a", "user-1") },
+        purge: () -> Unit,
+    ) {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         val delegate = BlockingRelationService(entered, release)
@@ -130,7 +177,7 @@ class CachedRelationServiceTests(
         val executor = Executors.newSingleThreadExecutor()
         try {
             val future = executor.submit<TenantMembership> {
-                service.getMembership("tenant-a", "user-1")
+                lookup(service)
             }
             assertTrue(entered.await(5, TimeUnit.SECONDS))
             purge()

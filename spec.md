@@ -523,6 +523,7 @@ user_id
 - miss または期限切れの場合は relation service に問い合わせる
 - relation service の成功レスポンスのみを保存する
 - 404、membership 不足、通信失敗、timeout、不正 response、未知 role はキャッシュしない
+- Token Exchange では、hit したキャッシュの event_roles に resource の eventId がない場合も miss とし、relation service に 1 回だけ問い合わせる。その結果で判定し、キャッシュを更新する。再取得後もない場合は 10.4 に従い拒否する
 - tenantId は ID 形式を検証し、検証失敗時は relation service へ問い合わせない
 - tenantId / userId は trim、大文字小文字変換、Unicode 正規化を行わず、そのままキャッシュキーに使う
 ```
