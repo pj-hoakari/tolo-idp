@@ -10,6 +10,8 @@ export type ToloIdpConfig = {
   baseUrl: string;
   clientId: string;
   clientSecret: string;
+  gatewayClientId: string;
+  gatewayClientSecret: string;
 };
 
 export type JwtPayload = Record<string, unknown>;
@@ -31,6 +33,8 @@ export function getToloIdpConfig(): ToloIdpConfig {
     baseUrl: process.env.TOLO_IDP_URL ?? "http://localhost:18080",
     clientId: process.env.TOLO_IDP_CLIENT_ID ?? "client-123",
     clientSecret: process.env.TOLO_IDP_CLIENT_SECRET ?? "secret",
+    gatewayClientId: process.env.TOLO_IDP_GATEWAY_CLIENT_ID ?? "service-gateway",
+    gatewayClientSecret: process.env.TOLO_IDP_GATEWAY_CLIENT_SECRET ?? "gateway-secret",
   };
 }
 

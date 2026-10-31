@@ -241,7 +241,7 @@ class OidcRequestContractTests(
         assertTrue(denylist.existsById(oldJwt.id!!))
         assertEquals(oldJwt.expiresAt, denylist.findById(oldJwt.id!!).get().expiresAt)
         assertFalse(denylist.existsById(decoder.decode(current).id!!))
-        mvc.perform(post("/oauth2/introspect").with(httpBasic("client-123", "secret")).param("token", current))
+        mvc.perform(post("/oauth2/introspect").with(httpBasic("service-gateway", "gateway-secret")).param("token", current))
             .andExpect(status().isOk).andExpect(jsonPath("$.active").value(true))
     }
 

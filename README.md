@@ -12,7 +12,7 @@ Spring 設定は `src/main/resources/application.yaml` に集約しています�
 | dev-native | `docker-compose.dev-native.yaml` | Gradle Buildpacks で Native イメージを作成して実行 |
 | production | `docker-compose.production.yaml` | 検証済みの Native または JVM イメージを実行 |
 
-開発環境には PostgreSQL・Redis・relation-stub が含まれます。IdP は `http://localhost:18080`、PostgreSQL は `localhost:15432`、Redis は `localhost:16379`、relation-stub は `http://localhost:18081` で利用できます。seed user は `user-123` / `password`、client は `client-123` / `secret` です。
+開発環境には PostgreSQL・Redis・relation-stub が含まれます。IdP は `http://localhost:18080`、PostgreSQL は `localhost:15432`、Redis は `localhost:16379`、relation-stub は `http://localhost:18081` で利用できます。seed user は `user-123` / `password`、client は `client-123` / `secret` です。Introspection は Service Gateway 用の client `service-gateway` / `gateway-secret` だけが呼べます。
 
 ### dev-jvm
 
