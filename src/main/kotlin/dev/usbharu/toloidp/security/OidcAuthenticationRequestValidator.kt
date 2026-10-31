@@ -21,8 +21,23 @@ class OidcAuthenticationRequestValidator(private val hintDecoder: JwtDecoder, pr
         fun parameter(name: String): String? = parameters[name]?.let {
             it as? String ?: reject("invalid_request", name)
         }
+        if (oidc) {
+            // JwtGenerator expects one String and otherwise fails only at code redemption.
+            parameter("nonce")
+            // Request Objects must never be silently replaced by the outer parameters.
+            if (parameters.containsKey("request")) reject("request_not_supported", "request")
+            if (parameters.containsKey("request_uri") ||
+                (request as? TenantAuthorizationRequestToken)?.httpRequest?.parameterMap?.containsKey("request_uri") == true
+            ) reject("request_uri_not_supported", "request_uri")
+            parameter("response_mode")?.let {
+                if (it != "query") reject("invalid_request", "response_mode")
+            }
+        }
         val prompt = if (oidc) parameter("prompt").orEmpty().split(' ').filter { it.isNotEmpty() }.toSet() else emptySet()
         if ("none" in prompt && prompt.size != 1) reject("invalid_request", "prompt")
+        if (prompt.any { it !in setOf("none", "login", "consent", "select_account") }) {
+            reject("invalid_request", "prompt")
+        }
         val maxAge = if (oidc) parameter("max_age")?.let {
             if (!it.matches(Regex("[0-9]+"))) reject("invalid_request", "max_age")
             it.toLongOrNull() ?: reject("invalid_request", "max_age")
@@ -62,6 +77,9 @@ class OidcAuthenticationRequestValidator(private val hintDecoder: JwtDecoder, pr
             reject(if (oidc) "login_required" else "access_denied", "principal")
         }
         if (hint != null && hint.subject != principal.name) reject("login_required", "id_token_hint")
+        // The external login UI supplies neither consent nor an account-selection proof.
+        if ("consent" in prompt) reject("consent_required", "prompt")
+        if ("select_account" in prompt) reject("account_selection_required", "prompt")
         return { if (resumed) session?.removeAttribute(REAUTHENTICATION) }
     }
 

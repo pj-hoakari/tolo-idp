@@ -134,6 +134,65 @@ class OidcRequestContractTests(
         assertError(mvc.perform(authorize(session).queryParam("max_age", "1", "2")), "invalid_request")
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["nonce-with-symbols_123-ABC", " ", " nonce with spaces "])
+    fun nonceIsReturnedUnmodifiedInIdToken(nonce: String) {
+        val tokens = exchange(mvc.perform(authorize(login()).queryParam("nonce", nonce)))
+        assertEquals(nonce, decoder.decode(tokens["id_token"].stringValue()).getClaimAsString("nonce"))
+    }
+
+    @Test
+    fun duplicateNonceIsRejectedBeforeIssuingAuthorizationCode() {
+        val session = login()
+        assertError(mvc.perform(authorize(session).queryParam("nonce", "first", "second")), "invalid_request")
+        assertError(mvc.perform(authorize(session).queryParam("nonce", "same", "same")), "invalid_request")
+    }
+
+    @Test
+    fun emptyNonceIsTreatedAsOmitted() {
+        val tokens = exchange(mvc.perform(authorize(login()).queryParam("nonce", "")))
+        assertNull(decoder.decode(tokens["id_token"].stringValue()).getClaimAsString("nonce"))
+    }
+
+    @Test
+    fun unsupportedInteractivePromptsNeverSilentlyIssueCode() {
+        val session = login()
+        assertError(mvc.perform(authorize(session).queryParam("prompt", "consent")), "consent_required")
+        assertError(mvc.perform(authorize(session).queryParam("prompt", "select_account")), "account_selection_required")
+        assertError(mvc.perform(authorize(session).queryParam("prompt", "unknown")), "invalid_request")
+        // A completed login challenge does not prove consent or account selection.
+        assertError(mvc.perform(authorize(session).queryParam("prompt", "login consent")), "login_required")
+        login(session)
+        assertError(mvc.perform(authorize(session).queryParam("prompt", "login consent")), "consent_required")
+    }
+
+    @Test
+    fun unsupportedRequestObjectIsRejectedInsteadOfIgnoringItsClaims() {
+        assertError(mvc.perform(authorize(login()).queryParam("request", "unsupported-request-object")), "request_not_supported")
+        mvc.perform(authorize(clientId = "unknown-client").queryParam("request", "unsupported-request-object"))
+            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+    }
+
+    @Test
+    fun unsupportedRequestUriReturnsOidcErrorOnlyToTrustedRedirect() {
+        assertError(mvc.perform(authorize(login()).queryParam("request_uri", "https://rp.invalid/request.jwt")), "request_uri_not_supported")
+        mvc.perform(authorize(login(), redirectUri = "https://attacker.invalid/callback")
+            .queryParam("request_uri", "https://rp.invalid/request.jwt"))
+            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["fragment", "form_post", "unknown", ""])
+    fun unsupportedResponseModeCannotSilentlyFallBackToQuery(value: String) {
+        assertError(mvc.perform(authorize(login()).queryParam("response_mode", value)), "invalid_request")
+    }
+
+    @Test
+    fun queryResponseModeIsSupportedButMustNotBeRepeated() {
+        exchange(mvc.perform(authorize(login()).queryParam("response_mode", "query")))
+        assertError(mvc.perform(authorize(login()).queryParam("response_mode", "query", "query")), "invalid_request")
+    }
+
     @Test
     fun hintsRequireValidSignatureIssuerAudienceAndMatchingSubject() {
         val session = login()
@@ -224,9 +283,9 @@ class OidcRequestContractTests(
         if (session != null) request.session(session)
         return mvc.perform(request).andExpect(status().isOk).andReturn().request.session as MockHttpSession
     }
-    private fun authorize(session: MockHttpSession? = null, scope: String = "openid tenant.read", clientId: String = "client-123"): MockHttpServletRequestBuilder {
+    private fun authorize(session: MockHttpSession? = null, scope: String = "openid tenant.read", clientId: String = "client-123", redirectUri: String = REDIRECT): MockHttpServletRequestBuilder {
         val request = get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", clientId)
-            .queryParam("redirect_uri", REDIRECT).queryParam("scope", scope).queryParam("state", "request-state")
+            .queryParam("redirect_uri", redirectUri).queryParam("scope", scope).queryParam("state", "request-state")
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
         if (session != null) request.session(session)
         return request
@@ -236,6 +295,7 @@ class OidcRequestContractTests(
         assertTrue(location.startsWith("$REDIRECT?"))
         val parameters = UriComponentsBuilder.fromUriString(location).build().queryParams
         assertEquals(error, parameters.getFirst("error"))
+        assertNull(parameters.getFirst("code"))
         assertEquals("request-state", parameters.getFirst("state"))
     }
     private fun exchange(result: ResultActions): tools.jackson.databind.JsonNode {

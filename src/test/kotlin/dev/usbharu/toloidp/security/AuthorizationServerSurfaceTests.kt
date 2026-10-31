@@ -30,6 +30,9 @@ class AuthorizationServerSurfaceTests(
             .andExpect(jsonPath("$.authorization_endpoint").exists())
             .andExpect(jsonPath("$.token_endpoint").exists())
             .andExpect(jsonPath("$.jwks_uri").exists())
+            .andExpect(jsonPath("$.request_parameter_supported").value(false))
+            .andExpect(jsonPath("$.request_uri_parameter_supported").value(false))
+            .andExpect(jsonPath("$.response_modes_supported", containsInAnyOrder("query")))
             .andExpect(
                 jsonPath(
                     "$.grant_types_supported",

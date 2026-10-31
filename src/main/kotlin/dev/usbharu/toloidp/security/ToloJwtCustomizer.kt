@@ -45,6 +45,13 @@ class ToloJwtCustomizer(
     override fun customize(context: JwtEncodingContext) {
         if (context.tokenType != OAuth2TokenType.ACCESS_TOKEN) {
             if (context.tokenType.value == "id_token") {
+                if (context.authorizationGrantType == AuthorizationGrantType.AUTHORIZATION_CODE) {
+                    val request = context.authorization
+                        ?.getAttribute<OAuth2AuthorizationRequest>(OAuth2AuthorizationRequest::class.java.name)
+                    val nonce = request?.additionalParameters?.get("nonce") as? String
+                    // Nonce is opaque: the framework's hasText check drops whitespace values.
+                    if (!nonce.isNullOrEmpty()) context.claims.claim("nonce", nonce)
+                }
                 val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
                 OidcAuthenticationRequestValidator.authenticationTime(principal)?.let {
                     context.claims.claim("auth_time", java.util.Date.from(Instant.ofEpochSecond(it)))

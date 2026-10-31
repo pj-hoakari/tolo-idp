@@ -208,6 +208,9 @@ class SecurityConfig {
                     oidc.providerConfigurationEndpoint { providerConfigurationEndpoint ->
                         providerConfigurationEndpoint.providerConfigurationCustomizer { metadata ->
                             metadata.claims(discoveryMetadataClaimsCustomizer())
+                            metadata.claim("request_parameter_supported", false)
+                            metadata.claim("request_uri_parameter_supported", false)
+                            metadata.claim("response_modes_supported", listOf("query"))
                         }
                     }
                 }

@@ -141,6 +141,14 @@ access token に `profile` scope が含まれる場合、現在の username を 
 
 `id_token_hint` は署名、issuer、対象 client、ID Token の形式を検証する。過去に発行された期限切れ ID Token も hint として受け付けるが、access token や署名不正の値は受け付けない。hint の `sub` と認証済みユーザーが異なる場合は `login_required` とし、別ユーザーの token を発行しない。
 
+`nonce` は省略可能とし、指定時は単一の文字列を要求する。重複は認可コード発行前に `invalid_request` とする。空文字列は省略と同じ扱いにする。空白を含む値はそのまま受け付け、変更せず ID Token の `nonce` に含める。
+
+同意画面とアカウント選択画面は提供しない。認証済み要求の `prompt=consent` は `consent_required`、`prompt=select_account` は `account_selection_required` とし、要求された対話を省略して認可コードを発行しない。未知の prompt 値は `invalid_request` とする。再認証が必要な要求では、先に `login_required` を返す。
+
+OIDC Request Object は提供しない。`request` を指定した OIDC 認可要求は `request_not_supported`、`request_uri` を指定した OIDC 認可要求は `request_uri_not_supported` とし、外側のパラメータだけで認可を続行しない。Discovery の `request_parameter_supported` と `request_uri_parameter_supported` は明示的に `false` とする。
+
+認可応答は query 形式のみ提供する。`response_mode` の省略または単一の `query` を受け付け、それ以外の値・空値・重複は `invalid_request` とする。Discovery の `response_modes_supported` は `["query"]` とし、未対応形式の要求を query 形式へ暗黙に変更しない。
+
 ### 4.2 ログアウト
 
 ```http

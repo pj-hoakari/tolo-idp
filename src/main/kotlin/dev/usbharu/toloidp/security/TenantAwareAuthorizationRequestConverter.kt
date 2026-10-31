@@ -31,6 +31,12 @@ class TenantAwareAuthorizationRequestConverter(
         }
 
         val additionalParameters = converted.additionalParameters.toMutableMap()
+        if ("openid" in converted.scopes.orEmpty()) {
+            // OIDC Request URI is unsupported. Keep it on the request-local context so
+            // our validator can reject it after client/redirect validation, rather than
+            // letting the framework interpret it as a pushed authorization request.
+            additionalParameters.remove(OAuth2ParameterNames.REQUEST_URI)
+        }
         val tenantId = request.getSession(false)?.getAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE) as? String
         if (tenantId != null) additionalParameters[OAuth2ParameterNames.RESOURCE] = resourceParser.tenantResource(tenantId)
         return TenantAuthorizationRequestToken(converted, additionalParameters, request)
