@@ -7,6 +7,7 @@ import tools.jackson.databind.ObjectMapper
 
 class RateLimitIdentityExtractor(
     private val objectMapper: ObjectMapper,
+    private val loginTenant: (String) -> String?,
 ) {
     fun identity(request: HttpServletRequest): RateLimitIdentity =
         RateLimitIdentity(
@@ -37,7 +38,8 @@ class RateLimitIdentityExtractor(
         return try {
             val json = objectMapper.readTree(body)
             val username = json["username"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
-            val tenantId = json["tenantId"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
+            val challenge = json["challenge"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
+            val tenantId = loginTenant(challenge) ?: return null
             objectMapper.writeValueAsString(listOf(tenantId, username))
         } catch (_: RuntimeException) {
             null

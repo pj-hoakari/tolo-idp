@@ -3,6 +3,7 @@ package dev.usbharu.toloidp.config
 import dev.usbharu.toloidp.client.ClientPolicyConfig
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.core.io.Resource as SpringResource
+import java.net.URI
 import java.time.Duration
 
 @ConfigurationProperties(prefix = "tolo-idp", ignoreUnknownFields = false)
@@ -14,8 +15,27 @@ data class IdpProperties(
     val jwk: Jwk = Jwk(),
     val rateLimit: RateLimit = RateLimit(),
     val cors: Cors = Cors(),
+    val login: Login = Login(),
     val clients: Map<String, ClientPolicyConfig> = emptyMap(),
 ) {
+    data class Login(
+        val pageUrl: String = "",
+        val errorPageUrl: String = "",
+    ) {
+        fun pageUri(): URI = webUri(pageUrl, "page-url")
+
+        fun errorPageUri(): URI = webUri(errorPageUrl, "error-page-url")
+
+        private fun webUri(value: String, name: String): URI {
+            val uri = runCatching { URI(value) }.getOrNull()
+            require(uri != null && uri.scheme in setOf("http", "https") && !uri.host.isNullOrEmpty() &&
+                uri.rawUserInfo == null && uri.rawFragment == null) {
+                "Configure tolo-idp.login.$name as an absolute http(s) URL"
+            }
+            return uri
+        }
+    }
+
     data class Cors(
         val allowedOrigins: Set<String> = emptySet(),
     )

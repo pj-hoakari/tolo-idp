@@ -176,13 +176,13 @@ class RpInitiatedLogoutTests(
             val session = login()
             val userAIdToken = issueTokens(session).getValue("id_token")
             login(session, "tenant-b", "user-b", "password-b")
-            issueTokens(session)
+            issueTokens(session, "tenant-b")
 
             mockMvc.perform(endSession(HttpMethod.GET, session, userAIdToken))
                 .andExpect(status().isFound)
                 .andExpect(redirectedUrl("$POST_LOGOUT_REDIRECT_URI?state=tenant-a.example.com%3A3000"))
             assertFalse(session.isInvalid)
-            issueTokens(session)
+            issueTokens(session, "tenant-b")
         } finally {
             users.deleteUser("tenant-b", "user-b")
         }
@@ -220,31 +220,28 @@ class RpInitiatedLogoutTests(
         tenantId: String = "tenant-a",
         username: String = "user-123",
         password: String = "password",
-    ): MockHttpSession =
-        mockMvc.perform(
-            post("/api/login")
-                .session(session)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"username":"$username","password":"$password","tenantId":"$tenantId"}"""),
-        )
-            .andExpect(status().isOk)
-            .andReturn()
-            .request
-            .session as MockHttpSession
+    ): MockHttpSession {
+        val challenge = mockMvc.challengeFrom(authorization(session, tenantId).queryParam("prompt", "login"))
+        val signedIn = mockMvc.loginWithChallengeSession(challenge, username, password, session)
+        mockMvc.perform(resumeAuthorization(challenge, signedIn)).andExpect(status().isFound)
+        return signedIn
+    }
 
-    private fun issueTokens(session: MockHttpSession): Map<String, String> {
-        val authorization = mockMvc.perform(
-            get("/oauth2/authorize")
-                .session(session)
-                .queryParam("response_type", "code")
-                .queryParam("client_id", "client-123")
-                .queryParam("redirect_uri", REDIRECT_URI)
-                .queryParam("scope", "openid tenant.read")
-                .queryParam("state", "state")
-                .queryParam("audience", "backend-api")
-                .queryParam("code_challenge", CODE_CHALLENGE)
-                .queryParam("code_challenge_method", "S256"),
-        )
+    private fun authorization(session: MockHttpSession, tenantId: String): MockHttpServletRequestBuilder =
+        get("/oauth2/authorize")
+            .session(session)
+            .queryParam("response_type", "code")
+            .queryParam("client_id", "client-123")
+            .queryParam("redirect_uri", REDIRECT_URI)
+            .queryParam("scope", "openid tenant.read")
+            .queryParam("state", "state")
+            .queryParam("audience", "backend-api")
+            .queryParam("resource", "https://api.example.com/tenants/$tenantId")
+            .queryParam("code_challenge", CODE_CHALLENGE)
+            .queryParam("code_challenge_method", "S256")
+
+    private fun issueTokens(session: MockHttpSession, tenantId: String = "tenant-a"): Map<String, String> {
+        val authorization = mockMvc.perform(authorization(session, tenantId))
             .andExpect(status().isFound)
             .andReturn()
             .response

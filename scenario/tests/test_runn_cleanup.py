@@ -17,6 +17,7 @@ COOKIE = "SYNTHETIC_SESSION_FOR_REGRESSION"
 CODE = "SYNTHETIC_CODE_FOR_REGRESSION"
 POST_LOGOUT_REDIRECT_URI = "http://localhost:3000/auth/logged-out"
 SCOPE = "openid tenant.read events.read events.manage events.operate events.report"
+CHALLENGE = "SYNTHETIC_CHALLENGE_FOR_REGRESSION_0123456789"
 
 
 def token(label):
@@ -62,7 +63,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "id_token_signing_alg_values_supported": ["RS256"],
                 "token_endpoint_auth_methods_supported": ["client_secret_basic"],
             })
-        elif path == "/oauth2/authorize":
+        elif path == "/oauth2/authorize" and parse_qs(url.query) == {"challenge": [CHALLENGE]}:
             state = "wrong-state" if self.server.failure == "state" else "scenario-state-0123456789"
             self.respond(302, {}, {
                 "Location": f"http://127.0.0.1:8080/login/oauth2/code/client-123?code={CODE}&state={state}",
@@ -70,6 +71,8 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/connect/logout":
             self.server.logouts.append((self.headers.get("Cookie"), parse_qs(url.query)))
             self.respond(302, {}, {"Location": f"{POST_LOGOUT_REDIRECT_URI}?state=scenario-state-0123456789"})
+        elif path == "/oauth2/authorize":
+            self.respond(302, {}, {"Location": f"http://localhost:3000/login?challenge={CHALLENGE}"})
         else:
             self.respond(404, {})
 

@@ -22,6 +22,7 @@ import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
@@ -658,11 +659,27 @@ class SecurityComponentTests(
             .build()
     }
 
+    private fun authorizationRequest(): MockHttpServletRequest =
+        MockHttpServletRequest("GET", "/oauth2/authorize").apply {
+            setParameter(OAuth2ParameterNames.RESPONSE_TYPE, "code")
+            setParameter(OAuth2ParameterNames.CLIENT_ID, "client-123")
+            setParameter(OAuth2ParameterNames.REDIRECT_URI, "http://127.0.0.1:8080/login/oauth2/code/client-123")
+            setParameter(OAuth2ParameterNames.SCOPE, "tenant.read")
+            setParameter(OAuth2ParameterNames.STATE, "state-1")
+            queryString = listOf(
+                "${OAuth2ParameterNames.RESPONSE_TYPE}=code",
+                "${OAuth2ParameterNames.CLIENT_ID}=client-123",
+                "${OAuth2ParameterNames.REDIRECT_URI}=http%3A%2F%2F127.0.0.1%3A8080%2Flogin%2Foauth2%2Fcode%2Fclient-123",
+                "${OAuth2ParameterNames.SCOPE}=tenant.read",
+                "${OAuth2ParameterNames.STATE}=state-1",
+            ).joinToString("&")
+        }
+
     private fun tenantAuthorizationContext(scopes: Set<String>): OAuth2AuthorizationCodeRequestAuthenticationContext {
         val base = authorizationContext(scopes = scopes)
         val authentication = base.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
         return OAuth2AuthorizationCodeRequestAuthenticationContext.with(
-            TenantAuthorizationRequestToken(authentication, authentication.additionalParameters, authorizationRequest()),
+            AuthorizationRequestToken(authentication, authentication.additionalParameters, authorizationRequest(), false),
         )
             .registeredClient(registeredClient)
             .authorizationRequest(base.authorizationRequest)

@@ -117,6 +117,8 @@ jobs:
           {
             echo "TOLO_IDP_POSTGRES_PASSWORD=tolo-idp-ci"
             echo "TOLO_IDP_ISSUER=http://localhost:8080"
+            echo "TOLO_IDP_LOGIN_PAGE_URL=http://localhost:3000/login"
+            echo "TOLO_IDP_LOGIN_ERROR_PAGE_URL=http://localhost:3000/auth/error"
             echo "TOLO_IDP_JWK_PRIVATE_KEY_HOST_PATH=$CI_PRODUCTION_KEY_DIRECTORY/private.pem"
             echo "TOLO_IDP_JWK_PRIVATE_KEY_LOCATION=/run/tolo-idp/private.pem"
           } >> "$GITHUB_ENV"

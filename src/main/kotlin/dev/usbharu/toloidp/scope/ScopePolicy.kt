@@ -61,12 +61,16 @@ class ScopePolicy(
         requireAllowed(requested - IDENTITY_SCOPES, allowedScopes(role), reason)
     }
 
-    fun grantTenantAccessScopes(requested: Set<String>, role: RelationRole, clientScopes: Set<String>): Set<String> {
+    fun requireTenantAccessRequest(requested: Set<String>, clientScopes: Set<String>) {
         requireAllowed(requested, IdpScopes.SUPPORTED, "scope_not_allowed_for_role")
         requireClaimNotMixed(requested, "scope_not_allowed_for_role")
         if (IdpScopes.OPENID in requested && IdpScopes.OPENID !in clientScopes) {
             throw ScopeNotAllowedException("scope_not_allowed_for_client")
         }
+    }
+
+    fun grantTenantAccessScopes(requested: Set<String>, role: RelationRole, clientScopes: Set<String>): Set<String> {
+        requireTenantAccessRequest(requested, clientScopes)
         val allowed = (IDENTITY_SCOPES + allowedScopes(role)) intersect clientScopes
         val granted = requested.filterTo(linkedSetOf()) { it in allowed }
         if (granted.isEmpty() && requested.isNotEmpty()) {
