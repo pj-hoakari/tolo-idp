@@ -191,7 +191,7 @@ open class SpecTokenExchangeAuthenticationProvider(
                 scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
                 scopePolicy.requireEventAccessScopes(requestedScopes)
                 scopePolicy.requireAllowed(requestedScopes, subjectScopes, "scope_exceeds_subject_token")
-                val membership = relationService.getMembership(eventResource.tenantId, users.requireTenantUser(eventResource.tenantId, subject).username)
+                val membership = relationService.getMembership(eventResource.tenantId, users.requireTenantUser(eventResource.tenantId, subject).username, eventResource.eventId)
                 log.structuredDebug(
                     "Relation membership lookup completed",
                     "event" to "relation_membership_lookup_completed",

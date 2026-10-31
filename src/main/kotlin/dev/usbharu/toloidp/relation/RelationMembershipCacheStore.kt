@@ -17,12 +17,10 @@ class RelationMembershipCacheStore(
 ) {
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     fun lookup(tenantId: String, userId: String, now: Instant): Lookup {
+        val generation = generationRepository.currentGeneration()
         val cached = cacheRepository
             .findByCacheIdTenantIdAndCacheIdUserIdAndExpiresAtAfter(tenantId, userId, now)
-        if (cached != null) {
-            return Lookup(membership = cached.membership, expiresAt = cached.expiresAt, generation = null)
-        }
-        return Lookup(membership = null, expiresAt = null, generation = generationRepository.currentGeneration())
+        return Lookup(membership = cached?.membership, expiresAt = cached?.expiresAt, generation = generation)
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -51,6 +49,6 @@ class RelationMembershipCacheStore(
     data class Lookup(
         val membership: TenantMembership?,
         val expiresAt: Instant?,
-        val generation: Long?,
+        val generation: Long,
     )
 }
