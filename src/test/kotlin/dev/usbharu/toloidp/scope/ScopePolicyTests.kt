@@ -22,18 +22,86 @@ class ScopePolicyTests {
     }
 
     @Test
-    fun staffAllowsReadOperationReportAndClaimScopes() {
+    fun staffAllowsEveryBusinessScopeExceptTenantWrite() {
         assertEquals(
-            setOf("tenant.read", "tenant.claim", "events.read", "events.operate", "events.report"),
+            setOf("tenant.read", "tenant.claim", "events.read", "events.manage", "events.operate", "events.report"),
             policy.allowedScopes(RelationRole.STAFF),
         )
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = ["tenant.write", "events.manage"])
-    fun staffDoesNotAllowManagementScopes(scope: String) {
+    @Test
+    fun staffDoesNotAllowTenantWrite() {
         assertFailsWith<ScopeNotAllowedException> {
-            policy.requireTenantAccessScopes(setOf(scope), RelationRole.STAFF, "scope_not_allowed_for_role")
+            policy.requireTenantAccessScopes(setOf("tenant.write"), RelationRole.STAFF, "scope_not_allowed_for_role")
+        }
+    }
+
+    @Test
+    fun staffRequestingAllBusinessScopesIsGrantedAllButTenantWrite() {
+        assertEquals(
+            setOf("openid", "tenant.read", "events.read", "events.manage", "events.operate", "events.report"),
+            policy.grantTenantAccessScopes(ALL_BUSINESS_SCOPES + "openid", RelationRole.STAFF, IdpScopes.SUPPORTED),
+        )
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RelationRole::class, names = ["OWNER", "ADMIN"])
+    fun managersRequestingAllBusinessScopesAreGrantedAll(role: RelationRole) {
+        assertEquals(ALL_BUSINESS_SCOPES + "openid", policy.grantTenantAccessScopes(ALL_BUSINESS_SCOPES + "openid", role, IdpScopes.SUPPORTED))
+    }
+
+    @Test
+    fun grantKeepsIdentityScopesWhenNoBusinessScopeRemains() {
+        assertEquals(setOf("openid"), policy.grantTenantAccessScopes(setOf("openid", "tenant.write"), RelationRole.STAFF, IdpScopes.SUPPORTED))
+    }
+
+    @Test
+    fun grantRejectsRequestWithNothingGrantable() {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.grantTenantAccessScopes(setOf("tenant.write"), RelationRole.STAFF, IdpScopes.SUPPORTED)
+        }
+    }
+
+    @Test
+    fun grantOfEmptyRequestIsEmpty() {
+        assertEquals(emptySet(), policy.grantTenantAccessScopes(emptySet(), RelationRole.STAFF, IdpScopes.SUPPORTED))
+    }
+
+    @ParameterizedTest
+    @EnumSource(RelationRole::class)
+    fun grantRejectsUnsupportedScopeInsteadOfDroppingIt(role: RelationRole) {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.grantTenantAccessScopes(setOf("events.read", "events.write"), role, IdpScopes.SUPPORTED)
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RelationRole::class, names = ["OWNER", "STAFF"])
+    fun grantDropsScopesOutsideTheClientRegistration(role: RelationRole) {
+        assertEquals(
+            setOf("openid", "tenant.read", "events.read", "events.operate"),
+            policy.grantTenantAccessScopes(ALL_BUSINESS_SCOPES + "openid" + "profile", role, NARROW_CLIENT_SCOPES),
+        )
+    }
+
+    @Test
+    fun grantRejectsRequestWithOnlyScopesOutsideTheClientRegistration() {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.grantTenantAccessScopes(setOf("tenant.write", "events.manage"), RelationRole.OWNER, NARROW_CLIENT_SCOPES)
+        }
+    }
+
+    @Test
+    fun grantRejectsOpenIdForClientNotRegisteredForIt() {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.grantTenantAccessScopes(setOf("openid", "tenant.read"), RelationRole.OWNER, NARROW_CLIENT_SCOPES - "openid")
+        }
+    }
+
+    @Test
+    fun grantRejectsClaimMixedWithBusinessScopes() {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.grantTenantAccessScopes(setOf("tenant.claim", "tenant.write"), RelationRole.STAFF, IdpScopes.SUPPORTED)
         }
     }
 
@@ -108,5 +176,10 @@ class ScopePolicyTests {
         assertFailsWith<UnknownRelationRoleException> {
             RelationRole.fromExternal("admin")
         }
+    }
+
+    companion object {
+        private val NARROW_CLIENT_SCOPES = setOf("openid", "tenant.read", "events.read", "events.operate")
+        private val ALL_BUSINESS_SCOPES = setOf("tenant.read", "tenant.write", "events.read", "events.manage", "events.operate", "events.report")
     }
 }

@@ -41,12 +41,22 @@ class CachedRelationService(
      *
      * 有効期限内のキャッシュがあればそれを使い、なければ delegate から取得して更新する。
      */
-    override fun getMembership(tenantId: String, userId: String): TenantMembership {
+    override fun getMembership(tenantId: String, userId: String): TenantMembership =
+        getMembership(tenantId, userId) { true }
+
+    override fun getMembership(tenantId: String, userId: String, eventId: String): TenantMembership =
+        getMembership(tenantId, userId) { membership -> membership.events.any { it.eventId == eventId } }
+
+    private fun getMembership(
+        tenantId: String,
+        userId: String,
+        isUsable: (TenantMembership) -> Boolean,
+    ): TenantMembership {
         log.structuredTrace("Relation membership lookup started", "event" to "relation_membership_lookup_started", "tenant_id" to tenantId, "subject" to userId)
         resourceParser.requireValidId(tenantId)
         val now = Instant.now(clock)
         val lookup = cacheStore.lookup(tenantId, userId, now)
-        lookup.membership?.let {
+        lookup.membership?.takeIf(isUsable)?.let {
             log.structuredDebug(
                 "Relation membership cache hit",
                 "event" to "relation_membership_cache_lookup",
@@ -66,7 +76,7 @@ class CachedRelationService(
             "subject" to userId,
             "cache_hit" to false,
         )
-        val observedGeneration = lookup.generation!!
+        val observedGeneration = lookup.generation
         val membership = withoutTransaction.execute<TenantMembership> {
             delegate.getMembership(tenantId, userId)
         }!!

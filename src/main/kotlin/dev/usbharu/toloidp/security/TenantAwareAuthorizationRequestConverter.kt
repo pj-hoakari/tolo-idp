@@ -51,4 +51,12 @@ class TenantAuthorizationRequestToken(
 ) : OAuth2AuthorizationCodeRequestAuthenticationToken(
     original.authorizationUri, original.clientId, original.principal as Authentication,
     original.redirectUri, original.state, original.scopes, parameters,
-)
+) {
+    private var grantedScopes: Set<String>? = null
+
+    fun grantScopes(scopes: Set<String>) {
+        grantedScopes = scopes
+    }
+
+    override fun getScopes(): Set<String> = grantedScopes ?: super.getScopes()
+}

@@ -131,7 +131,7 @@ access token に `profile` scope が含まれる場合、現在の username を 
 
 ログイン画面と `/api/login` の呼び出しは別フロントエンドの責務とする。IdP はログイン画面を提供しない。
 
-認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
+認可 endpoint は最初に client と redirect URI を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
 
 認可要求の tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
@@ -388,7 +388,7 @@ staff
 | `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
 | `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
 
-OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
+OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープによる制限は受ける（11.1）。
 
 旧 `events.write` は廃止する。新しい発行要求では、登録設定に残っていても拒否する。新スコープへの暗黙の変換は行わない。
 
@@ -398,7 +398,7 @@ OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_a
 |---|---|
 | `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
 | `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
-| `staff` | `tenant.read`, `events.read`, `events.operate`, `events.report`, `tenant.claim` |
+| `staff` | `tenant.read`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
 
 `tenant.claim` の発行先と併用条件は 11.3 に従う。
 
@@ -523,6 +523,7 @@ user_id
 - miss または期限切れの場合は relation service に問い合わせる
 - relation service の成功レスポンスのみを保存する
 - 404、membership 不足、通信失敗、timeout、不正 response、未知 role はキャッシュしない
+- Token Exchange では、hit したキャッシュの event_roles に resource の eventId がない場合も miss とし、relation service に 1 回だけ問い合わせる。その結果で判定し、キャッシュを更新する。再取得後もない場合は 10.4 に従い拒否する
 - tenantId は ID 形式を検証し、検証失敗時は relation service へ問い合わせない
 - tenantId / userId は trim、大文字小文字変換、Unicode 正規化を行わず、そのままキャッシュキーに使う
 ```
@@ -563,18 +564,34 @@ X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外�
 
 ## 11. scope 発行ルール
 
-Authorization Server は、要求された `scope` を暗黙に縮小して発行してはならない。
+Authorization Code フローの認可要求では、要求 scope のうち tenant role または client の登録 scope が許可しない scope を発行対象から外し、残りを発行する。client はユーザーの role を知る前に scope を要求する。また、client ごとの登録 scope は発行する scope の上限であり、要求を拒否する条件ではない。
 
-要求 scope に client / role / token 種別で許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
+それ以外では、要求された `scope` を暗黙に縮小して発行してはならない。対象は、未対応の scope、client の登録外の `openid`、`tenant.claim` と業務 scope の併用、Refresh Token、Token Exchange である。
+
+これらに許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
 
 ### 11.1 tenant_access token 発行時
 
-`tenant_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
+`tenant_access` token の認可要求では、以下を満たすことを要求する。満たさない場合は `invalid_scope` とする。
 
 ```text
-requested_scope ⊆ client.allowed_scopes
-requested_scope ⊆ tenant_role.allowed_scopes
+requested_scope ⊆ supported_scopes
+openid ∈ requested_scope ならば openid ∈ client.allowed_scopes
 ```
+
+発行する scope は以下とする。
+
+```text
+granted_scope = requested_scope ∩ (identity_scopes ∪ tenant_role.allowed_scopes) ∩ client.allowed_scopes
+```
+
+`identity_scopes` は `openid` / `profile` である。`client.allowed_scopes` は client の登録 scope である。例えば `staff` が `openid` と業務 scope 6 種を要求すると、`tenant.write` を除いた `openid tenant.read events.read events.manage events.operate events.report` を発行する。登録 scope が `openid tenant.read events.read events.operate` の client に対して同じ要求をすると、`owner` でも `staff` でも `openid tenant.read events.read events.operate` を発行する。
+
+`openid` だけは登録外でも外さず `invalid_scope` とする。`openid` の有無は要求を OIDC 認証要求として検証するか（`nonce`、`prompt`、`max_age` など）と ID Token を発行するかを決めるため、外すと OIDC として検証した要求を OAuth 2.0 の認可として発行することになる。
+
+要求 scope が空でなく `granted_scope` が空になる場合は `invalid_scope` とする。業務 scope がすべて外れても `openid` / `profile` が残る場合は、それだけを発行する。
+
+認可コードには `granted_scope` を結び付け、token response の `scope` と JWT の `scope` claim は `granted_scope` と一致する。認可コードの交換と Refresh Token による更新では、その時点の tenant role と client の登録 scope で `granted_scope` を再検証し、許可外 scope があれば縮小せず `invalid_scope` とする。
 
 `tenant_role` は relation service の `memberships[0].tenant_role` から取得する。`memberships` が空配列の場合、tenant_access token は発行しない。
 
@@ -973,6 +990,8 @@ relation service の `404 tenant not found`、通信失敗、timeout、不正 re
 }
 ```
 
+対象は 11 節で拒否すると定めた要求である。認可要求で tenant role または client の登録 scope を超える scope は発行対象から外すだけで、このエラーにしない。
+
 ### 18.3 audience / resource が許可されない場合
 
 ```json
@@ -1131,7 +1150,7 @@ token_invalid_claims
 - event_id を scope に含める
 - x_tenant_id / x_event_id を使う
 - role / tenant_role / event_role を JWT claim に入れる
-- scope を暗黙に縮小して発行する
+- 認可要求の tenant role と client の登録 scope による絞り込み（11.1）以外で、scope を暗黙に縮小して発行する
 - 複数 audience の access token を発行する
 - Opaque Token を使う
 - Opaque Token Introspection に依存する

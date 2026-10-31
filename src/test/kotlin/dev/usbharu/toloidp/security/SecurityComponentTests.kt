@@ -216,7 +216,7 @@ class SecurityComponentTests(
     }
 
     @Test
-    fun tenantAuthorizationValidatorStillRejectsRoleScopeWhenOpenIdIsRequested() {
+    fun tenantAuthorizationValidatorKeepsOnlyOpenIdWhenNoRoleScopeRemains() {
         cacheRepository.deleteAll()
         cacheMembership(
             TenantMembership(
@@ -226,12 +226,11 @@ class SecurityComponentTests(
             ),
         )
         val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val context = tenantAuthorizationContext(setOf("openid", "tenant.write"))
 
-        val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
-            validator.accept(authorizationContext(scopes = setOf("openid", "tenant.write")))
-        }
+        validator.accept(context)
 
-        assertEquals("invalid_scope", exception.error.errorCode)
+        assertEquals(setOf("openid"), context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>().scopes)
     }
 
     @Test
@@ -425,7 +424,7 @@ class SecurityComponentTests(
         "STAFF, openid tenant.claim",
         "OWNER, events.read events.manage events.operate events.report",
         "ADMIN, events.read events.manage events.operate events.report",
-        "STAFF, events.read events.operate events.report",
+        "STAFF, events.read events.manage events.operate events.report",
     )
     fun issuesAllowedTenantScopesWithoutChangingRequestedScopes(role: RelationRole, scope: String) {
         cacheRepository.deleteAll()
@@ -465,17 +464,17 @@ class SecurityComponentTests(
         assertEquals("invalid_scope", issuanceError.error.errorCode)
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = ["tenant.write", "events.manage"])
-    fun rejectsStaffManagementScopesAtAuthorizationAndIssuance(scope: String) {
+    @Test
+    fun staffAuthorizationDropsTenantWriteWhileIssuanceStillRejectsIt() {
         cacheRepository.deleteAll()
         cacheMembership(TenantMembership("tenant-a", RelationRole.STAFF, emptyList()))
-        val scopes = setOf("events.report", scope)
+        val scopes = setOf("events.report", "tenant.write")
         val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
-        val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
-            validator.accept(authorizationContext(scopes = scopes))
-        }
-        assertEquals("invalid_scope", authorizationError.error.errorCode)
+        val context = tenantAuthorizationContext(scopes)
+
+        validator.accept(context)
+
+        assertEquals(setOf("events.report"), context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>().scopes)
         val issuanceError = assertFailsWith<OAuth2AuthenticationException> {
             jwtCustomizer.customize(tenantJwtContext(scopes))
         }
@@ -701,6 +700,17 @@ class SecurityComponentTests(
         return OAuth2AuthorizationCodeRequestAuthenticationContext.with(authentication)
             .registeredClient(registeredClient)
             .authorizationRequest(oauthAuthorizationRequest(resource, audience, scopes))
+            .build()
+    }
+
+    private fun tenantAuthorizationContext(scopes: Set<String>): OAuth2AuthorizationCodeRequestAuthenticationContext {
+        val base = authorizationContext(scopes = scopes)
+        val authentication = base.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
+        return OAuth2AuthorizationCodeRequestAuthenticationContext.with(
+            TenantAuthorizationRequestToken(authentication, authentication.additionalParameters, authorizationRequest()),
+        )
+            .registeredClient(registeredClient)
+            .authorizationRequest(base.authorizationRequest)
             .build()
     }
 

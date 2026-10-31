@@ -224,7 +224,7 @@ class OidcRequestContractTests(
         cache.save(RelationMembershipCache(cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
             membership = TenantMembership("tenant-a", RelationRole.STAFF, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300)))
-        assertError(mvc.perform(authorize(session, "openid tenant.write")), "invalid_scope")
+        assertError(mvc.perform(authorize(session, "tenant.write")), "invalid_scope")
     }
 
     @Test

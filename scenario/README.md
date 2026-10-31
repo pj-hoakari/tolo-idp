@@ -49,7 +49,7 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 4. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
 5. 認証付き Introspection で tenant_access の claim を確認する。
 6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
-7. staff の event-2 への設計・構成の書き込みは `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
+7. staff の event-2 への設計・構成の書き込み（`events.manage`）は発行され、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
 8. Refresh Token による更新、ローテーション、旧 token の再利用拒否、新 token での再更新と scope 縮小を確認する。
 9. Refresh Token を revoke し、更新が `invalid_grant`、現在の Access Token の Introspection が `active: false` になることを確認する。
 10. 終了時にセッションを破棄する。ログインが200を返した場合は、レスポンスや cookie の検証が失敗しても logout を試行する。
