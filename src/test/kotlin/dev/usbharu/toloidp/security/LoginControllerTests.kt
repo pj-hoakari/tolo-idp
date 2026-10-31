@@ -55,8 +55,8 @@ class LoginControllerTests(
     }
 
     @Test
-    fun loginCreatesSessionAndReturnsSelectedTenantResource() {
-        mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
+    fun loginCreatesSessionAndReturnsTheChallengeTenantResource() {
+        mockMvc.perform(loginRequest("user-123", "password"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
             .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
@@ -70,7 +70,7 @@ class LoginControllerTests(
     fun loginSucceedsWhenSessionAlreadyExists() {
         val preAuthSession = MockHttpSession()
 
-        mockMvc.perform(loginRequest("user-123", "password", "tenant-a").session(preAuthSession))
+        mockMvc.perform(loginRequest("user-123", "password").session(preAuthSession))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
     }
@@ -80,7 +80,7 @@ class LoginControllerTests(
         users.createUser("tenant-a", org.springframework.security.core.userdetails.User.withUsername("disabled-user")
             .password("{noop}password").roles("USER").disabled(true).build())
         try {
-            mockMvc.perform(loginRequest("disabled-user", "password", "tenant-a"))
+            mockMvc.perform(loginRequest("disabled-user", "password"))
                 .andExpect(status().isUnauthorized)
         } finally {
             users.deleteUser("tenant-a", "disabled-user")
@@ -89,32 +89,36 @@ class LoginControllerTests(
 
     @Test
     fun loginRejectsBadCredentials() {
-        mockMvc.perform(loginRequest("user-123", "wrong-password", "tenant-a"))
+        mockMvc.perform(loginRequest("user-123", "wrong-password"))
             .andExpect(status().isUnauthorized)
     }
 
     @Test
     fun loginRejectsUnknownUser() {
-        mockMvc.perform(loginRequest("missing-user", "password", "tenant-a"))
+        mockMvc.perform(loginRequest("missing-user", "password"))
             .andExpect(status().isUnauthorized)
     }
 
     @Test
     fun loginRejectsTenantWithoutMembership() {
+        val request = loginRequest("user-123", "password")
         cacheRepository.deleteAll()
-        mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
+        mockMvc.perform(request)
             .andExpect(status().isForbidden)
     }
 
     @Test
-    fun loginRejectsInvalidTenantIdWithoutTrimming() {
-        mockMvc.perform(loginRequest("user-123", "password", " tenant-a"))
-            .andExpect(status().isBadRequest)
+    fun tenantIdInTheBodyCannotChooseTheTenant() {
+        val challenge = mockMvc.challengeFrom(authorization())
+        mockMvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+            .content("""{"username":"user-123","password":"password","challenge":"$challenge","tenantId":"tenant-b"}"""))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.tenantId").value("tenant-a"))
     }
 
     @Test
     fun logoutInvalidatesExistingSession() {
-        val session = mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
+        val session = mockMvc.perform(loginRequest("user-123", "password"))
             .andExpect(status().isOk)
             .andReturn()
             .request
@@ -127,24 +131,18 @@ class LoginControllerTests(
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun openIdAuthorizationCodeCanBeUsedAtUserInfoEndpoint(profile: Boolean) {
-        val session = mockMvc.perform(loginRequest("user-123", "password", "tenant-a"))
+        val session = mockMvc.perform(loginRequest("user-123", "password"))
             .andExpect(status().isOk)
             .andReturn()
             .request
             .session as MockHttpSession
 
         val authorizationResponse = mockMvc.perform(
-            get("/oauth2/authorize")
+            authorization(if (profile) "openid profile tenant.read" else "openid tenant.read")
                 .session(session)
-                .queryParam("response_type", "code")
-                .queryParam("client_id", "client-123")
-                .queryParam("redirect_uri", REDIRECT_URI)
-                .queryParam("scope", if (profile) "openid profile tenant.read" else "openid tenant.read")
                 .queryParam("state", "state")
                 .queryParam("nonce", "nonce")
-                .queryParam("audience", "backend-api")
-                .queryParam("code_challenge", CODE_CHALLENGE)
-                .queryParam("code_challenge_method", "S256"),
+                .queryParam("audience", "backend-api"),
         )
             .andExpect(status().isFound)
             .andExpect(header().string("Location", org.hamcrest.Matchers.containsString("code=")))
@@ -232,18 +230,18 @@ class LoginControllerTests(
         }
     }
 
-    private fun loginRequest(username: String, password: String, tenantId: String) =
-        post("/api/login")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(
-                """
-                {
-                  "username": "$username",
-                  "password": "$password",
-                  "tenantId": "$tenantId"
-                }
-                """.trimIndent(),
-            )
+    private fun loginRequest(username: String, password: String) =
+        loginWithChallenge(mockMvc.challengeFrom(authorization()), username, password)
+
+    private fun authorization(scope: String = "openid tenant.read") =
+        get("/oauth2/authorize")
+            .queryParam("response_type", "code")
+            .queryParam("client_id", "client-123")
+            .queryParam("redirect_uri", REDIRECT_URI)
+            .queryParam("scope", scope)
+            .queryParam("resource", "https://api.example.com/tenants/tenant-a")
+            .queryParam("code_challenge", CODE_CHALLENGE)
+            .queryParam("code_challenge_method", "S256")
 
     private companion object {
         const val REDIRECT_URI = "http://127.0.0.1:8080/login/oauth2/code/client-123"

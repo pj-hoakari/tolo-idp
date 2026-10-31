@@ -16,6 +16,17 @@ spring:
       core:
         enabled: false
 
+server:
+  forward-headers-strategy: native
+  servlet:
+    session:
+      cookie:
+        name: __Host-tolo_idp_session
+        secure: true
+        http-only: true
+        same-site: lax
+        path: /
+
 logging:
   level:
     org.springframework.security: INFO
@@ -101,6 +112,13 @@ spring:
               access-token-time-to-live: 15m
               access-token-format: self-contained
 
+server:
+  servlet:
+    session:
+      cookie:
+        name: tolo_idp_session
+        secure: false
+
 tolo-idp:
   relation:
     base-url: http://relation-stub:8080
@@ -120,7 +138,6 @@ tolo-idp:
     enabled: true
   jwk:
     allow-ephemeral: true
-  cors:
-    allowed-origins:
-      - http://localhost:3000
-      - http://127.0.0.1:3000
+  login:
+    page-url: http://localhost:3000/login
+    error-page-url: http://localhost:3000/auth/error

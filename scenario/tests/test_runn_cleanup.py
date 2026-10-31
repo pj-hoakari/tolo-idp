@@ -8,13 +8,14 @@ import subprocess
 import sys
 import threading
 import unittest
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 ISSUER = "http://localhost:18080"
 COOKIE = "SYNTHETIC_SESSION_FOR_REGRESSION"
 CODE = "SYNTHETIC_CODE_FOR_REGRESSION"
+CHALLENGE = "SYNTHETIC_CHALLENGE_FOR_REGRESSION_0123456789"
 
 
 def token(label):
@@ -40,7 +41,8 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(body).encode())
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        target = urlsplit(self.path)
+        path = target.path
         self.server.requests.append((path, self.headers.get("Cookie")))
         if path == "/actuator/health":
             self.respond(200, {"status": "UP"})
@@ -58,11 +60,13 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "id_token_signing_alg_values_supported": ["RS256"],
                 "token_endpoint_auth_methods_supported": ["client_secret_basic"],
             })
-        elif path == "/oauth2/authorize":
+        elif path == "/oauth2/authorize" and parse_qs(target.query) == {"challenge": [CHALLENGE]}:
             state = "wrong-state" if self.server.failure == "state" else "scenario-state-0123456789"
             self.respond(302, {}, {
                 "Location": f"http://127.0.0.1:8080/login/oauth2/code/client-123?code={CODE}&state={state}",
             })
+        elif path == "/oauth2/authorize":
+            self.respond(302, {}, {"Location": f"http://localhost:3000/login?challenge={CHALLENGE}"})
         else:
             self.respond(404, {})
 
@@ -78,7 +82,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
                 "username": "user-123", "tenantId": "tenant-a",
                 "resource": "https://api.example.com/tenants/tenant-a", "authorities": ["ROLE_USER"],
-            }, {"Set-Cookie": f"JSESSIONID={COOKIE}; Path=/{suffix}"})
+            }, {"Set-Cookie": f"tolo_idp_session={COOKIE}; Path=/{suffix}"})
         elif path == "/oauth2/token":
             if self.server.failure == "token-status":
                 self.respond(500, None)
@@ -135,7 +139,7 @@ class RunnCleanupTests(unittest.TestCase):
         self.assertIn(last_path, requests, "The intended assertion must be reached")
         if cleanup:
             self.assertEqual([(path, cookie) for path, cookie in server.requests if path == "/api/logout"],
-                             [("/api/logout", f"JSESSIONID={COOKIE}")])
+                             [("/api/logout", f"tolo_idp_session={COOKIE}")])
             self.assertEqual(last_path, requests[-2], "No authentication step may run after the failure")
         else:
             self.assertNotIn("/api/logout", requests)

@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpSession
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.oauth2.jwt.JwtDecoder
@@ -48,21 +47,10 @@ class TenantScopedUserFlowTests(
             mvc.perform(login("tenant-b", "password-a")).andExpect(status().isUnauthorized)
             mvc.perform(login("tenant-c", "password-a")).andExpect(status().isUnauthorized)
             for ((tenant, password, subject) in listOf(Triple("tenant-a", "password-a", a.id), Triple("tenant-b", "password-b", b.id))) {
-                val session = mvc.perform(login(tenant, password)).andExpect(status().isOk)
+                val challenge = mvc.challengeFrom(authorize(null, tenant))
+                val session = mvc.perform(loginWithChallenge(challenge, "same-login", password)).andExpect(status().isOk)
                     .andExpect(jsonPath("$.sub").value(subject)).andReturn().request.session as MockHttpSession
-                // A session from one tenant must not authorize a resource in the other tenant.
-                val otherTenant = if (tenant == "tenant-a") "tenant-b" else "tenant-a"
-                session.setAttribute(dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE, otherTenant)
-                try {
-                    mvc.perform(authorize(session, otherTenant))
-                        .andExpect(status().isFound)
-                        .andExpect(header().string("Location", org.hamcrest.Matchers.containsString("error=access_denied")))
-                        .andExpect(header().string("Location", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("code="))))
-                } finally {
-                    session.setAttribute(dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE, tenant)
-                }
-                val location = mvc.perform(authorize(session, tenant)).andExpect(status().isFound).andReturn().response.redirectedUrl!!
-                val code = UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
+                val code = code(mvc.perform(resumeAuthorization(challenge, session)))
                 val issued = mvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
                     .param("grant_type", "authorization_code").param("code", code).param("redirect_uri", REDIRECT)
                     .param("code_verifier", VERIFIER))
@@ -95,14 +83,54 @@ class TenantScopedUserFlowTests(
         }
     }
 
-    private fun login(tenant: String, password: String) = post("/api/login").contentType(MediaType.APPLICATION_JSON)
-        .content("""{"tenantId":"$tenant","username":"same-login","password":"$password"}""")
+    @Test
+    fun loginStateForAnotherTenantRequiresANewChallenge() {
+        users.createUser("tenant-a", User.withUsername("switching-login").password("{noop}password-a").roles("USER").build())
+        users.createUser("tenant-b", User.withUsername("switching-login").password("{noop}password-b").roles("USER").build())
+        for (tenant in listOf("tenant-a", "tenant-b")) {
+            cache.save(RelationMembershipCache(
+                cacheId = RelationMembershipCacheId(tenant, "switching-login"),
+                membership = TenantMembership(tenant, RelationRole.OWNER, emptyList()),
+                cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
+            ))
+        }
+        try {
+            val first = mvc.challengeFrom(authorize(null, "tenant-a"))
+            val session = mvc.loginWithChallengeSession(first, "switching-login", "password-a")
+            code(mvc.perform(authorize(session, "tenant-a")))
+            val switched = mvc.challengeFrom(authorize(session, "tenant-b"))
+            mvc.perform(loginWithChallenge(switched, "switching-login", "password-a", session)).andExpect(status().isUnauthorized)
+            mvc.loginWithChallengeSession(switched, "switching-login", "password-b", session)
+            val issued = mvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
+                .param("grant_type", "authorization_code").param("code", code(mvc.perform(resumeAuthorization(switched, session))))
+                .param("redirect_uri", REDIRECT).param("code_verifier", VERIFIER))
+                .andExpect(status().isOk).andReturn().response.contentAsString
+            val access = decoder.decode(json.readTree(issued)["access_token"].stringValue())
+            assertEquals("tenant-b", access.getClaimAsString("tenant_id"))
+            assertEquals(users.loadUserByUsername("tenant-b", "switching-login").id, access.subject)
+            mvc.challengeFrom(authorize(session, "tenant-a"))
+        } finally {
+            users.deleteUser("tenant-a", "switching-login")
+            users.deleteUser("tenant-b", "switching-login")
+            cache.deleteAll()
+        }
+    }
 
-    private fun authorize(session: MockHttpSession, tenant: String) = get("/oauth2/authorize").session(session)
+    private fun login(tenant: String, password: String) =
+        loginWithChallenge(mvc.challengeFrom(authorize(null, tenant)), "same-login", password)
+
+    private fun code(result: org.springframework.test.web.servlet.ResultActions): String {
+        val location = result.andExpect(status().isFound).andReturn().response.redirectedUrl!!
+        kotlin.test.assertTrue(location.startsWith("$REDIRECT?"))
+        return UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
+    }
+
+    private fun authorize(session: MockHttpSession?, tenant: String) = get("/oauth2/authorize")
         .queryParam("response_type", "code").queryParam("client_id", "client-123").queryParam("redirect_uri", REDIRECT)
         .queryParam("scope", "openid profile tenant.read events.read").queryParam("audience", "backend-api")
         .queryParam("resource", "https://api.example.com/tenants/$tenant")
         .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
+        .also { if (session != null) it.session(session) }
 
     companion object {
         private const val REDIRECT = "http://127.0.0.1:8080/login/oauth2/code/client-123"

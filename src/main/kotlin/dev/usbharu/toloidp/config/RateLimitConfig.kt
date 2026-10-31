@@ -4,6 +4,7 @@ import dev.usbharu.toloidp.ratelimit.Bucket4jRedisRateLimitService
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.ratelimit.RateLimitIdentityExtractor
 import dev.usbharu.toloidp.ratelimit.RateLimitService
+import dev.usbharu.toloidp.security.LoginChallenges
 import io.github.bucket4j.distributed.proxy.ProxyManager
 import io.github.bucket4j.redis.lettuce.Bucket4jLettuce
 import io.lettuce.core.RedisClient
@@ -36,8 +37,8 @@ class RateLimitConfig {
         Bucket4jRedisRateLimitService(proxyManager, properties)
 
     @Bean
-    fun rateLimitIdentityExtractor(objectMapper: ObjectMapper): RateLimitIdentityExtractor =
-        RateLimitIdentityExtractor(objectMapper)
+    fun rateLimitIdentityExtractor(objectMapper: ObjectMapper, challenges: LoginChallenges): RateLimitIdentityExtractor =
+        RateLimitIdentityExtractor(objectMapper, challenges::tenant)
 
     @Bean
     fun rateLimitFilter(

@@ -11,6 +11,7 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
+import org.springframework.security.authentication.AnonymousAuthenticationToken
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes
@@ -45,6 +46,8 @@ class TenantAuthorizationValidator(
         val authentication = context.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
         try {
             validateTrustedRequest(context, authentication)
+        } catch (ex: LoginChallengeRequiredException) {
+            throw ex
         } catch (ex: OAuth2AuthorizationCodeRequestAuthenticationException) {
             // Only attach a redirect after the standard client / redirect validator succeeded.
             val redirect = authentication.redirectUri ?: context.registeredClient.redirectUris.singleOrNull()
@@ -62,7 +65,6 @@ class TenantAuthorizationValidator(
         context: OAuth2AuthorizationCodeRequestAuthenticationContext,
         authentication: OAuth2AuthorizationCodeRequestAuthenticationToken,
     ) {
-        val completeReauthentication = oidcRequests.validate(authentication, context.registeredClient)
         val clientId = context.registeredClient.clientId
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throwAuthorizationError(OAuth2ErrorCodes.INVALID_REQUEST, "client_id")
@@ -102,6 +104,8 @@ class TenantAuthorizationValidator(
         if (audience !in policy.allowedAudiences) {
             throwAuthorizationError("invalid_target", OAuth2ParameterNames.AUDIENCE)
         }
+        val principal = authentication.principal as org.springframework.security.core.Authentication
+        oidcRequests.validate(authentication, context.registeredClient, tenantResource.tenantId, signedIn(principal, tenantResource.tenantId))
 
         val requestedScopes = authentication.scopes.orEmpty()
         try {
@@ -149,8 +153,15 @@ class TenantAuthorizationValidator(
             "result" to "success",
         )
         log.structuredTrace("Tenant authorization validation completed", "event" to "tenant_authorization_validation_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
-        completeReauthentication()
     }
+
+    private fun signedIn(principal: org.springframework.security.core.Authentication, tenantId: String): Boolean =
+        principal.isAuthenticated && principal !is AnonymousAuthenticationToken && try {
+            users.requireTenantUser(tenantId, principal.name)
+            true
+        } catch (_: RelationLookupException) {
+            false
+        }
 
     private fun throwAuthorizationError(errorCode: String, parameter: String): Nothing {
         val error = OAuth2Error(errorCode, "OAuth 2.0 Parameter: $parameter", null)
