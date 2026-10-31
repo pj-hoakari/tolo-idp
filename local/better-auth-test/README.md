@@ -75,7 +75,7 @@ Event ID `event-3` with `user-123` should fail because relation-stub has no even
 ## Phase 3: Refresh and revoke
 
 1. Click **4. Refresh tokens**. Expect `refreshTokenRotated: true`, `refreshTokenSaved: true`, `idTokenIssued: true`, and a new `jti`. Better Auth's standard refresh API updates and saves the tokens.
-2. Click **End IdP session**, then refresh again. Refresh should still succeed because the Better Auth session and refresh token remain valid.
+2. Click **End IdP session**. The harness sends the browser to the `end_session_endpoint` from Discovery with the latest ID token as `id_token_hint`. tolo-idp ends its session and redirects to http://localhost:3000/auth/logged-out, which is registered for `client-123`. Go back to the dashboard and refresh again. Refresh should still succeed because the Better Auth session and refresh token remain valid.
 3. Click **5. Revoke refresh token**. Expect `revoked: true` and `accessTokenActive: false`.
 4. Refresh again. Expect the operation to fail because the refresh token has been revoked.
 5. Click **Sign out of Better Auth and sign in again** to start over.

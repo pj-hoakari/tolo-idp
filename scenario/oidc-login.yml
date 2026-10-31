@@ -22,6 +22,7 @@ vars:
   client_id: client-123
   client_secret: secret
   redirect_uri: http://127.0.0.1:8080/login/oauth2/code/client-123
+  post_logout_redirect_uri: http://localhost:3000/auth/logged-out
   audience: backend-api
   scope: openid tenant.read events.read events.manage events.operate events.report
   event_scope: events.read events.manage events.operate events.report
@@ -72,6 +73,7 @@ steps:
       && hasPrefix(current.res.body.token_endpoint, vars.issuer + "/")
       && hasPrefix(current.res.body.introspection_endpoint, vars.issuer + "/")
       && hasPrefix(current.res.body.jwks_uri, vars.issuer + "/")
+      && hasPrefix(current.res.body.end_session_endpoint, vars.issuer + "/")
       && "code" in current.res.body.response_types_supported
       && "authorization_code" in current.res.body.grant_types_supported
       && "urn:ietf:params:oauth:grant-type:token-exchange" in current.res.body.grant_types_supported
@@ -83,6 +85,7 @@ steps:
       authorization_path: trimPrefix(current.res.body.authorization_endpoint, vars.issuer)
       token_path: trimPrefix(current.res.body.token_endpoint, vars.issuer)
       introspection_path: trimPrefix(current.res.body.introspection_endpoint, vars.issuer)
+      end_session_path: trimPrefix(current.res.body.end_session_endpoint, vars.issuer)
 
   login:
     desc: 同一オリジンのログイン API でセッションを作る
@@ -143,16 +146,19 @@ steps:
               code: "{{ authorization_code }}"
               redirect_uri: "{{ vars.redirect_uri }}"
               code_verifier: "{{ vars.code_verifier }}"
+
+  inspect_token_response:
+    desc: token レスポンスを確認する
     test: |
-      current.res.status == 200
-      && current.res.body.token_type == "Bearer"
-      && type(current.res.body.refresh_token) == "string"
-      && current.res.body.refresh_token != ""
-      && current.res.body.expires_in > 0
-      && current.res.body.access_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
-      && current.res.body.id_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
-      && len(split(current.res.body.scope, " ")) == len(split(vars.scope, " "))
-      && all(split(vars.scope, " "), {# in split(current.res.body.scope, " ")})
+      steps.tenant_token.res.status == 200
+      && steps.tenant_token.res.body.token_type == "Bearer"
+      && type(steps.tenant_token.res.body.refresh_token) == "string"
+      && steps.tenant_token.res.body.refresh_token != ""
+      && steps.tenant_token.res.body.expires_in > 0
+      && steps.tenant_token.res.body.access_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+      && steps.tenant_token.res.body.id_token matches "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+      && len(split(steps.tenant_token.res.body.scope, " ")) == len(split(vars.scope, " "))
+      && all(split(vars.scope, " "), {# in split(steps.tenant_token.res.body.scope, " ")})
 
   read_tenant_token:
     desc: 成功したレスポンスから tenant_access を取得する
@@ -435,12 +441,15 @@ steps:
     test: current.res.status == 200 && current.res.body == {"active":false}
 
   logout:
-    desc: 作成したセッションを破棄する
+    desc: 最新の ID Token で RP-Initiated Logout を行い、セッションを破棄して登録済みの URI へ戻る
     defer: true
-    if: 'steps.login?.res?.status == 200'
+    if: '(steps.refresh_again?.res?.body?.id_token ?? steps.refresh?.res?.body?.id_token ?? steps.tenant_token?.res?.body?.id_token ?? "") != ""'
     idp:
-      /api/logout:
-        post:
-          body:
-            application/json: {}
-    test: current.res.status == 204
+      "{{ end_session_path }}?id_token_hint={{ urlencode(steps.refresh_again?.res?.body?.id_token ?? steps.refresh?.res?.body?.id_token ?? steps.tenant_token.res.body.id_token) }}&post_logout_redirect_uri={{ urlencode(vars.post_logout_redirect_uri) }}&state={{ urlencode(vars.state) }}":
+        get:
+          headers:
+            Accept: text/html
+          body: null
+    test: |
+      current.res.status == 302
+      && current.res.headers["Location"][0] == vars.post_logout_redirect_uri + "?state=" + urlencode(vars.state)
