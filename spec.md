@@ -316,7 +316,7 @@ hint が IdP の発行した最新の ID Token でない場合、未登録の `p
   "token_use": "registration",
   "iat": 1710000000,
   "nbf": 1710000000,
-  "exp": 1710000600,
+  "exp": 1710000300,
   "jti": "jti-registration-001"
 }
 ```
@@ -733,7 +733,7 @@ tenant.join ∈ client.allowed_scopes
 
 `tenant.join` を登録 scope に持つ client だけが registration を受け取れる。開発用 client では、Web の BFF にあたる `client-123` に登録する。
 
-認可コードの交換では、ユーザーが認可要求の tenant に存在し有効であることを確かめ、次の claim で発行する。TTL は login challenge と同じ 10 分とし、client ごとには変えない。
+認可コードの交換では、ユーザーが認可要求の tenant に存在し有効であることを確かめ、次の claim で発行する。TTL は 5 分とし、client ごとには変えない。
 
 ```text
 token_use=registration
@@ -1065,7 +1065,7 @@ Revocation endpoint は token 本体、client secret、authorization code、pass
 |---|---|
 | `tenant_access` | 15分 |
 | `event_access` | 10分 |
-| `registration` | 10分 |
+| `registration` | 5分 |
 
 client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。`registration` は client によらず固定とする。
 

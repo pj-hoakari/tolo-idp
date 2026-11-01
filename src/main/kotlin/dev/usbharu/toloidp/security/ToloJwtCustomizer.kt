@@ -296,6 +296,6 @@ class ToloJwtCustomizer(
 
     companion object {
         private val log = LoggerFactory.getLogger(ToloJwtCustomizer::class.java)
-        val REGISTRATION_TTL: Duration = Duration.ofMinutes(10)
+        val REGISTRATION_TTL: Duration = Duration.ofMinutes(5)
     }
 }

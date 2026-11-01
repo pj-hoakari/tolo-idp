@@ -513,7 +513,7 @@ class SecurityComponentTests(
         assertEquals("tenant.join", claims.claims["scope"])
         assertEquals(listOf("backend-api"), claims.audience)
         assertEquals("client-123", claims.claims["client_id"])
-        assertEquals(Duration.ofMinutes(10), Duration.between(claims.issuedAt, claims.expiresAt))
+        assertEquals(Duration.ofMinutes(5), Duration.between(claims.issuedAt, claims.expiresAt))
         assertFalse(claims.claims.containsKey("tenant_id"))
         assertFalse(claims.claims.containsKey("event_id"))
         assertFalse(claims.claims.containsKey("resource"))

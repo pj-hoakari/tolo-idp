@@ -64,7 +64,7 @@ class RegistrationFlowTests(
         assertEquals(subject, access.subject)
         assertEquals(listOf("backend-api"), access.audience)
         assertEquals("client-123", access.getClaimAsString("client_id"))
-        assertTrue(Duration.between(access.issuedAt, access.expiresAt) <= Duration.ofMinutes(10))
+        assertTrue(Duration.between(access.issuedAt, access.expiresAt) <= Duration.ofMinutes(5))
         assertFalse(access.hasClaim("tenant_id"))
         assertFalse(access.hasClaim("event_id"))
         assertFalse(access.hasClaim("resource"))

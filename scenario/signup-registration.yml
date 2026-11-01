@@ -152,7 +152,7 @@ steps:
       && current.res.body.scope == "tenant.join"
       && "id_token" not in current.res.body
       && "refresh_token" not in current.res.body
-      && current.res.body.expires_in <= 600
+      && current.res.body.expires_in <= 300
     bind:
       registration_token: current.res.body.access_token
       registration_claims: fromJSON(fromBase64(replace(replace(split(current.res.body.access_token, ".")[1], "-", "+"), "_", "/") + repeat("=", (4 - len(split(current.res.body.access_token, ".")[1]) % 4) % 4)))
@@ -168,7 +168,7 @@ steps:
       && "tenant_id" not in registration_claims
       && "event_id" not in registration_claims
       && "resource" not in registration_claims
-      && registration_claims.exp - registration_claims.iat <= 600
+      && registration_claims.exp - registration_claims.iat <= 300
 
   inspect_registration_introspection:
     desc: Service Gateway の Introspection で registration の claim を確認する
