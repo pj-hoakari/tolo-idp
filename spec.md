@@ -275,6 +275,31 @@ hint が IdP の発行した最新の ID Token でない場合、未登録の `p
 }
 ```
 
+### 5.3 registration token
+
+`registration` token は、仮テナントの所有権の取得（ClaimTenantOwnership）と招待の受諾（AcceptTenantInvitation）に使う、tenant の文脈を持たない JWT access token である。発行の条件は 11.3 に従う。
+
+例:
+
+```json
+{
+  "iss": "https://auth.example.com",
+  "sub": "0b8e3f8c-6d0e-4a55-9b0c-3c1f7f6c2a11",
+  "aud": "backend-api",
+  "client_id": "client-123",
+  "scope": "tenant.join",
+  "token_use": "registration",
+  "iat": 1710000000,
+  "nbf": 1710000000,
+  "exp": 1710000600,
+  "jti": "jti-registration-001"
+}
+```
+
+`tenant_id`、`event_id`、`resource` を持たない。Service Gateway は `tenant_id` を持つ registration を拒否するためである。このため registration は、発行時の認可要求の tenant にかかわらず、どの tenant の所有権の取得と招待の受諾にも使える。別の tenant で使うと、その tenant にログインできない `sub` の所属ができる（権限は増えない）。BFF は、認可、サインアップ、所有権の取得、招待の受諾を同じ tenant で行う。IdP と Service Gateway ではこれを強制できない。
+
+Refresh Token は発行しない。registration は Token Exchange の subject token にできない（6 節）。
+
 ---
 
 ## 6. Token Exchange 遷移ルール
@@ -292,6 +317,7 @@ Authorization Server は以下の Token Exchange のみを許可する。
 | `tenant_access` | `tenant_access` |
 | `event_access` | `tenant_access` |
 | `event_access` | `event_access` |
+| `registration` | すべて |
 
 `login` token は本仕様では定義しない。
 
@@ -432,7 +458,7 @@ staff
 | `events.manage` | 設計・構成の書き込み | CreateEvent、AssignEventType、TransitionEventStatus、UpdateObservationSettings、SaveGraph、PublishRevision、QR 設置箇所の追加・更新・削除、RegisterEdgeDevice / UnregisterEdgeDevice など |
 | `events.operate` | 現場運用の書き込み（11 RPC） | OperateGate、ToggleDangerFlag、ReportCongestion、SendStaffMessage、DirectReassignment など |
 | `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
-| `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
+| `tenant.join` | 所有権の取得と招待の受諾専用。registration token にだけ付ける | ClaimTenantOwnership、AcceptTenantInvitation |
 
 OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープによる制限は受ける（11.1）。
 
@@ -442,11 +468,11 @@ OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_a
 
 | role | 許可 scope |
 |---|---|
-| `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
-| `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
-| `staff` | `tenant.read`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
+| `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report` |
+| `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report` |
+| `staff` | `tenant.read`, `events.read`, `events.manage`, `events.operate`, `events.report` |
 
-`tenant.claim` の発行先と併用条件は 11.3 に従う。
+`tenant.join` は role から導かない。発行条件は 11.3 に従う。
 
 ### 9.4 role の扱い
 
@@ -614,7 +640,7 @@ X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外�
 
 Authorization Code フローの認可要求では、要求 scope のうち tenant role または client の登録 scope が許可しない scope を発行対象から外し、残りを発行する。client はユーザーの role を知る前に scope を要求する。また、client ごとの登録 scope は発行する scope の上限であり、要求を拒否する条件ではない。
 
-それ以外では、要求された `scope` を暗黙に縮小して発行してはならない。対象は、未対応の scope、client の登録外の `openid`、`tenant.claim` と業務 scope の併用、Refresh Token、Token Exchange である。
+それ以外では、要求された `scope` を暗黙に縮小して発行してはならない。対象は、未対応の scope、client の登録外の `openid`、`tenant.join` とほかの scope の併用、registration の認可要求、Refresh Token、Token Exchange である。
 
 これらに許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
 
@@ -627,7 +653,7 @@ requested_scope ⊆ supported_scopes
 openid ∈ requested_scope ならば openid ∈ client.allowed_scopes
 ```
 
-この 2 つと `tenant.claim` との混在（11.3）は、ユーザーによらず判断できるので、login challenge を発行する前に検証する。満たさない要求は、ログイン画面へ送らずに client へ `invalid_scope` を返す。
+この 2 つと `tenant.join` の混在（11.3）は、ユーザーによらず判断できるので、login challenge を発行する前に検証する。満たさない要求は、ログイン画面へ送らずに client へ `invalid_scope` を返す。
 
 発行する scope は以下とする。
 
@@ -649,7 +675,7 @@ granted_scope = requested_scope ∩ (identity_scopes ∪ tenant_role.allowed_sco
 
 ### 11.2 event_access token 発行時
 
-`tenant.claim` は発行しない。要求に含まれる場合は `invalid_scope` とする。
+`tenant.join` は発行しない。要求に含まれる場合は `invalid_scope` とする。
 
 既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` / `profile` は event role の許可 scope に含まれず、発行しない。
 
@@ -667,26 +693,34 @@ resource の `eventId` に一致する event が `event_roles` に存在しな�
 
 `admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `event_role` へ割り当てる。relation service の response から `admin` を推定してはならない。
 
-### 11.3 tenant.claim token 発行時
+### 11.3 registration token 発行時
 
-`tenant.claim` は所属済みの `owner` / `admin` / `staff` に対して、既存の Authorization Code フローで tenant_access token にのみ発行する。
+scope が `tenant.join` だけの認可要求には、tenant_access の代わりに registration token（5.3）を発行する。`tenant.join` と、`openid`、`profile`、業務 scope のいずれかとの併用は `invalid_scope` とする。このため registration の認可では ID Token を発行しない。
 
-要求 scope は以下のいずれかに限定する。
+認可要求には、tenant_access と同じく対象 tenant の `resource` を1つ指定する。IdP はその tenant のユーザーとしてログインまたはサインアップ（4.1.5）させる。所属はまだないので、relation service への問い合わせは行わない。
+
+以下を満たさない要求は、login challenge を発行する前に client へ `invalid_scope` を返す。
 
 ```text
-tenant.claim
-profile tenant.claim
-openid tenant.claim
-openid profile tenant.claim
+requested_scope = {tenant.join}
+tenant.join ∈ client.allowed_scopes
 ```
 
-他の業務 scope との混在は `invalid_scope` とする。認可リクエスト時と JWT 発行時の両方で検証する。
+`tenant.join` を登録 scope に持つ client だけが registration を受け取れる。開発用 client では、Web の BFF にあたる `client-123` に登録する。
 
-通常の tenant_access と同じく、認証、選択 tenant の membership、client の許可 scope を検証する。新しい token_use や claim は追加しない。
+認可コードの交換では、ユーザーが認可要求の tenant に存在し有効であることを確かめ、次の claim で発行する。TTL は login challenge と同じ 10 分とし、client ごとには変えない。
 
-仮テナントの状態、所有権取得資格、ClaimTenantOwnership の最終認可は Resource Server が確認する。未所属ユーザーへの発行と所有権取得 RPC の実装は本仕様の対象外とする。
+```text
+token_use=registration
+scope=tenant.join
+aud=client policy の audience（1つ）
+sub, client_id, iat, nbf, exp, jti
+tenant_id, event_id, resource は持たない
+```
 
-tenant.claim のみを持つ token からイベント系 scope への Token Exchange は、交換元 scope を超えるため `invalid_grant` とする。
+Refresh Token は発行しない。registration の認可を Refresh Token grant で更新する要求は `invalid_grant` とする。発行は監査ログ（19 節）に `requested_token_use=registration` で記録する。監査ログの `tenant_id` には認可要求の tenant を記録するが、token には載せない。
+
+tenant_access と event_access の要求に `tenant.join` が含まれる場合は `invalid_scope` とする。
 
 ---
 
@@ -797,6 +831,8 @@ resource
 tenant_id または event_id
 ```
 
+registration token には `resource`、`tenant_id`、`event_id` がないので返さない。
+
 Introspection Response とログに以下を含めてはならない。
 
 ```text
@@ -822,6 +858,8 @@ nbf
 exp
 jti
 ```
+
+registration token は `resource` を持たない（5.3）。
 
 ### 13.3 tenant_access token 必須 claim
 
@@ -922,7 +960,7 @@ role は主に Authorization Server が scope 発行時に使う内部情報で�
 
 ### 16.1 write 系 API
 
-`tenant.write`、`events.manage`、`events.operate`、`events.report`、`tenant.claim` を必要とする API、および `tenant.read` による自デバイスへの書き込み API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
+`tenant.write`、`events.manage`、`events.operate`、`events.report` を必要とする API、および `tenant.read` による自デバイスへの書き込み API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
 
 ### 16.2 read 系 API
 
@@ -958,7 +996,7 @@ token_type_hint=access_token
 `token_type_hint` は未指定、`access_token`、`refresh_token` を受け付ける。未知の値は RFC 7009 に従って無視する。
 hint は検索順の指定とし、指定種別で見つからない場合は、もう一方の対応済み種別も検索する。Authorization Code や ID Token は検索しない。
 
-Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。
+Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。registration token は対象外とし、短い TTL で失効させる。現行実装では、保存済みの registration token の revocation 要求は `invalid_request` になる。
 
 Authorization Server は以下を確認する。
 
@@ -1002,8 +1040,9 @@ Revocation endpoint は token 本体、client secret、authorization code、pass
 |---|---|
 | `tenant_access` | 15分 |
 | `event_access` | 10分 |
+| `registration` | 10分 |
 
-client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。
+client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。`registration` は client によらず固定とする。
 
 ---
 
@@ -1098,6 +1137,8 @@ issued_jti
 
 現行実装では Token Exchange の監査ログを DB の `idp_audit_log` と logger `audit.token` に記録する。
 Token Revocation も同じ `idp_audit_log` と logger `audit.token` に記録する。
+registration token の発行（RegistrationTokenIssued）も同じ `idp_audit_log` と logger `audit.token` に記録する。`requested_token_use` は `registration`、`tenant_id` は認可要求の tenant、`issued_jti` は発行した token の `jti` とする。
+サインアップ（UserRegistered）は 4.1.5 の構造化ログ `user_registered` に記録し、`idp_audit_log` には記録しない。
 Revocation の場合、`requested_token_use` は `revocation`、`issued_jti` は失効対象の
 `jti` とする。Refresh Token の revocation では `source_token_use=refresh_token`、`issued_jti=null` とし、token 本体を含めない。
 
@@ -1271,7 +1312,7 @@ password=password
 client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
-allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
+allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.join,events.read,events.manage,events.operate,events.report
 gateway_client_id=service-gateway
 gateway_client_secret=gateway-secret
 ```
@@ -1287,7 +1328,7 @@ DB スキーマの V5 で `idp_client_policy` テーブルを削除する。旧�
 開発・本番ともに、構成管理外の既存 client に対するスコープの自動移行や、旧 scope の読み替えは行わない。運用側で以下を実施する。
 
 1. Resource Server と client の要求 scope を新しいスコープ用途に合わせて更新する。
-2. 対象 client の RegisteredClient の `scopes` を更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.claim` も利用する client にのみ登録する。
+2. 対象 client の RegisteredClient の `scopes` を更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.join` は registration を受け取る client（Web の BFF）にのみ登録する。廃止した `tenant.claim` は未対応の scope として `invalid_scope` になるので、登録と要求から削除する。
 3. 新しい scope を要求して tenant_access token を再取得し、その scope の範囲内で event_access token を要求する。
 
 既発行 JWT と保存済み authorization は変更・一括失効しない。旧 scope を新しい scope として解釈しない。交換元が旧 `events.write` のみを持つ場合、新イベントスコープへの交換は `invalid_grant` とする。交換要求自体に `events.write` が含まれる場合は `invalid_scope` とする。
