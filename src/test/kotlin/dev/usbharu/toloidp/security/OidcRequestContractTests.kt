@@ -51,7 +51,7 @@ class OidcRequestContractTests(
     fun membership() {
         cache.deleteAll()
         cache.save(RelationMembershipCache(
-            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+            cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
             membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))
@@ -201,7 +201,7 @@ class OidcRequestContractTests(
     fun scopeAndMembershipErrorsReturnToClientWithState() {
         val session = login()
         cache.deleteAll()
-        cache.save(RelationMembershipCache(cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+        cache.save(RelationMembershipCache(cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
             membership = TenantMembership("tenant-a", RelationRole.STAFF, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300)))
         assertError(mvc.perform(authorize(session, "tenant.write")), "invalid_scope")

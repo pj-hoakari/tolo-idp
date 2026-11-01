@@ -49,7 +49,7 @@ class RpInitiatedLogoutTests(
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = TenantMembership("tenant-a", RelationRole.OWNER, listOf(EventMembership("event-1", RelationRole.OWNER))),
                 cachedAt = Instant.EPOCH,
                 expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
@@ -166,7 +166,7 @@ class RpInitiatedLogoutTests(
         users.createUser("tenant-b", User.withUsername("user-b").password("{noop}password-b").roles("USER").build())
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-b", "user-b"),
+                cacheId = RelationMembershipCacheId("tenant-b", users.loadUserByUsername("tenant-b", "user-b").id),
                 membership = TenantMembership("tenant-b", RelationRole.OWNER, listOf(EventMembership("event-1", RelationRole.OWNER))),
                 cachedAt = Instant.EPOCH,
                 expiresAt = Instant.parse("2030-01-01T00:00:00Z"),

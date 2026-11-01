@@ -5,6 +5,7 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -32,7 +33,7 @@ class SessionCookieTests(
     @Test
     fun loginStateCookieIsHostOnlySecureHttpOnlyAndLax() {
         memberships.save(RelationMembershipCache(
-            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+            cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
             membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))

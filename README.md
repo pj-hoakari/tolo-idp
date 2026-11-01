@@ -107,7 +107,7 @@ docker compose -f docker-compose.dev-jvm.yaml down
 
 CI と公開手順は [CI.md](CI.md) を参照してください。
 
-ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service には `(tenantId, username)` を渡します。開発用 seed は `(tenant-a, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
+ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service にも `(tenantId, sub)` を渡します。開発用 seed は `(tenant-a, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
 
 認可要求には `resource` に tenant resource（例: `https://api.example.com/tenants/tenant-a`）を指定します。ログイン状態がない要求と `prompt=login` の要求は、Web のログイン画面（開発環境では `http://localhost:3000/login`）へ `challenge` を付けてリダイレクトします。ログイン画面は `POST /api/login` に `username`、`password`、`challenge` を送り、成功したら `/oauth2/authorize?challenge=...` を開いて元の認可要求を再開します。詳しくは [spec.md](spec.md) の 4.1 節と 4.1.3 節を参照してください。
 

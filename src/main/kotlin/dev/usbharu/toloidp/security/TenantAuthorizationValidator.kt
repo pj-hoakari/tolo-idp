@@ -121,7 +121,7 @@ class TenantAuthorizationValidator(
         oidcRequests.validate(authentication, context.registeredClient, tenantResource.tenantId, signedIn(principal, tenantResource.tenantId))
 
         try {
-            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name).username)
+            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name).id)
             log.structuredDebug(
                 "Authorization request membership loaded",
                 "event" to "authorization_request_membership_loaded",

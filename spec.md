@@ -103,13 +103,13 @@ challenge が未知・期限切れ・認証済みの場合と本文が不正な�
 
 ### 4.1.1 ユーザーの識別
 
-ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内の userId（ログイン名）であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
+ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内のログイン名であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
 
-権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, username)` を渡し、サロゲートキーを渡さない。
+権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, sub)` を渡し、username を渡さない。
 
 ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。ログインでは challenge から決めた tenant を使う。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も challenge から決めた tenantId と username の組ごとに分離する。challenge が未知・期限切れ・認証済みの要求には、IP 単位の制限だけを適用する。
 
-開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId は従来どおり `user-123` とする。
+開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId もこの内部主キーとする。
 
 V6 は未リリースの開発用スキーマ変更としてユーザーテーブルを作り直す。旧テーブルには tenantId がないため所属を推測せず、旧ユーザー・権限・対応する authorization / consent・relation cache を削除する。開発用ユーザーは seed で再作成する。DB 以外の移行・旧識別方式との互換性対応は行わない。
 
@@ -472,7 +472,7 @@ Authorization Server は、resource から得た `tenantId` と subject user id 
 GET /tenants/{tenantId}/users/{userId}/memberships
 ```
 
-ログイン時は認証済み user の username を `userId` として渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで username を渡す。未知・無効・別 tenant の subject は拒否する。`sub` を Relation Service の userId として扱わない。
+`userId` には user の `sub`（サロゲートキー）を渡す。ログイン時は認証済み user の `sub` を渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで `sub` を渡す。未知・無効・別 tenant の subject は拒否する。username を Relation Service の userId として扱わない。
 
 ### 10.2 response
 
@@ -482,7 +482,7 @@ relation service は以下の JSON を返す。
 {
   "memberships": [
     {
-      "user_id": "user-123",
+      "user_id": "71c68dc1-2c72-45ac-a191-1c47c1551011",
       "tenant_id": "tenant-a",
       "tenant_role": "owner",
       "event_roles": [
@@ -550,6 +550,8 @@ tenant_id
 user_id
 ```
 
+`user_id` は 10.1 で Relation Service に渡す user の `sub` である。
+
 保存内容:
 
 ```text
@@ -588,7 +590,7 @@ DELETE /internal/relation-cache
 DELETE /internal/relation-cache/tenants/{tenantId}/users/{userId}
 ```
 
-指定した `(tenantId, userId)` の relation cache entry のみを削除し、`204 No Content` を返す。
+指定した `(tenantId, userId)` の relation cache entry のみを削除し、`204 No Content` を返す。`userId` は 10.1 と同じく user の `sub` である。
 
 `tenantId` は ID 形式を検証する。`userId` は trim、大文字小文字変換、Unicode 正規化を行わず、path value をそのまま削除キーに使う。
 
@@ -874,7 +876,7 @@ Authorization Server は以下を確認する。
 - requested audience が client に許可されている
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の username) を問い合わせる
+- subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の sub) を問い合わせる
 - relation service の memberships が空配列ではない
 - resource の eventId が relation service の memberships[0].event_roles[].event_id に存在する
 - requested_scope が subject_token.scope を超えていない

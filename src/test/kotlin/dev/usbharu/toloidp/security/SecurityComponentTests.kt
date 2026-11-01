@@ -15,6 +15,7 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.RelationRole
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.ScopePolicy
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -628,7 +629,7 @@ class SecurityComponentTests(
     private fun cacheMembership(membership: TenantMembership) {
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId(membership.tenantId, "user-123"),
+                cacheId = RelationMembershipCacheId(membership.tenantId, IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = membership,
                 cachedAt = Instant.EPOCH,
                 expiresAt = Instant.parse("2030-01-01T00:00:00Z"),

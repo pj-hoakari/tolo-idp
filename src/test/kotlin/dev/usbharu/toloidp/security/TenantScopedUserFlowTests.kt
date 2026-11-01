@@ -34,7 +34,7 @@ class TenantScopedUserFlowTests(
         for ((tenant, password) in listOf("tenant-a" to "password-a", "tenant-b" to "password-b")) {
             users.createUser(tenant, User.withUsername("same-login").password("{noop}$password").roles("USER").build())
             cache.save(RelationMembershipCache(
-                cacheId = RelationMembershipCacheId(tenant, "same-login"),
+                cacheId = RelationMembershipCacheId(tenant, users.loadUserByUsername(tenant, "same-login").id),
                 membership = TenantMembership(tenant, RelationRole.OWNER, listOf(EventMembership("event-1", RelationRole.STAFF))),
                 cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
             ))
@@ -89,7 +89,7 @@ class TenantScopedUserFlowTests(
         users.createUser("tenant-b", User.withUsername("switching-login").password("{noop}password-b").roles("USER").build())
         for (tenant in listOf("tenant-a", "tenant-b")) {
             cache.save(RelationMembershipCache(
-                cacheId = RelationMembershipCacheId(tenant, "switching-login"),
+                cacheId = RelationMembershipCacheId(tenant, users.loadUserByUsername(tenant, "switching-login").id),
                 membership = TenantMembership(tenant, RelationRole.OWNER, emptyList()),
                 cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
             ))

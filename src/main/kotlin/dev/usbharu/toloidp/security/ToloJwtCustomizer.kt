@@ -120,7 +120,7 @@ class ToloJwtCustomizer(
 
         try {
             val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
-            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, principal.name).username)
+            val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, principal.name).id)
             log.structuredDebug(
                 "Tenant access membership loaded",
                 "event" to "tenant_access_membership_loaded",

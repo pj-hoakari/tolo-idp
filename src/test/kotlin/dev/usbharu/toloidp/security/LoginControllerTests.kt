@@ -42,7 +42,7 @@ class LoginControllerTests(
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -103,6 +103,31 @@ class LoginControllerTests(
     fun loginRejectsTenantWithoutMembership() {
         val request = loginRequest("user-123", "password")
         cacheRepository.deleteAll()
+        mockMvc.perform(request)
+            .andExpect(status().isForbidden)
+    }
+
+    @Test
+    fun loginLooksUpMembershipBySubjectNotLoginName() {
+        users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "renamed-user")
+        try {
+            mockMvc.perform(loginRequest("renamed-user", "password"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.sub").value(IdpUserDetailsManager.DEVELOPMENT_USER_ID))
+        } finally {
+            users.renameUser(IdpUserDetailsManager.DEVELOPMENT_USER_ID, "user-123")
+        }
+
+        val request = loginRequest("user-123", "password")
+        cacheRepository.deleteAll()
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
+                cachedAt = Instant.EPOCH,
+                expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
+            ),
+        )
         mockMvc.perform(request)
             .andExpect(status().isForbidden)
     }

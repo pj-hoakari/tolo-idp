@@ -13,6 +13,7 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.RelationRole
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -47,7 +48,7 @@ import java.net.InetSocketAddress
 import java.security.Principal
 import java.time.Instant
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CopyOnWriteArrayList
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import kotlin.test.assertEquals
@@ -74,14 +75,14 @@ class TokenExchangeEndpointTests(
         auditLogRepository.deleteAll()
         jtiDenylistRepository.deleteAll()
         cacheRepository.deleteAll()
-        relationCalls.set(0)
+        relationPaths.clear()
         relationEventRoles = """[{"event_id": "event-1", "role": "owner"}, {"event_id": "event-staff", "role": "staff"}]"""
         replaceClient123Policy()
         ensurePublicPolicyClient()
         ensureOtherConfidentialClient()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -662,7 +663,7 @@ class TokenExchangeEndpointTests(
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.scope").value("events.manage"))
 
-        assertEquals(1, relationCalls.get())
+        assertEquals(listOf("/tenants/tenant-a/users/${IdpUserDetailsManager.DEVELOPMENT_USER_ID}/memberships"), relationPaths)
     }
 
     @Test
@@ -678,7 +679,7 @@ class TokenExchangeEndpointTests(
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
 
-        assertEquals(1, relationCalls.get())
+        assertEquals(listOf("/tenants/tenant-a/users/${IdpUserDetailsManager.DEVELOPMENT_USER_ID}/memberships"), relationPaths)
         assertEquals("user_not_event_member", latestAudit()["failure_reason"])
     }
 
@@ -920,15 +921,15 @@ class TokenExchangeEndpointTests(
         const val OTHER_CONFIDENTIAL_CLIENT_ID = "other-token-exchange-client"
         const val OTHER_CONFIDENTIAL_CLIENT_SECRET = "other-secret"
 
-        private val relationCalls = AtomicInteger()
+        private val relationPaths = CopyOnWriteArrayList<String>()
 
         @Volatile
         private var relationEventRoles = "[]"
 
         private val relationServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange ->
-                relationCalls.incrementAndGet()
-                val body = """{"memberships": [{"user_id": "user-123", "tenant_id": "tenant-a", "tenant_role": "owner", "event_roles": $relationEventRoles}]}"""
+                relationPaths.add(exchange.requestURI.rawPath)
+                val body = """{"memberships": [{"user_id": "${IdpUserDetailsManager.DEVELOPMENT_USER_ID}", "tenant_id": "tenant-a", "tenant_role": "owner", "event_roles": $relationEventRoles}]}"""
                     .toByteArray()
                 exchange.responseHeaders.add("Content-Type", "application/json")
                 exchange.sendResponseHeaders(200, body.size.toLong())
