@@ -24,7 +24,7 @@ class RateLimitIdentityExtractor(
     }
 
     private fun loginUserId(request: HttpServletRequest): String? {
-        if (request.method != "POST" || request.requestURI != "/api/login") {
+        if (request.method != "POST" || request.requestURI !in CREDENTIAL_PATHS) {
             return null
         }
         if (!request.contentType.orEmpty().startsWith(MediaType.APPLICATION_JSON_VALUE)) {
@@ -46,3 +46,5 @@ class RateLimitIdentityExtractor(
         }
     }
 }
+
+val CREDENTIAL_PATHS = setOf("/api/login", "/api/signup")

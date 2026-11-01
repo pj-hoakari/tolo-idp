@@ -353,8 +353,8 @@ class SecurityConfig {
         http.authorizeHttpRequests {
             it.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health").permitAll()
-                .requestMatchers(HttpMethod.OPTIONS, "/api/login").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/login").permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/signup").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/login", "/api/signup").permitAll()
                 .anyRequest().authenticated()
         }
             .cors { }

@@ -106,6 +106,25 @@ class RateLimitFilterTests(
     }
 
     @Test
+    fun signupRequestsUseChallengeTenantAndUsername() {
+        val challenge = mockMvc.challengeFrom(
+            get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
+                .queryParam("redirect_uri", "http://127.0.0.1:8080/login/oauth2/code/client-123")
+                .queryParam("scope", "tenant.join").queryParam("resource", "https://api.example.com/tenants/tenant-rate")
+                .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
+        )
+        mockMvc.perform(
+            post("/api/signup")
+                .withRemoteAddr("192.0.2.13")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"username":"rate-owner","password":"correct horse","challenge":"$challenge"}"""),
+        )
+            .andExpect(status().isCreated)
+
+        assertEquals(RateLimitIdentity("192.0.2.13", "[\"tenant-rate\",\"rate-owner\"]"), rateLimitService.lastIdentity.get())
+    }
+
+    @Test
     fun oversizedLoginJsonIsRejectedBeforeRateLimit() {
         rateLimitService.unavailable.set(true)
         val body = ByteArray(OVERSIZED_LOGIN_BODY_BYTES)

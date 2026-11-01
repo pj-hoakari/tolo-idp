@@ -18,6 +18,7 @@ class CorsConfig {
             allowCredentials = true
         }
         source.registerCorsConfiguration("/api/login", configuration)
+        source.registerCorsConfiguration("/api/signup", configuration)
         return source
     }
 }

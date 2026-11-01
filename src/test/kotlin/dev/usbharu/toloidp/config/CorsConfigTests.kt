@@ -72,8 +72,20 @@ class CorsConfigTests(
             .andExpect(header().string("Access-Control-Allow-Headers", "content-type"))
     }
 
-    private fun preflight(origin: String, headers: String = "content-type") =
-        options("/api/login")
+    @Test
+    fun signupPreflightMatchesLogin() {
+        mockMvc.perform(preflight("http://localhost:3000", path = "/api/signup"))
+            .andExpect(status().isOk)
+            .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
+            .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
+            .andExpect(header().string("Access-Control-Allow-Methods", "POST"))
+        mockMvc.perform(preflight("https://tenant-a.localhost:3000", path = "/api/signup"))
+            .andExpect(status().isForbidden)
+            .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+    }
+
+    private fun preflight(origin: String, headers: String = "content-type", path: String = "/api/login") =
+        options(path)
             .header("Origin", origin)
             .header("Access-Control-Request-Method", "POST")
             .header("Access-Control-Request-Headers", headers)

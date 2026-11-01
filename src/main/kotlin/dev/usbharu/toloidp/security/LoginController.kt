@@ -9,13 +9,8 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.slf4j.LoggerFactory
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
-import org.springframework.security.core.authority.FactorGrantedAuthority
-import org.springframework.security.core.context.SecurityContextHolder
-import org.springframework.security.core.context.SecurityContextImpl
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.crypto.password.PasswordEncoder
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -83,22 +78,7 @@ class LoginController(
         }
         val loginId = UUID.randomUUID().toString()
         if (!challenges.authenticate(request.challenge, loginId, user.id)) rejectChallenge(request)
-        val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            user.id,
-            null,
-            user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
-        )
-        authentication.details = linkedMapOf(
-            OidcAuthenticationRequestValidator.AUTH_TIME to clock.instant().epochSecond.toString(),
-            OidcAuthenticationRequestValidator.LOGIN_ID to loginId,
-        )
-        val context = SecurityContextImpl(authentication)
-        SecurityContextHolder.setContext(context)
-        val session = httpRequest.getSession(true)
-        if (httpRequest.isRequestedSessionIdValid) {
-            httpRequest.changeSessionId()
-        }
-        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context)
+        establishLoginSession(httpRequest, user, loginId, clock)
         log.structuredInfo(
             "Login completed",
             "event" to "login_completed",
