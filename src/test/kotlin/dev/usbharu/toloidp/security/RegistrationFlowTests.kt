@@ -100,6 +100,20 @@ class RegistrationFlowTests(
     }
 
     @Test
+    fun loginStateFromAnotherTenantRequiresANewChallengeForARegistration() {
+        val first = mvc.challengeFrom(authorize())
+        val session = mvc.perform(signupRequest(first, uniqueUsername())).andExpect(status().isCreated)
+            .andReturn().request.session as MockHttpSession
+        exchange(mvc.perform(resumeAuthorization(first, session)))
+
+        val sameTenant = mvc.perform(authorize().session(session)).andExpect(status().isFound).andReturn().response.redirectedUrl!!
+        assertTrue(sameTenant.startsWith("$REDIRECT?"))
+
+        val otherTenant = mvc.challengeFrom(authorize(resource = "https://api.example.com/tenants/tenant-c").session(session))
+        assertNotEquals(first, otherTenant)
+    }
+
+    @Test
     fun signupRejectsAUsernameAlreadyRegisteredInTheTenant() {
         val username = uniqueUsername()
         mvc.perform(signupRequest(mvc.challengeFrom(authorize()), username)).andExpect(status().isCreated)
