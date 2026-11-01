@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
@@ -16,7 +17,7 @@ class ScopePolicyTests {
     @EnumSource(value = RelationRole::class, names = ["OWNER", "ADMIN"])
     fun managersAllowAllBusinessScopes(role: RelationRole) {
         assertEquals(
-            setOf("tenant.read", "tenant.write", "tenant.claim", "events.read", "events.manage", "events.operate", "events.report"),
+            setOf("tenant.read", "tenant.write", "events.read", "events.manage", "events.operate", "events.report"),
             policy.allowedScopes(role),
         )
     }
@@ -24,7 +25,7 @@ class ScopePolicyTests {
     @Test
     fun staffAllowsEveryBusinessScopeExceptTenantWrite() {
         assertEquals(
-            setOf("tenant.read", "tenant.claim", "events.read", "events.manage", "events.operate", "events.report"),
+            setOf("tenant.read", "events.read", "events.manage", "events.operate", "events.report"),
             policy.allowedScopes(RelationRole.STAFF),
         )
     }
@@ -99,24 +100,41 @@ class ScopePolicyTests {
     }
 
     @Test
-    fun grantRejectsClaimMixedWithBusinessScopes() {
-        assertFailsWith<ScopeNotAllowedException> {
-            policy.grantTenantAccessScopes(setOf("tenant.claim", "tenant.write"), RelationRole.STAFF, IdpScopes.SUPPORTED)
+    fun onlyTenantJoinAloneIsARegistrationRequest() {
+        assertTrue(policy.isRegistrationRequest(setOf("tenant.join")))
+        assertFalse(policy.isRegistrationRequest(setOf("openid", "tenant.join")))
+        assertFalse(policy.isRegistrationRequest(setOf("tenant.read")))
+    }
+
+    @Test
+    fun registrationRequiresAClientRegisteredForTenantJoin() {
+        policy.requireRegistrationRequest(setOf("tenant.join"))
+        val exception = assertFailsWith<ScopeNotAllowedException> { policy.requireRegistrationRequest(IdpScopes.SUPPORTED - "tenant.join") }
+        assertEquals("scope_not_allowed_for_client", exception.reason)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["tenant.join", "openid tenant.join", "tenant.join tenant.read"])
+    fun tenantAccessRequestRejectsTenantJoin(scope: String) {
+        val exception = assertFailsWith<ScopeNotAllowedException> {
+            policy.grantTenantAccessScopes(scope.split(" ").toSet(), RelationRole.OWNER, IdpScopes.SUPPORTED)
         }
+        assertEquals("scope_not_allowed_for_token_use", exception.reason)
     }
 
     @ParameterizedTest
     @EnumSource(RelationRole::class)
-    fun claimIsAllowedAloneOrWithOpenIdForEveryRole(role: RelationRole) {
-        policy.requireTenantAccessScopes(setOf("tenant.claim"), role, "scope_not_allowed_for_role")
-        policy.requireTenantAccessScopes(setOf("openid", "tenant.claim"), role, "scope_not_allowed_for_role")
+    fun noRoleAllowsTenantJoinOnTenantAccess(role: RelationRole) {
+        assertFailsWith<ScopeNotAllowedException> {
+            policy.requireTenantAccessScopes(setOf("tenant.join"), role, "scope_not_allowed_for_role")
+        }
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = ["tenant.read", "tenant.write", "events.read", "events.manage", "events.operate", "events.report"])
-    fun claimCannotBeMixedWithBusinessScopes(scope: String) {
+    @Test
+    fun tenantClaimIsNoLongerSupported() {
+        assertFalse("tenant.claim" in IdpScopes.SUPPORTED)
         assertFailsWith<ScopeNotAllowedException> {
-            policy.requireTenantAccessScopes(setOf("openid", "tenant.claim", scope), RelationRole.OWNER, "scope_not_allowed_for_role")
+            policy.grantTenantAccessScopes(setOf("tenant.claim"), RelationRole.OWNER, IdpScopes.SUPPORTED + "tenant.claim")
         }
     }
 
@@ -129,9 +147,9 @@ class ScopePolicyTests {
     }
 
     @Test
-    fun eventAccessDoesNotAllowClaim() {
+    fun eventAccessDoesNotAllowTenantJoin() {
         val exception = assertFailsWith<ScopeNotAllowedException> {
-            policy.requireEventAccessScopes(setOf("tenant.claim"))
+            policy.requireEventAccessScopes(setOf("tenant.join"))
         }
         assertEquals("scope_not_allowed_for_token_use", exception.reason)
     }

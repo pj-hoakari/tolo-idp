@@ -733,7 +733,13 @@ class SecurityConfig {
     ): OAuth2TokenGenerator<OAuth2Token> {
         val jwtGenerator = JwtGenerator(jwtEncoder)
         jwtGenerator.setJwtCustomizer(jwtCustomizer)
-        return DelegatingOAuth2TokenGenerator(jwtGenerator, OAuth2RefreshTokenGenerator())
+        val refreshTokenGenerator = OAuth2RefreshTokenGenerator()
+        return DelegatingOAuth2TokenGenerator(
+            jwtGenerator,
+            OAuth2TokenGenerator { context ->
+                if (context.authorizedScopes == ScopePolicy.REGISTRATION_SCOPES) null else refreshTokenGenerator.generate(context)
+            },
+        )
     }
 
     /**

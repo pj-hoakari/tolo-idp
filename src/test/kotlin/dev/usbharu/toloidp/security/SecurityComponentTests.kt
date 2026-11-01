@@ -1,5 +1,7 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.audit.AuditLogRepository
+import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.client.savePolicy
 import dev.usbharu.toloidp.client.clearPolicy
 import dev.usbharu.toloidp.client.ClientPolicy
@@ -64,6 +66,8 @@ class SecurityComponentTests(
     @Autowired private val users: dev.usbharu.toloidp.user.IdpUserDetailsManager,
     @Autowired private val jwtCustomizer: ToloJwtCustomizer,
     @Autowired private val oidcRequests: OidcAuthenticationRequestValidator,
+    @Autowired private val auditService: AuditService,
+    @Autowired private val auditLogs: AuditLogRepository,
 ) {
     private lateinit var registeredClient: RegisteredClient
     private val principal = UsernamePasswordAuthenticationToken.authenticated(
@@ -389,12 +393,6 @@ class SecurityComponentTests(
 
     @ParameterizedTest
     @CsvSource(
-        "OWNER, tenant.claim",
-        "ADMIN, tenant.claim",
-        "STAFF, tenant.claim",
-        "OWNER, openid tenant.claim",
-        "ADMIN, openid tenant.claim",
-        "STAFF, openid tenant.claim",
         "OWNER, events.read events.manage events.operate events.report",
         "ADMIN, events.read events.manage events.operate events.report",
         "STAFF, events.read events.manage events.operate events.report",
@@ -419,11 +417,11 @@ class SecurityComponentTests(
 
     @ParameterizedTest
     @ValueSource(strings = [
-        "tenant.claim tenant.read", "openid tenant.claim tenant.write",
-        "tenant.claim events.read", "tenant.claim events.manage",
-        "tenant.claim events.operate", "tenant.claim events.report",
+        "tenant.join tenant.read", "openid tenant.join", "profile tenant.join",
+        "tenant.join events.read", "tenant.join events.manage",
+        "tenant.join events.operate", "tenant.join events.report",
     ])
-    fun rejectsClaimMixedWithBusinessScopesAtAuthorizationAndIssuance(scope: String) {
+    fun rejectsTenantJoinMixedWithOtherScopesAtAuthorizationAndIssuance(scope: String) {
         val scopes = scope.split(' ').toSet()
         val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
@@ -474,13 +472,13 @@ class SecurityComponentTests(
     @ValueSource(strings = [
         "user_not_tenant_member", "relation_lookup_failed", "relation_response_invalid", "relation_role_unknown",
     ])
-    fun refusesClaimWhenMembershipCannotBeVerifiedWithoutLeakingReason(reason: String) {
+    fun refusesTenantAccessWhenMembershipCannotBeVerifiedWithoutLeakingReason(reason: String) {
         val failingRelation = object : RelationService {
             override fun getMembership(tenantId: String, userId: String): TenantMembership {
                 throw RelationLookupException(reason)
             }
         }
-        val scopes = setOf("tenant.claim")
+        val scopes = setOf("tenant.read")
         val validator = TenantAuthorizationValidator(users, resourceParser, failingRelation, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = scopes))
@@ -488,7 +486,7 @@ class SecurityComponentTests(
         assertEquals("access_denied", authorizationError.error.errorCode)
         assertFalse(authorizationError.error.description.orEmpty().contains(reason))
 
-        val customizer = ToloJwtCustomizer(users, resourceParser, failingRelation, scopePolicy)
+        val customizer = ToloJwtCustomizer(users, resourceParser, failingRelation, scopePolicy, auditService)
         val issuanceError = assertFailsWith<OAuth2AuthenticationException> {
             customizer.customize(tenantJwtContext(scopes))
         }
@@ -497,10 +495,70 @@ class SecurityComponentTests(
     }
 
     @Test
-    fun cannotIssueClaimWithAnEventResource() {
+    fun registrationIsAuthorizedAndIssuedWithoutTenantMembership() {
+        val noMembership = object : RelationService {
+            override fun getMembership(tenantId: String, userId: String): TenantMembership =
+                throw RelationLookupException("user_not_tenant_member")
+        }
+        val scopes = setOf("tenant.join")
+        val validator = TenantAuthorizationValidator(users, resourceParser, noMembership, scopePolicy, oidcRequests)
+        val authorization = tenantAuthorizationContext(scopes)
+        validator.accept(authorization)
+        assertEquals(scopes, authorization.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>().scopes)
+
+        val context = tenantJwtContext(scopes)
+        ToloJwtCustomizer(users, resourceParser, noMembership, scopePolicy, auditService).customize(context)
+        val claims = context.claims.build()
+        assertEquals(TOKEN_USE_REGISTRATION, claims.claims["token_use"])
+        assertEquals("tenant.join", claims.claims["scope"])
+        assertEquals(listOf("backend-api"), claims.audience)
+        assertEquals("client-123", claims.claims["client_id"])
+        assertEquals(Duration.ofMinutes(10), Duration.between(claims.issuedAt, claims.expiresAt))
+        assertFalse(claims.claims.containsKey("tenant_id"))
+        assertFalse(claims.claims.containsKey("event_id"))
+        assertFalse(claims.claims.containsKey("resource"))
+        val audit = auditLogs.findAll().single { it.issuedJti == claims.id }
+        assertEquals(TOKEN_USE_REGISTRATION, audit.requestedTokenUse)
+        assertEquals("tenant.join", audit.issuedScope)
+        assertEquals("tenant-a", audit.tenantId)
+        assertEquals(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit.subject)
+        assertEquals("success", audit.result)
+    }
+
+    @Test
+    fun registrationRequiresAClientRegisteredForTenantJoin() {
+        replaceClientPolicy(allowedScopes = IdpScopes.SUPPORTED - IdpScopes.TENANT_JOIN)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val error = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
+            validator.accept(authorizationContext(scopes = setOf("tenant.join")))
+        }
+        assertEquals("invalid_scope", error.error.errorCode)
+    }
+
+    @Test
+    fun registrationIsNotRefreshed() {
+        replaceClientPolicy(
+            allowedGrantTypes = setOf(AuthorizationGrantType.AUTHORIZATION_CODE.value, AuthorizationGrantType.REFRESH_TOKEN.value),
+        )
+        val error = assertFailsWith<OAuth2AuthenticationException> {
+            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.join"), grantType = AuthorizationGrantType.REFRESH_TOKEN))
+        }
+        assertEquals("invalid_grant", error.error.errorCode)
+    }
+
+    @Test
+    fun registrationIsNotIssuedForAUserOutsideTheRequestedTenant() {
+        val error = assertFailsWith<OAuth2AuthenticationException> {
+            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.join"), resource = "https://api.example.com/tenants/tenant-b"))
+        }
+        assertEquals("invalid_grant", error.error.errorCode)
+    }
+
+    @Test
+    fun cannotIssueRegistrationWithAnEventResource() {
         val issuanceError = assertFailsWith<OAuth2AuthenticationException> {
             jwtCustomizer.customize(
-                tenantJwtContext(setOf("tenant.claim"), resource = "https://api.example.com/tenants/tenant-a/events/event-1"),
+                tenantJwtContext(setOf("tenant.join"), resource = "https://api.example.com/tenants/tenant-a/events/event-1"),
             )
         }
         assertEquals("invalid_target", issuanceError.error.errorCode)
@@ -534,10 +592,10 @@ class SecurityComponentTests(
     }
 
     @Test
-    fun claimRequiresARegisteredClientPolicyAtAuthorizationAndIssuance() {
+    fun registrationRequiresARegisteredClientPolicyAtAuthorizationAndIssuance() {
         registeredClientRepository.clearPolicy("client-123")
         registeredClient = checkNotNull(registeredClientRepository.findByClientId("client-123"))
-        val scopes = setOf("tenant.claim")
+        val scopes = setOf("tenant.join")
         val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = scopes))
@@ -550,12 +608,12 @@ class SecurityComponentTests(
     }
 
     @Test
-    fun claimJwtRequiresTheStoredAuthorizationRequest() {
+    fun registrationJwtRequiresTheStoredAuthorizationRequest() {
         val exception = assertFailsWith<OAuth2AuthenticationException> {
             jwtCustomizer.customize(
                 jwtContext(
                     grantType = AuthorizationGrantType.AUTHORIZATION_CODE,
-                    scopes = setOf("tenant.claim"),
+                    scopes = setOf("tenant.join"),
                     authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
                         .principalName(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID)
                         .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
@@ -567,17 +625,17 @@ class SecurityComponentTests(
     }
 
     @Test
-    fun claimJwtRequiresAStoredTenantResource() {
+    fun registrationJwtRequiresAStoredTenantResource() {
         val exception = assertFailsWith<OAuth2AuthenticationException> {
-            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.claim"), resource = null))
+            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.join"), resource = null))
         }
         assertEquals("invalid_grant", exception.error.errorCode)
     }
 
     @Test
-    fun claimJwtCannotUseAnAudienceOutsideClientPolicy() {
+    fun registrationJwtCannotUseAnAudienceOutsideClientPolicy() {
         val exception = assertFailsWith<OAuth2AuthenticationException> {
-            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.claim"), audience = "other-api"))
+            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.join"), audience = "other-api"))
         }
         assertEquals("invalid_target", exception.error.errorCode)
     }
@@ -586,9 +644,10 @@ class SecurityComponentTests(
         scopes: Set<String>,
         resource: String? = "https://api.example.com/tenants/tenant-a",
         audience: Any = "backend-api",
+        grantType: AuthorizationGrantType = AuthorizationGrantType.AUTHORIZATION_CODE,
     ): JwtEncodingContext =
         jwtContext(
-            grantType = AuthorizationGrantType.AUTHORIZATION_CODE,
+            grantType = grantType,
             scopes = scopes,
             authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
                 .principalName(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID)

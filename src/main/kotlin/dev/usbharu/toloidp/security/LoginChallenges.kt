@@ -2,8 +2,10 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
+import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.stereotype.Component
 import tools.jackson.core.type.TypeReference
 import tools.jackson.databind.ObjectMapper
@@ -55,6 +57,15 @@ class LoginChallenges(
             "SELECT tenant_id FROM idp_login_challenge WHERE challenge_hash = ? AND login_id IS NULL AND expires_at > ?",
             String::class.java, hash(challenge), Timestamp.from(clock.instant()),
         ).singleOrNull()
+
+    fun registration(challenge: String): Boolean =
+        jdbc.queryForList(
+            "SELECT authorization_request FROM idp_login_challenge WHERE challenge_hash = ? AND login_id IS NULL AND expires_at > ?",
+            String::class.java, hash(challenge), Timestamp.from(clock.instant()),
+        ).singleOrNull()?.let { request ->
+            json.readValue(request, PARAMETERS)[OAuth2ParameterNames.SCOPE]?.singleOrNull()
+                ?.split(' ')?.filter { it.isNotEmpty() }?.toSet() == ScopePolicy.REGISTRATION_SCOPES
+        } == true
 
     fun authenticate(challenge: String, loginId: String, subject: String): Boolean {
         val authenticated = jdbc.update(

@@ -26,7 +26,7 @@ import java.util.function.Consumer
  * tenant scope の access token 発行に使う Authorization Code request validator。
  *
  * Spring Authorization Server の redirect_uri 検証に加えて、tenant access JWT 発行前に必要な
- * client policy / tenant resource / audience / relation membership / scope を検証する。
+ * client policy / tenant resource / audience / relation membership / scope を検証する。registration の要求では relation membership を検証しない。
  */
 class TenantAuthorizationValidator(
     private val users: IdpUserDetailsManager,
@@ -103,8 +103,13 @@ class TenantAuthorizationValidator(
             throwAuthorizationError("invalid_target", OAuth2ParameterNames.AUDIENCE)
         }
         val requestedScopes = authentication.scopes.orEmpty()
+        val registration = scopePolicy.isRegistrationRequest(requestedScopes)
         try {
-            scopePolicy.requireTenantAccessRequest(requestedScopes, policy.allowedScopes)
+            if (registration) {
+                scopePolicy.requireRegistrationRequest(policy.allowedScopes)
+            } else {
+                scopePolicy.requireTenantAccessRequest(requestedScopes, policy.allowedScopes)
+            }
         } catch (ex: ScopeNotAllowedException) {
             log.structuredWarn(
                 "Authorization request scope validation failed",
@@ -119,6 +124,16 @@ class TenantAuthorizationValidator(
         }
         val principal = authentication.principal as org.springframework.security.core.Authentication
         oidcRequests.validate(authentication, context.registeredClient, tenantResource.tenantId, signedIn(principal, tenantResource.tenantId))
+        if (registration) {
+            log.structuredDebug(
+                "Registration authorization request validated",
+                "event" to "registration_authorization_request_validated",
+                "client_id" to clientId,
+                "tenant_id" to tenantResource.tenantId,
+                "subject" to principal.name,
+            )
+            return
+        }
 
         try {
             val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, (authentication.principal as org.springframework.security.core.Authentication).name).id)

@@ -1,5 +1,7 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.audit.AuditService
+import dev.usbharu.toloidp.audit.TokenAuditEvent
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
@@ -9,6 +11,7 @@ import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
@@ -22,13 +25,14 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer
 import org.springframework.stereotype.Component
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
 /**
  * access token JWT に仕様で定義した claim を追加する customizer。
  *
- * Authorization Code / Refresh Token grant では tenant access token、Token Exchange grant では event access
+ * Authorization Code / Refresh Token grant では tenant access token（scope が tenant.join だけなら registration token）、Token Exchange grant では event access
  * token を生成する。role claim は意図的に入れず、Resource Server が token context と自身の
  * policy から最終認可を行う。
  */
@@ -38,6 +42,7 @@ class ToloJwtCustomizer(
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
+    private val auditService: AuditService,
 ) : OAuth2TokenCustomizer<JwtEncodingContext> {
     /**
      * access token だけを対象にし、grant type ごとの claim 付与処理へ委譲する。
@@ -117,6 +122,9 @@ class ToloJwtCustomizer(
         if (audience !in policy.allowedAudiences) {
             throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
         }
+        if (scopePolicy.isRegistrationRequest(authorizationRequest.scopes)) {
+            return customizeRegistration(context, tenantResource.tenantId, audience)
+        }
 
         try {
             val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
@@ -176,6 +184,55 @@ class ToloJwtCustomizer(
             "result" to "success",
         )
         log.structuredTrace("Tenant access JWT customization completed", "event" to "tenant_access_jwt_customization_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
+    }
+
+    private fun customizeRegistration(context: JwtEncodingContext, tenantId: String, audience: String) {
+        val clientId = context.registeredClient.clientId
+        val subject = context.getPrincipal<org.springframework.security.core.Authentication>().name
+        val rejection = when {
+            context.authorizationGrantType != AuthorizationGrantType.AUTHORIZATION_CODE -> "registration_not_refreshable"
+            context.authorizedScopes != ScopePolicy.REGISTRATION_SCOPES -> "scope_not_allowed_for_token_use"
+            else -> try {
+                users.requireTenantUser(tenantId, subject)
+                null
+            } catch (ex: RelationLookupException) {
+                ex.reason
+            }
+        }
+        if (rejection != null) {
+            log.structuredWarn(
+                "Registration JWT customization rejected",
+                "event" to "registration_jwt_customization_rejected",
+                "client_id" to clientId,
+                "tenant_id" to tenantId,
+                "failure_reason" to rejection,
+            )
+            throw OAuth2AuthenticationException(OAuth2Error("invalid_grant"))
+        }
+        val now = Instant.now()
+        val jti = UUID.randomUUID().toString()
+        context.claims
+            .audience(listOf(audience))
+            .issuedAt(now)
+            .notBefore(now)
+            .expiresAt(now.plus(REGISTRATION_TTL))
+            .id(jti)
+            .claim("client_id", clientId)
+            .claim("scope", IdpScopes.TENANT_JOIN)
+            .claim("token_use", TOKEN_USE_REGISTRATION)
+        auditService.record(
+            TokenAuditEvent(
+                clientId = clientId,
+                subject = subject,
+                requestedTokenUse = TOKEN_USE_REGISTRATION,
+                requestedAudience = audience,
+                requestedScope = context.authorizedScopes.toList(),
+                issuedScope = listOf(IdpScopes.TENANT_JOIN),
+                tenantId = tenantId,
+                result = "success",
+                issuedJti = jti,
+            ),
+        )
     }
 
     private fun customizeEventAccess(context: JwtEncodingContext) {
@@ -239,5 +296,6 @@ class ToloJwtCustomizer(
 
     companion object {
         private val log = LoggerFactory.getLogger(ToloJwtCustomizer::class.java)
+        val REGISTRATION_TTL: Duration = Duration.ofMinutes(10)
     }
 }

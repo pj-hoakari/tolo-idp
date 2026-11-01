@@ -458,9 +458,9 @@ class TokenExchangeEndpointTests(
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["tenant.claim", "tenant.claim events.read"])
-    fun rejectsClaimOnTokenExchangeAsInvalidScope(scope: String) {
-        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.claim"))
+    @ValueSource(strings = ["tenant.join", "tenant.join events.read"])
+    fun rejectsTenantJoinOnTokenExchangeAsInvalidScope(scope: String) {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.join"))
         mockMvc.perform(tokenExchangeRequest(subjectToken, scope = scope))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_scope"))
@@ -471,8 +471,8 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
-    fun claimOnlySubjectCannotBeExchangedForEventScopes() {
-        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.claim"))
+    fun tenantJoinOnlySubjectCannotBeExchangedForEventScopes() {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.join"))
         mockMvc.perform(tokenExchangeRequest(subjectToken))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
@@ -762,7 +762,7 @@ class TokenExchangeEndpointTests(
         subjectAudience: Any? = listOf("backend-api"),
         tenantId: String = "tenant-a",
         subjectResource: String? = "https://api.example.com/tenants/$tenantId",
-        scopes: Set<String> = IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_CLAIM,
+        scopes: Set<String> = IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_JOIN,
         jti: String? = "jti-${UUID.randomUUID()}",
     ): String {
         val tokenValue = "subject-token-${UUID.randomUUID()}"

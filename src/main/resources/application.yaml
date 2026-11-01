@@ -100,7 +100,7 @@ spring:
                 - profile
                 - tenant.read
                 - tenant.write
-                - tenant.claim
+                - tenant.join
                 - events.read
                 - events.manage
                 - events.operate

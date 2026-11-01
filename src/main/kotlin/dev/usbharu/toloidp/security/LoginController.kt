@@ -69,7 +69,7 @@ class LoginController(
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         try {
-            relationService.getMembership(tenantId, user.id)
+            if (!challenges.registration(request.challenge)) relationService.getMembership(tenantId, user.id)
         } catch (ex: RelationLookupException) {
             log.structuredWarn(
                 "Login rejected",
