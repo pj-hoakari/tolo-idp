@@ -78,7 +78,7 @@ Authorization Server は以下を確認する。
 - challenge が発行済みで、期限内で、まだ認証されていない
 - challenge と組にした認可要求の tenant resource から tenant を決める
 - (tenant, username) で特定した IdP 内の user の password が一致する
-- relation service 上で user が tenant に所属している
+- relation service 上で user が tenant に所属している（registration の認可要求（11.3）の challenge では確認しない）
 ```
 
 tenant は challenge だけから決め、本文の `tenantId` などからは受け取らない。
@@ -138,7 +138,7 @@ access token に `profile` scope が含まれる場合、現在の username を 
 
 認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
-ログイン状態がない要求、ログインしたユーザーが要求の tenant のユーザーでない要求、再ログインが必要な要求には、一回限りの login challenge を発行する。発行の前に、client policy、`resource`、`audience`、OIDC のパラメータを検証する。membership と role による scope の検証は、ログイン後に要求を再開したときに行う。IdP は challenge を元の認可要求のパラメータと組にして保存し、ブラウザを `<ログイン画面の URL>?challenge=<challenge>` へ `302` でリダイレクトする。ほかのパラメータは付けない。
+ログイン状態がない要求、ログインしたユーザーが要求の tenant のユーザーでない要求、再ログインが必要な要求には、一回限りの login challenge を発行する。registration の認可要求（11.3）も同じとし、別の tenant のログイン状態をログイン済みとして扱わない。発行の前に、client policy、`resource`、`audience`、OIDC のパラメータを検証する。membership と role による scope の検証は、ログイン後に要求を再開したときに行う。IdP は challenge を元の認可要求のパラメータと組にして保存し、ブラウザを `<ログイン画面の URL>?challenge=<challenge>` へ `302` でリダイレクトする。ほかのパラメータは付けない。
 
 challenge は 256 bit の乱数を base64url で表した値とし、発行から10分で期限が切れる。IdP は challenge の SHA-256 ハッシュだけを DB の `idp_login_challenge` に保存し、challenge の値をログに出さない。期限切れの challenge は次の challenge を発行するときに削除する。保存する認可要求は JSON で 8 KiB までとし、超える要求には challenge を発行せず、エラー画面へ `error=invalid_request` でリダイレクトする。
 
@@ -175,6 +175,31 @@ IdP のログイン状態は Spring Security のセッションに保持し、�
 `/api/login` の CORS は `tolo-idp.login.page-url` のオリジン（Web のルートドメイン）だけを許可する。許可するのは資格情報付きの `POST` と `content-type` ヘッダで、preflight にも同じ条件で応答する。tenant のサブドメインなど、ほかのオリジンは許可しない。
 
 送信元の IP アドレスと scheme は Tomcat の RemoteIpValve（`server.forward-headers-strategy=native`）で決める。`X-Forwarded-For` と `X-Forwarded-Proto` は `server.tomcat.remoteip.internal-proxies` に一致する接続元から届いたときだけ使い、ほかの接続元から届いた値は無視する。既定値は Spring Boot のプライベートアドレス帯なので、本番では前段の ingress のアドレスに絞る。ログインのレート制限はこうして決めた送信元 IP ごとに数える。
+
+### 4.1.5 サインアップ
+
+```http
+POST /api/signup
+Content-Type: application/json
+
+{
+  "username": "owner-1",
+  "password": "correct horse",
+  "challenge": "<registration の認可要求で発行した login challenge>"
+}
+```
+
+`/api/signup` は未認証で呼び出せる。呼び出すのは Web のサインアップ画面だけとする。CORS とレート制限は `/api/login` と同じ扱いにする。
+
+challenge は、scope が `tenant.join` だけの認可要求（11.3）で発行した、期限内でまだ認証されていないものに限る。tenant_access の認可要求の challenge は受け付けない。ユーザーは challenge と組にした認可要求の tenant に作り、本文の `tenantId` などからは受け取らない。
+
+`username` は空白と制御文字を含まない 1〜50 文字、`password` は 8 文字以上かつ 72 バイト以下とする。IdP は新しい `sub`（4.1.1）を発行してユーザーを作り、relation service には問い合わせない。所属はまだない。
+
+成功時は 4.1 のログインと同じくセッションを作成し、challenge をこのサインアップで認証済みにする。レスポンスは `201 Created` とし、本文は 4.1 のログインレスポンスと同じ形にする。Web はその後、4.1.3 と同じく認可 endpoint で challenge を使って要求を再開する。
+
+challenge が不正な場合と本文が不正な場合は `400 Bad Request`、同じ tenant に同じ `username` がある場合は `409 Conflict` とする。別の tenant には同じ `username` を登録できる。
+
+サインアップは構造化ログ `user_registered` と `signup_completed` に記録し、拒否は `signup_rejected` に理由を付けて記録する。
 
 ### 4.2 ログアウト
 
@@ -498,7 +523,7 @@ Authorization Server は、resource から得た `tenantId` と subject user id 
 GET /tenants/{tenantId}/users/{userId}/memberships
 ```
 
-`userId` には user の `sub`（サロゲートキー）を渡す。ログイン時は認証済み user の `sub` を渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで `sub` を渡す。未知・無効・別 tenant の subject は拒否する。username を Relation Service の userId として扱わない。
+`userId` には user の `sub`（サロゲートキー）を渡す。ログイン時は認証済み user の `sub` を渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで `sub` を渡す。未知・無効・別 tenant の subject は拒否する。username を Relation Service の userId として扱わない。registration の認可要求（11.3）では、ログイン、サインアップ、認可リクエスト、Authorization Code の発行のいずれでも参照しない。
 
 ### 10.2 response
 
