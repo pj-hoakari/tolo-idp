@@ -122,6 +122,7 @@ class RunnCleanupTests(unittest.TestCase):
         args = list(self.runn["command"])
         host = "127.0.0.1" if sys.platform == "linux" else "host.docker.internal"
         args[args.index("--host-rules") + 1] = f"localhost {host}:{server.server_port}"
+        args[args.index("/books/*.yml")] = "/books/oidc-login.yml"
         command = ["docker", "run", "--rm", "--name", name, "--entrypoint", self.runn["entrypoint"][0]]
         if sys.platform == "linux":
             command += ["--network", "host"]
