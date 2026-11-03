@@ -7,6 +7,7 @@ import tools.jackson.databind.ObjectMapper
 
 class RateLimitIdentityExtractor(
     private val objectMapper: ObjectMapper,
+    private val loginTenant: (String) -> String?,
 ) {
     fun identity(request: HttpServletRequest): RateLimitIdentity =
         RateLimitIdentity(
@@ -23,7 +24,7 @@ class RateLimitIdentityExtractor(
     }
 
     private fun loginUserId(request: HttpServletRequest): String? {
-        if (request.method != "POST" || request.requestURI != "/api/login") {
+        if (request.method != "POST" || request.requestURI !in CREDENTIAL_PATHS) {
             return null
         }
         if (!request.contentType.orEmpty().startsWith(MediaType.APPLICATION_JSON_VALUE)) {
@@ -37,10 +38,13 @@ class RateLimitIdentityExtractor(
         return try {
             val json = objectMapper.readTree(body)
             val username = json["username"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
-            val tenantId = json["tenantId"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
+            val challenge = json["challenge"]?.stringValue()?.takeIf { it.isNotBlank() } ?: return null
+            val tenantId = loginTenant(challenge) ?: return null
             objectMapper.writeValueAsString(listOf(tenantId, username))
         } catch (_: RuntimeException) {
             null
         }
     }
 }
+
+val CREDENTIAL_PATHS = setOf("/api/login", "/api/signup")

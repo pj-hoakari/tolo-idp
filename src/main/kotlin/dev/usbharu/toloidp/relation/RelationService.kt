@@ -10,4 +10,7 @@ interface RelationService {
      * Token Exchange の event 認可で使う event 単位の所属情報も含める。
      */
     fun getMembership(tenantId: String, userId: String): TenantMembership
+
+    fun getMembership(tenantId: String, userId: String, eventId: String): TenantMembership =
+        getMembership(tenantId, userId)
 }

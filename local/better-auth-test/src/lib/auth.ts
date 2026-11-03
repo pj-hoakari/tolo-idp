@@ -23,7 +23,10 @@ const authOptions: BetterAuthOptions = {
           requireIdTokenVerification: true,
           disableProviderLogout: true,
           overrideUserInfo: true,
-          authorizationUrlParams: { audience: "backend-api" },
+          authorizationUrlParams: {
+            audience: "backend-api",
+            resource: "https://api.example.com/tenants/tenant-a",
+          },
           mapProfileToUser: (profile) => {
             if (typeof profile.sub !== "string" || !profile.sub) {
               throw new Error("OIDC profile is missing sub");

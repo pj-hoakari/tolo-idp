@@ -6,7 +6,7 @@ object IdpScopes {
     const val PROFILE = "profile"
     const val TENANT_READ = "tenant.read"
     const val TENANT_WRITE = "tenant.write"
-    const val TENANT_CLAIM = "tenant.claim"
+    const val TENANT_JOIN = "tenant.join"
     const val EVENTS_READ = "events.read"
     const val EVENTS_MANAGE = "events.manage"
     const val EVENTS_OPERATE = "events.operate"
@@ -18,7 +18,7 @@ object IdpScopes {
         PROFILE,
         TENANT_READ,
         TENANT_WRITE,
-        TENANT_CLAIM,
+        TENANT_JOIN,
         EVENTS_READ,
         EVENTS_MANAGE,
         EVENTS_OPERATE,

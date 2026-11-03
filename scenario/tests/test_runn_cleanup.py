@@ -8,13 +8,16 @@ import subprocess
 import sys
 import threading
 import unittest
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 ISSUER = "http://localhost:18080"
 COOKIE = "SYNTHETIC_SESSION_FOR_REGRESSION"
 CODE = "SYNTHETIC_CODE_FOR_REGRESSION"
+POST_LOGOUT_REDIRECT_URI = "http://localhost:3000/auth/logged-out"
+SCOPE = "openid tenant.read events.read events.manage events.operate events.report"
+CHALLENGE = "SYNTHETIC_CHALLENGE_FOR_REGRESSION_0123456789"
 
 
 def token(label):
@@ -40,7 +43,8 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(body).encode())
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        url = urlsplit(self.path)
+        path = url.path
         self.server.requests.append((path, self.headers.get("Cookie")))
         if path == "/actuator/health":
             self.respond(200, {"status": "UP"})
@@ -51,6 +55,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "token_endpoint": ISSUER + "/oauth2/token",
                 "introspection_endpoint": ISSUER + "/oauth2/introspect",
                 "jwks_uri": ISSUER + "/oauth2/jwks",
+                "end_session_endpoint": ISSUER + "/connect/logout",
                 "response_types_supported": ["code"],
                 "grant_types_supported": ["authorization_code", "urn:ietf:params:oauth:grant-type:token-exchange"],
                 "scopes_supported": ["openid"],
@@ -58,11 +63,16 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "id_token_signing_alg_values_supported": ["RS256"],
                 "token_endpoint_auth_methods_supported": ["client_secret_basic"],
             })
-        elif path == "/oauth2/authorize":
+        elif path == "/oauth2/authorize" and parse_qs(url.query) == {"challenge": [CHALLENGE]}:
             state = "wrong-state" if self.server.failure == "state" else "scenario-state-0123456789"
             self.respond(302, {}, {
                 "Location": f"http://127.0.0.1:8080/login/oauth2/code/client-123?code={CODE}&state={state}",
             })
+        elif path == "/connect/logout":
+            self.server.logouts.append((self.headers.get("Cookie"), parse_qs(url.query)))
+            self.respond(302, {}, {"Location": f"{POST_LOGOUT_REDIRECT_URI}?state=scenario-state-0123456789"})
+        elif path == "/oauth2/authorize":
+            self.respond(302, {}, {"Location": f"http://localhost:3000/login?challenge={CHALLENGE}"})
         else:
             self.respond(404, {})
 
@@ -78,18 +88,17 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
                 "username": "user-123", "tenantId": "tenant-a",
                 "resource": "https://api.example.com/tenants/tenant-a", "authorities": ["ROLE_USER"],
-            }, {"Set-Cookie": f"JSESSIONID={COOKIE}; Path=/{suffix}"})
+            }, {"Set-Cookie": f"tolo_idp_session={COOKIE}; Path=/{suffix}"})
         elif path == "/oauth2/token":
             if self.server.failure == "token-status":
                 self.respond(500, None)
                 return
             # A valid JWT response with insufficient scope triggers the token assertion.
             self.respond(200, {
-                "token_type": "Bearer", "expires_in": 300,
-                "access_token": ACCESS_TOKEN, "id_token": ID_TOKEN, "scope": "openid tenant.read",
+                "token_type": "Bearer", "expires_in": 300, "refresh_token": "synthetic-refresh",
+                "access_token": ACCESS_TOKEN, "id_token": ID_TOKEN,
+                "scope": SCOPE if self.server.failure == "introspection" else "openid tenant.read",
             })
-        elif path == "/api/logout":
-            self.respond(204, None)
         else:
             self.respond(404, {})
 
@@ -106,13 +115,14 @@ class RunnCleanupTests(unittest.TestCase):
 
     def check_failure(self, failure, last_path, cleanup):
         server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), FixtureHandler)
-        server.failure, server.requests = failure, []
+        server.failure, server.requests, server.logouts = failure, [], []
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         name = "tolo-idp-runn-regression-" + uuid.uuid4().hex
         args = list(self.runn["command"])
         host = "127.0.0.1" if sys.platform == "linux" else "host.docker.internal"
         args[args.index("--host-rules") + 1] = f"localhost {host}:{server.server_port}"
+        args[args.index("/books/*.yml")] = "/books/oidc-login.yml"
         command = ["docker", "run", "--rm", "--name", name, "--entrypoint", self.runn["entrypoint"][0]]
         if sys.platform == "linux":
             command += ["--network", "host"]
@@ -129,29 +139,35 @@ class RunnCleanupTests(unittest.TestCase):
         if failure == "token-status":
             output = result.stdout + result.stderr
             self.assertIn("test failed", output)
-            self.assertIn("current.res.status => 500", output)
+            self.assertIn("steps.tenant_token.res.status => 500", output)
             self.assertNotIn("bind failed", output)
         requests = [path for path, _ in server.requests]
         self.assertIn(last_path, requests, "The intended assertion must be reached")
         if cleanup:
-            self.assertEqual([(path, cookie) for path, cookie in server.requests if path == "/api/logout"],
-                             [("/api/logout", f"JSESSIONID={COOKIE}")])
+            self.assertEqual(server.logouts, [(f"tolo_idp_session={COOKIE}", {
+                "id_token_hint": [ID_TOKEN],
+                "post_logout_redirect_uri": [POST_LOGOUT_REDIRECT_URI],
+                "state": ["scenario-state-0123456789"],
+            })])
             self.assertEqual(last_path, requests[-2], "No authentication step may run after the failure")
         else:
-            self.assertNotIn("/api/logout", requests)
+            self.assertNotIn("/connect/logout", requests)
             self.assertEqual(last_path, requests[-1])
 
-    def test_login_cookie_assertion_failure_logs_out(self):
-        self.check_failure("cookie", "/api/login", True)
+    def test_login_cookie_assertion_failure_without_id_token_does_not_attempt_logout(self):
+        self.check_failure("cookie", "/api/login", False)
 
-    def test_authorization_state_assertion_failure_logs_out(self):
-        self.check_failure("state", "/oauth2/authorize", True)
+    def test_authorization_state_assertion_failure_without_id_token_does_not_attempt_logout(self):
+        self.check_failure("state", "/oauth2/authorize", False)
 
-    def test_token_scope_assertion_failure_logs_out(self):
+    def test_token_scope_assertion_failure_logs_out_with_issued_id_token(self):
         self.check_failure("scope", "/oauth2/token", True)
 
-    def test_token_http_failure_logs_out(self):
-        self.check_failure("token-status", "/oauth2/token", True)
+    def test_token_http_failure_without_id_token_does_not_attempt_logout(self):
+        self.check_failure("token-status", "/oauth2/token", False)
+
+    def test_failure_after_token_issuance_logs_out_with_issued_id_token(self):
+        self.check_failure("introspection", "/oauth2/introspect", True)
 
     def test_rejected_login_does_not_attempt_logout(self):
         self.check_failure("login-rejected", "/api/login", False)
