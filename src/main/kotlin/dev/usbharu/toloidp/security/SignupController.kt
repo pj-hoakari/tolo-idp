@@ -11,6 +11,8 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -27,7 +29,10 @@ class SignupController(
     private val resourceParser: ResourceParser,
     private val challenges: LoginChallenges,
     private val clock: Clock,
+    transactionManager: PlatformTransactionManager,
 ) {
+    private val registrationTransaction = TransactionTemplate(transactionManager)
+
     @PostMapping("/signup")
     fun signup(
         @RequestBody request: SignupRequest,
@@ -43,27 +48,30 @@ class SignupController(
             reject(HttpStatus.BAD_REQUEST, "Invalid password", tenantId, "password_invalid")
         }
         val id = UUID.randomUUID().toString()
-        try {
-            if (users.userExists(tenantId, request.username)) throw DuplicateKeyException(request.username)
-            users.createUser(
-                tenantId,
-                User.withUsername(request.username).password(passwordEncoder.encode(request.password)).roles("USER").build(),
-                id,
-            )
+        val loginId = UUID.randomUUID().toString()
+        val password = passwordEncoder.encode(request.password)
+        val user = try {
+            registrationTransaction.execute {
+                if (users.userExists(tenantId, request.username)) throw DuplicateKeyException(request.username)
+                users.createUser(
+                    tenantId,
+                    User.withUsername(request.username).password(password).roles("USER").build(),
+                    id,
+                )
+                if (!challenges.authenticate(request.challenge, loginId, id)) {
+                    reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "login_challenge_invalid")
+                }
+                users.loadUserById(id)
+            }!!
         } catch (_: DuplicateKeyException) {
             reject(HttpStatus.CONFLICT, "Username is already registered", tenantId, "username_taken")
         }
-        val user = users.loadUserById(id)
         log.structuredInfo(
             "User registered",
             "event" to "user_registered",
             "subject" to id,
             "tenant_id" to tenantId,
         )
-        val loginId = UUID.randomUUID().toString()
-        if (!challenges.authenticate(request.challenge, loginId, id)) {
-            reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "login_challenge_invalid")
-        }
         establishLoginSession(httpRequest, user, loginId, clock)
         log.structuredInfo(
             "Signup completed",
