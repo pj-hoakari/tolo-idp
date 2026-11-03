@@ -701,15 +701,19 @@ class TokenExchangeEndpointTests(
                 subjectToken = subjectToken,
                 clientId = EDGE_PAGE_CLIENT_ID,
                 clientSecret = EDGE_PAGE_CLIENT_SECRET,
+                scope = IdpScopes.EVENTS_REPORT,
                 edgeDeviceId = "0123456789abcdef",
             ),
         )
             .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").value("events.report"))
             .andReturn()
         val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
         val jwt = jwtDecoder.decode(response["access_token"].asText())
         assertEquals("0123456789abcdef", jwt.claims["edge_device_id"])
         assertEquals("edge-page", jwt.claims["client_id"])
+        assertEquals("events.report", jwt.claims["scope"])
+        assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
     }
 
     @Test

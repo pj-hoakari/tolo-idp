@@ -48,6 +48,37 @@ class DevelopmentProfileTests {
     }
 
     @Test
+    fun developmentProfileRegistersTheObservationPageMachineClient() {
+        val environment = loadProfile("dev-jvm")
+
+        val prefix = "spring.security.oauth2.authorizationserver.client.edge-page.registration"
+        assertEquals("edge-page", environment.getProperty("$prefix.client-id"))
+        assertEquals(
+            "authorization_code",
+            environment.getProperty("$prefix.authorization-grant-types[0]"),
+        )
+        assertEquals(
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            environment.getProperty("$prefix.authorization-grant-types[2]"),
+        )
+        assertEquals("openid", environment.getProperty("$prefix.scopes[0]"))
+        assertEquals("events.report", environment.getProperty("$prefix.scopes[2]"))
+        assertEquals(
+            "http://localhost:3000/api/auth/machine/callback",
+            environment.getProperty("$prefix.redirect-uris[0]"),
+        )
+        assertEquals(
+            "backend-api",
+            environment.getProperty("tolo-idp.clients.edge-page.allowed-audiences[0]"),
+        )
+        assertEquals(
+            "tenant_access:event_access",
+            environment.getProperty("tolo-idp.clients.edge-page.allowed-token-exchange-transitions[0]"),
+        )
+        assertEquals("10m", environment.getProperty("tolo-idp.clients.edge-page.event-access-ttl"))
+    }
+
+    @Test
     fun nativeDevelopmentSettingsOverrideProductionProfileRecordedByAot() {
         val environment = loadProfile("production", "dev-native")
 

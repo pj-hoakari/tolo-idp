@@ -115,6 +115,8 @@ spring:
               redirect-uris:
                 - http://localhost:3000/api/auth/callback/console-ui
                 - http://127.0.0.1:3000/api/auth/callback/console-ui
+                - http://localhost:3000/api/auth/callback/tolo-idp
+                - http://127.0.0.1:3000/api/auth/callback/tolo-idp
               scopes:
                 - openid
                 - profile
@@ -130,6 +132,33 @@ spring:
             token:
               reuse-refresh-tokens: false
               refresh-token-time-to-live: 1h
+              authorization-code-time-to-live: 5m
+              access-token-time-to-live: 15m
+              access-token-format: self-contained
+          edge-page:
+            registration:
+              client-id: edge-page
+              client-secret: "${tolo-idp.seed.client-secret:secret}"
+              client-name: Observation page BFF client
+              client-authentication-methods:
+                - client_secret_basic
+                - client_secret_post
+              authorization-grant-types:
+                - authorization_code
+                - refresh_token
+                - urn:ietf:params:oauth:grant-type:token-exchange
+              redirect-uris:
+                - http://localhost:3000/api/auth/machine/callback
+                - http://127.0.0.1:3000/api/auth/machine/callback
+              scopes:
+                - openid
+                - profile
+                - events.report
+            require-proof-key: true
+            require-authorization-consent: false
+            token:
+              reuse-refresh-tokens: false
+              refresh-token-time-to-live: 24h
               authorization-code-time-to-live: 5m
               access-token-time-to-live: 15m
               access-token-format: self-contained
@@ -204,6 +233,13 @@ tolo-idp:
       tenant-access-ttl: 15m
       event-access-ttl: 10m
     observation-connection:
+      allowed-audiences:
+        - backend-api
+      allowed-token-exchange-transitions:
+        - tenant_access:event_access
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
+    edge-page:
       allowed-audiences:
         - backend-api
       allowed-token-exchange-transitions:
