@@ -47,6 +47,7 @@ class AuditService(
                 issuedScope = event.issuedScope.joinToString(" "),
                 tenantId = event.tenantId,
                 eventId = event.eventId,
+                edgeDeviceId = event.edgeDeviceId,
                 result = event.result,
                 failureReason = event.failureReason,
                 sourceIp = event.sourceIp,
@@ -71,6 +72,7 @@ class AuditService(
             "issuedScope" to ArrayList(issuedScope),
             "tenantId" to tenantId,
             "eventId" to eventId,
+            "edgeDeviceId" to edgeDeviceId,
             "result" to result,
             "failureReason" to failureReason,
             "sourceIp" to sourceIp,
@@ -108,6 +110,8 @@ data class AuditLogRecord(
     val tenantId: String?,
     @Column("event_id")
     val eventId: String?,
+    @Column("edge_device_id")
+    val edgeDeviceId: String?,
     @Column("result")
     val result: String,
     @Column("failure_reason")
@@ -137,6 +141,7 @@ data class TokenAuditEvent(
     val issuedScope: List<String> = emptyList(),
     val tenantId: String? = null,
     val eventId: String? = null,
+    val edgeDeviceId: String? = null,
     val result: String,
     val failureReason: String? = null,
     val sourceIp: String? = null,

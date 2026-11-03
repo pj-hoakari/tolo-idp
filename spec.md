@@ -26,6 +26,7 @@
 - scope 検証
 - JWT 発行
 - JWT 失効方針
+- ESP カメラの Device Authorization Grant とデバイス認可
 - 監査ログ
 - エラー方針
 ```
@@ -205,12 +206,13 @@ POST /api/logout
 
 ### 5.2 event_access token
 
-`event_access` token は、`tenant_access` token から Token Exchange により発行される、特定 event 文脈を持つ JWT access token である。
+`event_access` token は、`tenant_access` token から Token Exchange により発行されるか、承認済みの ESP カメラのデバイス認可から発行される、特定 event 文脈を持つ JWT access token である。ESP カメラ向けには `events.stream` だけを発行し、`edge_device_id` を持つ。
 
 用途:
 
 ```text
 - 特定 event 文脈での API アクセス
+- ESP カメラの signaling への参加（events.stream）
 ```
 
 例:
@@ -376,7 +378,7 @@ staff
 
 ### 9.2 scope
 
-業務スコープは以下の 7 種類とする。
+業務スコープは以下の 8 種類とする。
 
 | scope | 意味 | 主な RPC |
 |---|---|---|
@@ -387,6 +389,9 @@ staff
 | `events.operate` | 現場運用の書き込み（11 RPC） | OperateGate、ToggleDangerFlag、ReportCongestion、SendStaffMessage、DirectReassignment など |
 | `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
 | `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
+| `events.stream` | イベントの映像配信に必要な signaling への参加 | IssueFirestoreToken のみ（ESP カメラ） |
+
+`events.stream` はロール→scope の対応に含めない。ESP カメラの client と、承認済みのデバイス認可にだけ発行する。
 
 OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
 
@@ -720,6 +725,7 @@ jti
 token_use
 resource
 tenant_id または event_id
+edge_device_id（ESP カメラの event_access と観測ページのedge用 event_access）
 ```
 
 Introspection Response とログに以下を含めてはならない。
@@ -761,6 +767,8 @@ tenant_id
 event_id
 ```
 
+デバイス認可から発行した ESP カメラの `event_access` は、さらに `edge_device_id` を必須とする。`sub` は承認したスタッフ、`scope` は `events.stream`、`client_id` は `esp-camera` とする。
+
 ### 13.5 JWT に含めない claim
 
 以下の claim は JWT に含めない。
@@ -790,6 +798,8 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &scope=events.read events.manage events.operate events.report
 ```
 
+観測ページ client（`edge-page`）の Token Exchange では、`edge_device_id` パラメータを追加できる。16 桁の小文字 hex だけを受理し、`event_access` の `edge_device_id` claim に載せる。ほかの client がこのパラメータを送った場合は `invalid_request` とする。
+
 Authorization Server は以下を確認する。
 
 ```text
@@ -806,6 +816,7 @@ Authorization Server は以下を確認する。
 - resource の eventId が relation service の memberships[0].event_roles[].event_id に存在する
 - requested_scope が subject_token.scope を超えていない
 - requested_scope が client / event_role に許可されている
+- `edge_device_id` を送る場合は client が `edge-page` で、値が `^[0-9a-f]{16}$` に一致する
 ```
 
 ---
@@ -927,8 +938,10 @@ Revocation endpoint は token 本体、client secret、authorization code、pass
 |---|---|
 | `tenant_access` | 15分 |
 | `event_access` | 10分 |
+| ESP カメラの `event_access` | 10分。承認から7日を上限とする |
+| ESP カメラの Refresh Token | 24時間。交換ごとに延長し、承認から7日を上限とする |
 
-client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。
+client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。デバイス認可の `event_access` と Refresh Token は、client の TTL と承認から7日の絶対期限の早い方で失効する。
 
 ---
 
@@ -1012,6 +1025,7 @@ requested_scope
 issued_scope
 tenant_id
 event_id
+edge_device_id
 result
 failure_reason
 source_ip
@@ -1239,3 +1253,71 @@ Authorization Server:
 Resource Server:
   JWT claim, scope, resource, path, DB を使って最終認可する
 ```
+
+---
+
+## 20. ESP カメラのデバイス認可
+
+### 20.1 client
+
+| client | 種別 | 認証 | 許可 grant | scope 上限 | audience |
+|---|---|---|---|---|---|
+| `esp-camera` | public | `none` | Device Authorization Grant、Refresh Token | `events.stream` のみ | `backend-api` |
+| `observation-connection` | confidential | `client_secret_basic` / `client_secret_post` | Authorization Code、Refresh Token、Token Exchange | `events.read`（ログイン用に `openid` / `profile`） | `backend-api` |
+| `console-ui` | confidential | `client_secret_basic` / `client_secret_post` | Authorization Code、Refresh Token、Token Exchange | ロールに応じた scope | `backend-api` |
+
+`esp-camera` は Token Exchange を使えない。`events.stream` は `esp-camera` と承認済みデバイス認可だけに発行し、ほかの client の scope 上限には加えない。
+
+### 20.2 標準エンドポイント
+
+- `POST /oauth2/device_authorization` は `client_id=esp-camera` と `scope=events.stream` だけを受け付ける。`event_id` と `edge_device_id` を要求に含めた場合は `invalid_request` とする。
+- 応答は `device_code`、`user_code`、`verification_uri`、`verification_uri_complete`、`expires_in`、`interval` を含む。
+- `POST /oauth2/token` の `grant_type=urn:ietf:params:oauth:grant-type:device_code` は、承認前は `authorization_pending`、承認後は `event_access` と Refresh Token を返す。
+
+### 20.3 BFF の承認・失効 API
+
+BFF は IdP のログインセッションを持たず、`console-ui` の client 認証（HTTP Basic）で次の API を呼ぶ。承認するスタッフの識別は、本文の `sub` ではなく `X-Tolo-Staff-Token` の検証済み `tenant_access` から取る。
+
+```http
+POST /api/device-authorization/approve
+Authorization: Basic base64(console-ui:client_secret)
+X-Tolo-Staff-Token: {staff_tenant_access}
+Content-Type: application/json
+
+{"user_code":"ABCD-EFGH","event_id":"event-1","edge_device_id":"0123456789abcdef"}
+```
+
+```http
+POST /api/device-authorization/revoke
+Authorization: Basic base64(console-ui:client_secret)
+Content-Type: application/json
+
+{"event_id":"event-1","edge_device_id":"0123456789abcdef"}
+```
+
+承認時は次を検証する。
+
+```text
+- BFF の client 認証
+- スタッフの tenant_access の署名、issuer、期限、audience、token_use、tenant_id
+- スタッフの tenant 内の user と対象イベントのイベントロール
+- user_code が pending で未使用・未期限切れであること
+- client が esp-camera、要求 scope が events.stream だけであること
+- event_id / edge_device_id の形式
+- edge_device_id が失効済みでないこと
+```
+
+承認すると、IdP は承認したスタッフの `sub`、`tenant_id`、`event_id`、`edge_device_id`、承認日時、承認から7日の絶対期限をデバイス認可として保存し、SAS の device authorization を承認済みにする。承認と失効は `edge_device_id` 単位で直列化する。
+
+失効は冪等とする。失効済みの `edge_device_id` への新しい承認と、そのデバイス認可の Refresh は `invalid_grant` または承認拒否とする。
+
+### 20.4 トークンと Rotation
+
+デバイス認可から発行する `event_access` は、`sub` を承認したスタッフ、`client_id` を `esp-camera`、`scope` を `events.stream`、`token_use` を `event_access` とし、`tenant_id`、`event_id`、`edge_device_id` を持つ。
+
+```text
+AT.exp = min(now + 10m, grant.approved_at + 7d)
+RT.exp = min(now + 24h, grant.approved_at + 7d)
+```
+
+Refresh Token は使うたびにローテーションし、古い token は使えなくする。置き換え済みの Refresh Token を再び提示した場合は、そのデバイス認可を失効させる。Refresh のたびに、承認したスタッフのイベントロール、scope、デバイス認可の有効性を再確認する。7日の絶対期限を超えた Refresh は `invalid_grant` とする。

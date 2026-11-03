@@ -15,7 +15,16 @@ data class IdpProperties(
     val rateLimit: RateLimit = RateLimit(),
     val cors: Cors = Cors(),
     val clients: Map<String, ClientPolicyConfig> = emptyMap(),
+    val deviceAuthorization: DeviceAuthorization = DeviceAuthorization(),
 ) {
+    data class DeviceAuthorization(
+        val bffClientId: String = "console-ui",
+        val cameraClientId: String = "esp-camera",
+        val connectionClientId: String = "observation-connection",
+        val observationPageClientId: String = "edge-page",
+        val grantMaxLifetime: Duration = Duration.ofDays(7),
+    )
+
     data class Cors(
         val allowedOrigins: Set<String> = emptySet(),
     )

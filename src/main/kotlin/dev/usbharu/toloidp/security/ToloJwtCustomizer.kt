@@ -2,6 +2,7 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.devicegrant.DeviceGrantService
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
@@ -9,6 +10,7 @@ import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
@@ -38,6 +40,7 @@ class ToloJwtCustomizer(
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
     private val scopePolicy: ScopePolicy,
+    private val deviceGrantService: DeviceGrantService,
 ) : OAuth2TokenCustomizer<JwtEncodingContext> {
     /**
      * access token だけを対象にし、grant type ごとの claim 付与処理へ委譲する。
@@ -60,9 +63,57 @@ class ToloJwtCustomizer(
             return
         }
         when (context.authorizationGrantType) {
-            AuthorizationGrantType.AUTHORIZATION_CODE, AuthorizationGrantType.REFRESH_TOKEN -> customizeTenantAccess(context)
+            AuthorizationGrantType.AUTHORIZATION_CODE -> customizeTenantAccess(context)
+            AuthorizationGrantType.REFRESH_TOKEN -> {
+                if (deviceGrantService.findByAuthorizationId(context.authorization?.id) != null) {
+                    customizeDeviceAccess(context)
+                } else {
+                    customizeTenantAccess(context)
+                }
+            }
+            AuthorizationGrantType.DEVICE_CODE -> customizeDeviceAccess(context)
             AuthorizationGrantType.TOKEN_EXCHANGE -> customizeEventAccess(context)
         }
+    }
+
+    private fun customizeDeviceAccess(context: JwtEncodingContext) {
+        val clientId = context.registeredClient.clientId
+        val policy = ClientPolicy.from(context.registeredClient)
+            ?: throw OAuth2AuthenticationException("invalid_request")
+        val grant = deviceGrantService.requireActiveGrant(context.authorization?.id, clientId)
+        if (context.authorizedScopes != setOf(IdpScopes.EVENTS_STREAM)) {
+            throw OAuth2AuthenticationException(OAuth2Error("invalid_scope"))
+        }
+        val now = Instant.now()
+        val expiresAt = minOf(now.plus(policy.eventAccessTtl), grant.absoluteExpiresAt)
+        if (!expiresAt.isAfter(now)) {
+            throw OAuth2AuthenticationException(OAuth2Error("invalid_grant"))
+        }
+        val audience = policy.allowedAudiences.singleOrNull()
+            ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
+        context.claims
+            .subject(grant.approverSubject)
+            .audience(listOf(audience))
+            .issuedAt(now)
+            .notBefore(now)
+            .expiresAt(expiresAt)
+            .id(UUID.randomUUID().toString())
+            .claim("client_id", clientId)
+            .claim("scope", context.authorizedScopes.joinToString(" "))
+            .claim("token_use", TOKEN_USE_EVENT_ACCESS)
+            .claim("tenant_id", grant.tenantId)
+            .claim("event_id", grant.eventId)
+            .claim("edge_device_id", grant.edgeDeviceId)
+        log.structuredDebug(
+            "Device event access JWT claims customized",
+            "event" to "device_event_access_jwt_claims_customized",
+            "client_id" to clientId,
+            "tenant_id" to grant.tenantId,
+            "event_id" to grant.eventId,
+            "edge_device_id" to grant.edgeDeviceId,
+            "audience" to audience,
+            "result" to "success",
+        )
     }
 
     private fun customizeTenantAccess(context: JwtEncodingContext) {
@@ -218,6 +269,12 @@ class ToloJwtCustomizer(
             .claim("resource", eventResource.value)
             .claim("tenant_id", eventResource.tenantId)
             .claim("event_id", eventResource.eventId)
+            .apply {
+                val edgeDeviceId = tokenExchange.additionalParameters[EDGE_DEVICE_ID_PARAMETER] as? String
+                if (!edgeDeviceId.isNullOrEmpty()) {
+                    claim("edge_device_id", edgeDeviceId)
+                }
+            }
         log.structuredDebug(
             "Event access JWT claims customized",
             "event" to "event_access_jwt_claims_customized",

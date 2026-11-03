@@ -2,6 +2,7 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.client.savePolicy
 import dev.usbharu.toloidp.client.clearPolicy
+import dev.usbharu.toloidp.devicegrant.DeviceGrantService
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
@@ -64,6 +65,7 @@ class SecurityComponentTests(
     @Autowired private val users: dev.usbharu.toloidp.user.IdpUserDetailsManager,
     @Autowired private val jwtCustomizer: ToloJwtCustomizer,
     @Autowired private val oidcRequests: OidcAuthenticationRequestValidator,
+    @Autowired private val deviceGrantService: DeviceGrantService,
 ) {
     private lateinit var registeredClient: RegisteredClient
     private val principal = UsernamePasswordAuthenticationToken.authenticated(
@@ -516,7 +518,7 @@ class SecurityComponentTests(
         assertEquals("access_denied", authorizationError.error.errorCode)
         assertFalse(authorizationError.error.description.orEmpty().contains(reason))
 
-        val customizer = ToloJwtCustomizer(users, resourceParser, failingRelation, scopePolicy)
+        val customizer = ToloJwtCustomizer(users, resourceParser, failingRelation, scopePolicy, deviceGrantService)
         val issuanceError = assertFailsWith<OAuth2AuthenticationException> {
             customizer.customize(tenantJwtContext(scopes))
         }
