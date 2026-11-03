@@ -93,57 +93,111 @@ class DeviceGrantRepository(
             .update()
 
     fun isRevoked(eventId: String, edgeDeviceId: String): Boolean =
+        findRevocation(eventId, edgeDeviceId) != null
+
+    fun findRevocation(eventId: String, edgeDeviceId: String): EdgeDeviceRevocation? =
         jdbc.sql(
             """
-            SELECT COUNT(*) FROM idp_revoked_edge_device
+            SELECT event_id, edge_device_id, revoked_at, permanent
+            FROM idp_revoked_edge_device
             WHERE event_id = :event_id AND edge_device_id = :edge_device_id
             """.trimIndent(),
         )
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
-            .query(Int::class.java)
-            .single() > 0
+            .query { rs, _ ->
+                EdgeDeviceRevocation(
+                    eventId = rs.getString("event_id"),
+                    edgeDeviceId = rs.getString("edge_device_id"),
+                    revokedAt = rs.getTimestamp("revoked_at").toInstant(),
+                    permanent = rs.getBoolean("permanent"),
+                )
+            }
+            .optional()
+            .orElse(null)
 
-    fun markEdgeDeviceRevoked(eventId: String, edgeDeviceId: String, revokedAt: Instant) {
+    /**
+     * Records a permanent or temporary edge-device revocation.
+     *
+     * A permanent revocation is sticky: a later temporary revocation never makes the edge
+     * reapprovable again.
+     */
+    fun markEdgeDeviceRevoked(
+        eventId: String,
+        edgeDeviceId: String,
+        revokedAt: Instant,
+        permanent: Boolean,
+    ) {
+        val updated = jdbc.sql(
+            """
+            UPDATE idp_revoked_edge_device
+            SET revoked_at = :revoked_at,
+                permanent = CASE WHEN permanent THEN TRUE ELSE :permanent END
+            WHERE event_id = :event_id AND edge_device_id = :edge_device_id
+            """.trimIndent(),
+        )
+            .param("revoked_at", Timestamp.from(revokedAt))
+            .param("permanent", permanent)
+            .param("event_id", eventId)
+            .param("edge_device_id", edgeDeviceId)
+            .update()
+        if (updated > 0) {
+            return
+        }
         if (postgres) {
             jdbc.sql(
                 """
-                INSERT INTO idp_revoked_edge_device (event_id, edge_device_id, revoked_at)
-                VALUES (:event_id, :edge_device_id, :revoked_at)
-                ON CONFLICT (event_id, edge_device_id) DO UPDATE SET revoked_at = EXCLUDED.revoked_at
+                INSERT INTO idp_revoked_edge_device (event_id, edge_device_id, revoked_at, permanent)
+                VALUES (:event_id, :edge_device_id, :revoked_at, :permanent)
+                ON CONFLICT (event_id, edge_device_id) DO NOTHING
                 """.trimIndent(),
             )
                 .param("event_id", eventId)
                 .param("edge_device_id", edgeDeviceId)
                 .param("revoked_at", Timestamp.from(revokedAt))
+                .param("permanent", permanent)
                 .update()
         } else {
             jdbc.sql(
                 """
-                MERGE INTO idp_revoked_edge_device (event_id, edge_device_id, revoked_at)
+                MERGE INTO idp_revoked_edge_device (event_id, edge_device_id, revoked_at, permanent)
                 KEY (event_id, edge_device_id)
-                VALUES (:event_id, :edge_device_id, :revoked_at)
+                VALUES (:event_id, :edge_device_id, :revoked_at, :permanent)
                 """.trimIndent(),
             )
                 .param("event_id", eventId)
                 .param("edge_device_id", edgeDeviceId)
                 .param("revoked_at", Timestamp.from(revokedAt))
+                .param("permanent", permanent)
                 .update()
         }
     }
 
-    fun lockEdgeDevice(edgeDeviceId: String) {
-        val exists = jdbc.sql("SELECT COUNT(*) FROM idp_device_grant_lock WHERE edge_device_id = :edge_device_id")
+    /**
+     * Clears only a temporary revocation. A permanently revoked edge stays revoked.
+     */
+    fun clearTemporaryRevocation(eventId: String, edgeDeviceId: String): Int =
+        jdbc.sql(
+            """
+            DELETE FROM idp_revoked_edge_device
+            WHERE event_id = :event_id AND edge_device_id = :edge_device_id AND permanent = FALSE
+            """.trimIndent(),
+        )
+            .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
-            .query(Int::class.java)
-            .single() > 0
-        if (!exists) {
-            val insert = if (postgres) {
-                "INSERT INTO idp_device_grant_lock (edge_device_id) VALUES (:edge_device_id) ON CONFLICT DO NOTHING"
-            } else {
-                "MERGE INTO idp_device_grant_lock (edge_device_id) KEY (edge_device_id) VALUES (:edge_device_id)"
-            }
-            jdbc.sql(insert).param("edge_device_id", edgeDeviceId).update()
+            .update()
+
+    fun lockEdgeDevice(edgeDeviceId: String) {
+        if (postgres) {
+            jdbc.sql("INSERT INTO idp_device_grant_lock (edge_device_id) VALUES (:edge_device_id) ON CONFLICT DO NOTHING")
+                .param("edge_device_id", edgeDeviceId)
+                .update()
+        } else {
+            jdbc.sql(
+                "MERGE INTO idp_device_grant_lock (edge_device_id) KEY (edge_device_id) VALUES (:edge_device_id)",
+            )
+                .param("edge_device_id", edgeDeviceId)
+                .update()
         }
         jdbc.sql("SELECT edge_device_id FROM idp_device_grant_lock WHERE edge_device_id = :edge_device_id FOR UPDATE")
             .param("edge_device_id", edgeDeviceId)
@@ -179,7 +233,7 @@ class DeviceGrantRepository(
             .optional()
             .orElse(null)
 
-    fun supersedeRefreshToken(grantId: String, tokenHash: String, supersededAt: Instant) {
+    fun supersedeRefreshToken(grantId: String, tokenHash: String, supersededAt: Instant): Int =
         jdbc.sql(
             """
             UPDATE idp_device_grant_refresh_token
@@ -191,7 +245,6 @@ class DeviceGrantRepository(
             .param("grant_id", grantId)
             .param("token_hash", tokenHash)
             .update()
-    }
 
     private fun mapGrant(rs: java.sql.ResultSet, rowNum: Int): DeviceGrant =
         DeviceGrant(

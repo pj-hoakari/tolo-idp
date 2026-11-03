@@ -30,6 +30,7 @@ import org.springframework.security.oauth2.jwt.JwtException
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.stereotype.Service
@@ -66,6 +67,7 @@ class DeviceGrantService(
         edgeDeviceId: String,
         staffToken: String?,
         bffClient: RegisteredClient,
+        reapproval: Boolean = false,
     ): DeviceGrant {
         requireEventAndEdge(eventId, edgeDeviceId)
         val bffPolicy = ClientPolicy.from(bffClient) ?: throw BffAuthenticationException()
@@ -73,8 +75,23 @@ class DeviceGrantService(
         requireEventRole(staff.tenantId, staff.subject, eventId)
 
         repository.lockEdgeDevice(edgeDeviceId)
-        if (repository.isRevoked(eventId, edgeDeviceId)) {
-            reject("edge_device_revoked")
+        // Re-read the revocation under the per-edge lock so a concurrent revoke cannot be missed.
+        val revocation = repository.findRevocation(eventId, edgeDeviceId)
+        if (revocation != null) {
+            when {
+                revocation.permanent -> reject("edge_device_revoked")
+                !reapproval -> reject("edge_device_reapproval_required")
+                else -> {
+                    repository.clearTemporaryRevocation(eventId, edgeDeviceId)
+                    log.structuredInfo(
+                        "Temporary device revocation cleared by explicit reapproval",
+                        "event" to "device_grant_reapproval",
+                        "event_id" to eventId,
+                        "edge_device_id" to edgeDeviceId,
+                        "result" to "success",
+                    )
+                }
+            }
         }
 
         val authorization = authorizationService.findByToken(
@@ -162,13 +179,13 @@ class DeviceGrantService(
     }
 
     @Transactional
-    fun revoke(eventId: String, edgeDeviceId: String) {
+    fun revoke(eventId: String, edgeDeviceId: String, permanent: Boolean = true) {
         requireEventAndEdge(eventId, edgeDeviceId)
         repository.lockEdgeDevice(edgeDeviceId)
         val now = Instant.now(clock)
-        if (!repository.isRevoked(eventId, edgeDeviceId)) {
-            repository.markEdgeDeviceRevoked(eventId, edgeDeviceId, now)
-        }
+        // The repository keeps an existing permanent revocation sticky.
+        repository.markEdgeDeviceRevoked(eventId, edgeDeviceId, now, permanent)
+        val effectivePermanent = repository.findRevocation(eventId, edgeDeviceId)?.permanent ?: permanent
         val revoked = repository.findUnrevokedByEventAndEdge(eventId, edgeDeviceId)
         repository.markRevokedForEventAndEdge(eventId, edgeDeviceId, now, "bff_revocation")
         revoked.forEach { grant -> revokeAuthorization(grant.id, now) }
@@ -180,6 +197,7 @@ class DeviceGrantService(
                 eventId = eventId,
                 edgeDeviceId = edgeDeviceId,
                 result = "success",
+                failureReason = if (effectivePermanent) null else "temporary_revocation",
             ),
         )
         log.structuredInfo(
@@ -187,6 +205,7 @@ class DeviceGrantService(
             "event" to "device_grant_revoked",
             "event_id" to eventId,
             "edge_device_id" to edgeDeviceId,
+            "revocation_kind" to if (effectivePermanent) "permanent" else "temporary",
             "revoked_grant_count" to revoked.size,
             "result" to "success",
         )
@@ -216,32 +235,135 @@ class DeviceGrantService(
     fun findByAuthorizationId(authorizationId: String?): DeviceGrant? =
         authorizationId?.let(repository::findById)
 
+    @Transactional(readOnly = true)
+    fun findGrantByRefreshToken(refreshTokenValue: String): DeviceGrant? =
+        repository.findRefreshToken(hash(refreshTokenValue))
+            ?.let { record -> repository.findById(record.grantId) }
+
+    @Transactional
     fun recordIssuedRefreshToken(authorizationId: String, refreshToken: OAuth2RefreshToken) {
         val grant = repository.findById(authorizationId) ?: return
         if (grant.clientId != cameraClientId) return
-        val hash = hash(refreshToken.tokenValue)
-        if (repository.findRefreshToken(hash) == null) {
-            repository.insertRefreshToken(
-                DeviceGrantRefreshToken(
-                    tokenHash = hash,
-                    grantId = grant.id,
-                    issuedAt = refreshToken.issuedAt ?: Instant.now(clock),
-                    expiresAt = refreshToken.expiresAt ?: grant.absoluteExpiresAt,
-                ),
-            )
+        insertRefreshTokenRecord(grant, refreshToken)
+    }
+
+    /**
+     * Performs the whole camera refresh under the per-edge device lock.
+     *
+     * The old token is consumed with a conditional update, then the standard provider issues
+     * and persists the new tokens. The token history update therefore commits with the
+     * authorization update, or neither is visible.
+     *
+     * A rejected outcome is returned after the reuse revocation has committed so the caller
+     * can turn it into `invalid_grant` without rolling the revocation back.
+     */
+    @Transactional
+    fun refresh(
+        refreshTokenValue: String,
+        clientId: String,
+        issueTokens: () -> OAuth2AccessTokenAuthenticationToken,
+    ): DeviceGrantRefreshOutcome {
+        val tokenHash = hash(refreshTokenValue)
+        val recorded = repository.findRefreshToken(tokenHash)
+            ?: return DeviceGrantRefreshOutcome.Rejected
+        val beforeLock = repository.findById(recorded.grantId)
+            ?: return DeviceGrantRefreshOutcome.Rejected
+        repository.lockEdgeDevice(beforeLock.edgeDeviceId)
+
+        // Re-read the grant, token history and authorization after acquiring the edge lock.
+        val record = repository.findRefreshToken(tokenHash)
+            ?: return DeviceGrantRefreshOutcome.Rejected
+        val grant = repository.findById(record.grantId)
+            ?: return DeviceGrantRefreshOutcome.Rejected
+        if (grant.edgeDeviceId != beforeLock.edgeDeviceId) {
+            return DeviceGrantRefreshOutcome.Rejected
+        }
+        if (record.supersededAt != null) {
+            revokeForReuse(grant)
+            return DeviceGrantRefreshOutcome.Rejected
+        }
+        if (grant.clientId != cameraClientId || grant.clientId != clientId) {
+            return DeviceGrantRefreshOutcome.Rejected
+        }
+        val authorization = authorizationService.findById(grant.id)
+            ?: return DeviceGrantRefreshOutcome.Rejected
+        if (authorization.principalName != grant.approverSubject) {
+            return DeviceGrantRefreshOutcome.Rejected
+        }
+        if (authorization.refreshToken?.token?.tokenValue != refreshTokenValue) {
+            revokeForReuse(grant)
+            return DeviceGrantRefreshOutcome.Rejected
+        }
+        requireActiveGrant(grant.id, clientId)
+
+        val now = Instant.now(clock)
+        val consumed = try {
+            repository.supersedeRefreshToken(grant.id, tokenHash, now)
+        } catch (ex: RuntimeException) {
+            throw DeviceGrantRefreshStateException(grant, ex)
+        }
+        if (consumed == 0) {
+            revokeForReuse(grant)
+            return DeviceGrantRefreshOutcome.Rejected
+        }
+        return try {
+            val authentication = issueTokens()
+            val newRefreshToken = authentication.refreshToken
+                ?: throw OAuth2AuthenticationException(OAuth2Error("server_error"))
+            insertRefreshTokenRecord(grant, newRefreshToken)
+            DeviceGrantRefreshOutcome.Issued(authentication)
+        } catch (ex: Throwable) {
+            throw DeviceGrantRefreshStateException(grant, ex)
         }
     }
 
+    /**
+     * Fail-closed fallback after a refresh transaction rolled back.
+     *
+     * The old token must not become usable again if the new token or its history could not be
+     * persisted. Runs in its own transaction after the failed transaction has released its locks.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    fun handleReusedRefreshToken(refreshTokenValue: String): Boolean {
-        val record = repository.findRefreshToken(hash(refreshTokenValue)) ?: return false
-        val grant = repository.findById(record.grantId) ?: return false
+    fun revokeAfterFailedRefresh(grant: DeviceGrant) {
+        repository.lockEdgeDevice(grant.edgeDeviceId)
+        val current = repository.findById(grant.id) ?: return
+        if (current.revokedAt != null) {
+            return
+        }
+        val now = Instant.now(clock)
+        repository.markRevoked(current.id, now, "refresh_state_failed")
+        repository.markEdgeDeviceRevoked(current.eventId, current.edgeDeviceId, now, permanent = false)
+        revokeAuthorization(current.id, now)
+        auditService.record(
+            TokenAuditEvent(
+                clientId = current.clientId,
+                subject = current.approverSubject,
+                requestedTokenUse = "revocation",
+                tenantId = current.tenantId,
+                eventId = current.eventId,
+                edgeDeviceId = current.edgeDeviceId,
+                result = "success",
+                failureReason = "refresh_state_failed",
+            ),
+        )
+        log.structuredWarn(
+            "Device authorization revoked after refresh state persistence failed",
+            "event" to "device_grant_refresh_state_failed",
+            "client_id" to current.clientId,
+            "tenant_id" to current.tenantId,
+            "event_id" to current.eventId,
+            "edge_device_id" to current.edgeDeviceId,
+            "result" to "revoked",
+        )
+    }
+
+    private fun revokeForReuse(grant: DeviceGrant) {
         if (grant.revokedAt != null) {
-            return true
+            return
         }
         val now = Instant.now(clock)
         repository.markRevoked(grant.id, now, "refresh_token_reuse")
-        repository.markEdgeDeviceRevoked(grant.eventId, grant.edgeDeviceId, now)
+        repository.markEdgeDeviceRevoked(grant.eventId, grant.edgeDeviceId, now, permanent = false)
         revokeAuthorization(grant.id, now)
         auditService.record(
             TokenAuditEvent(
@@ -264,27 +386,21 @@ class DeviceGrantService(
             "edge_device_id" to grant.edgeDeviceId,
             "result" to "revoked",
         )
-        return true
     }
 
-    fun rotateRefreshToken(grant: DeviceGrant, oldTokenValue: String, newToken: OAuth2RefreshToken) {
-        val oldHash = hash(oldTokenValue)
-        val newHash = hash(newToken.tokenValue)
-        if (oldHash == newHash) {
+    private fun insertRefreshTokenRecord(grant: DeviceGrant, refreshToken: OAuth2RefreshToken) {
+        val tokenHash = hash(refreshToken.tokenValue)
+        if (repository.findRefreshToken(tokenHash) != null) {
             return
         }
-        val now = Instant.now(clock)
-        repository.supersedeRefreshToken(grant.id, oldHash, now)
-        if (repository.findRefreshToken(newHash) == null) {
-            repository.insertRefreshToken(
-                DeviceGrantRefreshToken(
-                    tokenHash = newHash,
-                    grantId = grant.id,
-                    issuedAt = newToken.issuedAt ?: Instant.now(clock),
-                    expiresAt = newToken.expiresAt ?: grant.absoluteExpiresAt,
-                ),
-            )
-        }
+        repository.insertRefreshToken(
+            DeviceGrantRefreshToken(
+                tokenHash = tokenHash,
+                grantId = grant.id,
+                issuedAt = refreshToken.issuedAt ?: Instant.now(clock),
+                expiresAt = refreshToken.expiresAt ?: grant.absoluteExpiresAt,
+            ),
+        )
     }
 
     private fun verifyStaffToken(token: String?, allowedAudiences: Set<String>): VerifiedStaff {

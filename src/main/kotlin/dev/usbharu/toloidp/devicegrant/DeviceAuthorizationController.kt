@@ -35,6 +35,7 @@ class DeviceAuthorizationController(
                 edgeDeviceId = request.edgeDeviceId,
                 staffToken = staffToken,
                 bffClient = bffClient,
+                reapproval = request.reapproval ?: false,
             )
             ResponseEntity.ok(
                 DeviceAuthorizationApprovalResponse(
@@ -65,7 +66,11 @@ class DeviceAuthorizationController(
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
         }
         return try {
-            deviceGrantService.revoke(request.eventId, request.edgeDeviceId)
+            deviceGrantService.revoke(
+                request.eventId,
+                request.edgeDeviceId,
+                permanent = request.permanent ?: true,
+            )
             ResponseEntity.noContent().build()
         } catch (_: DeviceGrantRejectedException) {
             ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
@@ -80,6 +85,12 @@ data class DeviceAuthorizationApprovalRequest(
     val eventId: String = "",
     @JsonProperty("edge_device_id")
     val edgeDeviceId: String = "",
+    /**
+     * Explicit staff intent to restore a temporarily revoked edge device.
+     * Old callers omit this field and therefore cannot reapprove by accident.
+     */
+    @JsonProperty("reapproval")
+    val reapproval: Boolean? = null,
 )
 
 data class DeviceAuthorizationApprovalResponse(
@@ -100,4 +111,11 @@ data class DeviceAuthorizationRevocationRequest(
     val eventId: String = "",
     @JsonProperty("edge_device_id")
     val edgeDeviceId: String = "",
+    /**
+     * `true` for unregister, event end or archive. `false` for a management stop that an
+     * explicit reapproval may reverse. Old callers omit this field and get the permanent
+     * behaviour.
+     */
+    @JsonProperty("permanent")
+    val permanent: Boolean? = null,
 )

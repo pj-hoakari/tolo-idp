@@ -15,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm
 import org.springframework.security.oauth2.jwt.JwtClaimsSet
@@ -29,9 +30,14 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @SpringBootTest
@@ -228,6 +234,171 @@ class DeviceAuthorizationFlowTests(
     }
 
     @Test
+    fun concurrentRefreshesWithTheSameTokenSucceedOnceAndRevokeOnReuse() {
+        val edgeDeviceId = "5555555555555555"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val refreshToken = json(
+            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
+        )["refresh_token"].asText()
+
+        val responses = performConcurrently(
+            { refresh(refreshToken).andReturn().response },
+            { refresh(refreshToken).andReturn().response },
+        )
+
+        assertEquals(
+            1,
+            responses.count { it.status == 200 },
+            "exactly one concurrent refresh must succeed: ${responses.map { it.status }}",
+        )
+        val rejected = responses.single { it.status != 200 }
+        assertEquals(400, rejected.status)
+        assertEquals("invalid_grant", json(rejected.contentAsString)["error"].asText())
+        assertNotNull(grant(edgeDeviceId).revokedAt)
+
+        val winnerToken = json(responses.single { it.status == 200 }.contentAsString)["refresh_token"].asText()
+        refresh(winnerToken)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+    }
+
+    @Test
+    fun refreshRacingWithRevocationLeavesTheDeviceRevoked() {
+        val edgeDeviceId = "6666666666666666"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val refreshToken = json(
+            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
+        )["refresh_token"].asText()
+
+        val responses = performConcurrently(
+            { refresh(refreshToken).andReturn().response },
+            { revoke("event-1", edgeDeviceId).andReturn().response },
+        )
+
+        assertNotNull(grant(edgeDeviceId).revokedAt)
+        assertEquals(204, responses[1].status)
+        val refreshResponse = responses[0]
+        if (refreshResponse.status == 200) {
+            val rotated = json(refreshResponse.contentAsString)["refresh_token"].asText()
+            refresh(rotated)
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_grant"))
+        } else {
+            assertEquals(400, refreshResponse.status)
+            assertEquals("invalid_grant", json(refreshResponse.contentAsString)["error"].asText())
+        }
+    }
+
+    @Test
+    fun refreshPersistenceFailureRevokesTheGrantAndTheOldToken() {
+        val edgeDeviceId = "7777777777777777"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val refreshToken = json(
+            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
+        )["refresh_token"].asText()
+
+        // Make the next refresh-token history insert fail without relying on application hooks.
+        jdbcClient.sql(
+            """
+            ALTER TABLE idp_device_grant_refresh_token
+            ADD COLUMN persistence_fault varchar(1) NOT NULL DEFAULT 'x'
+            """.trimIndent(),
+        ).update()
+        jdbcClient.sql(
+            "ALTER TABLE idp_device_grant_refresh_token ALTER COLUMN persistence_fault DROP DEFAULT",
+        ).update()
+        try {
+            refresh(refreshToken)
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("server_error"))
+        } finally {
+            jdbcClient.sql("ALTER TABLE idp_device_grant_refresh_token DROP COLUMN persistence_fault").update()
+        }
+        assertNotNull(grant(edgeDeviceId).revokedAt)
+        assertTrue(revocation(edgeDeviceId)?.permanent == false)
+
+        refresh(refreshToken)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+    }
+
+    @Test
+    fun temporaryRevocationRequiresExplicitReapproval() {
+        val edgeDeviceId = "8888888888888888"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val refreshToken = json(
+            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
+        )["refresh_token"].asText()
+
+        revoke("event-1", edgeDeviceId, permanent = false).andExpect(status().isNoContent)
+        assertEquals(false, revocation(edgeDeviceId)?.permanent)
+        refresh(refreshToken)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+
+        val reapprovalCode = startDeviceAuthorization()
+        val reapprovalUserCode = userCodeFor(reapprovalCode)
+        approve(reapprovalUserCode, "event-1", edgeDeviceId)
+            .andExpect(status().isBadRequest)
+        approve(reapprovalUserCode, "event-1", edgeDeviceId, reapproval = true)
+            .andExpect(status().isOk)
+        assertNull(revocation(edgeDeviceId))
+        poll(reapprovalCode).andExpect(status().isOk)
+    }
+
+    @Test
+    fun permanentRevocationRejectsApprovalEvenWithReapproval() {
+        val edgeDeviceId = "9999999999999999"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        poll(deviceCode).andExpect(status().isOk).andReturn()
+
+        revoke("event-1", edgeDeviceId, permanent = true).andExpect(status().isNoContent)
+        assertEquals(true, revocation(edgeDeviceId)?.permanent)
+
+        // A later temporary revocation must not downgrade the permanent marker.
+        revoke("event-1", edgeDeviceId, permanent = false).andExpect(status().isNoContent)
+        assertEquals(true, revocation(edgeDeviceId)?.permanent)
+
+        val nextCode = startDeviceAuthorization()
+        approve(userCodeFor(nextCode), "event-1", edgeDeviceId, reapproval = true)
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun refreshTokenReuseRevocationCanBeClearedByExplicitReapproval() {
+        val edgeDeviceId = "aaaaaaaaaaaaaaaa"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val firstRefresh = json(
+            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
+        )["refresh_token"].asText()
+        val rotated = json(refresh(firstRefresh).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].asText()
+
+        refresh(firstRefresh)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+        assertNotNull(grant(edgeDeviceId).revokedAt)
+        assertEquals(false, revocation(edgeDeviceId)?.permanent)
+
+        refresh(rotated)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+
+        val reapprovalCode = startDeviceAuthorization()
+        val reapprovalUserCode = userCodeFor(reapprovalCode)
+        approve(reapprovalUserCode, "event-1", edgeDeviceId)
+            .andExpect(status().isBadRequest)
+        approve(reapprovalUserCode, "event-1", edgeDeviceId, reapproval = true)
+            .andExpect(status().isOk)
+        poll(reapprovalCode).andExpect(status().isOk)
+    }
+
+    @Test
     fun deviceAuthorizationRejectsCameraSuppliedEventAndEdgeBindings() {
         mockMvc.perform(
             post("/oauth2/device_authorization")
@@ -304,22 +475,51 @@ class DeviceAuthorizationFlowTests(
                 .param("refresh_token", refreshToken),
         )
 
-    private fun approve(userCode: String, eventId: String, edgeDeviceId: String) =
+    private fun approve(
+        userCode: String,
+        eventId: String,
+        edgeDeviceId: String,
+        reapproval: Boolean? = null,
+    ) =
         mockMvc.perform(
             post("/api/device-authorization/approve")
                 .with(httpBasic("console-ui", "secret"))
                 .header(STAFF_TOKEN_HEADER, staffToken())
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(approvalBody(userCode, eventId, edgeDeviceId)),
+                .content(approvalBody(userCode, eventId, edgeDeviceId, reapproval)),
         )
 
-    private fun revoke(eventId: String, edgeDeviceId: String) =
+    private fun revoke(eventId: String, edgeDeviceId: String, permanent: Boolean? = null) =
         mockMvc.perform(
             post("/api/device-authorization/revoke")
                 .with(httpBasic("console-ui", "secret"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"event_id":"$eventId","edge_device_id":"$edgeDeviceId"}"""),
+                .content(revocationBody(eventId, edgeDeviceId, permanent)),
         )
+
+    private fun performConcurrently(
+        vararg requests: () -> MockHttpServletResponse,
+    ): List<MockHttpServletResponse> {
+        val executor = Executors.newFixedThreadPool(requests.size)
+        val ready = CountDownLatch(requests.size)
+        val start = CountDownLatch(1)
+        return try {
+            val futures = requests.map { request ->
+                executor.submit(
+                    Callable {
+                        ready.countDown()
+                        start.await(10, TimeUnit.SECONDS)
+                        request()
+                    },
+                )
+            }
+            ready.await(10, TimeUnit.SECONDS)
+            start.countDown()
+            futures.map { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
 
     private fun userCodeFor(deviceCode: String): String =
         jdbcClient.sql("SELECT user_code_value FROM oauth2_authorization WHERE device_code_value = ?")
@@ -344,6 +544,16 @@ class DeviceAuthorizationFlowTests(
                 )
             }
             .single()
+
+    private fun revocation(edgeDeviceId: String): RevocationRow? =
+        jdbcClient.sql(
+            "SELECT permanent FROM idp_revoked_edge_device WHERE event_id = ? AND edge_device_id = ?",
+        )
+            .param("event-1")
+            .param(edgeDeviceId)
+            .query { rs, _ -> RevocationRow(rs.getBoolean("permanent")) }
+            .optional()
+            .orElse(null)
 
     private fun refreshTokenExpiresAt(grantId: String): Instant =
         jdbcClient.sql("SELECT refresh_token_expires_at FROM oauth2_authorization WHERE id = ?")
@@ -382,8 +592,20 @@ class DeviceAuthorizationFlowTests(
         ).tokenValue
     }
 
-    private fun approvalBody(userCode: String, eventId: String, edgeDeviceId: String): String =
-        """{"user_code":"$userCode","event_id":"$eventId","edge_device_id":"$edgeDeviceId"}"""
+    private fun approvalBody(
+        userCode: String,
+        eventId: String,
+        edgeDeviceId: String,
+        reapproval: Boolean? = null,
+    ): String {
+        val reapprovalField = reapproval?.let { ""","reapproval":$it""" }.orEmpty()
+        return """{"user_code":"$userCode","event_id":"$eventId","edge_device_id":"$edgeDeviceId"$reapprovalField}"""
+    }
+
+    private fun revocationBody(eventId: String, edgeDeviceId: String, permanent: Boolean?): String {
+        val permanentField = permanent?.let { ""","permanent":$it""" }.orEmpty()
+        return """{"event_id":"$eventId","edge_device_id":"$edgeDeviceId"$permanentField}"""
+    }
 
     private fun json(body: String) = tools.jackson.databind.json.JsonMapper.builder().build().readTree(body)
 
@@ -391,5 +613,9 @@ class DeviceAuthorizationFlowTests(
         val approvedAt: Instant,
         val absoluteExpiresAt: Instant,
         val revokedAt: Instant?,
+    )
+
+    private data class RevocationRow(
+        val permanent: Boolean,
     )
 }

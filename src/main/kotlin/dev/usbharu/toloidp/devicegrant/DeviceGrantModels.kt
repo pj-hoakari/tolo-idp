@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.devicegrant
 
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken
 import java.time.Instant
 
 data class DeviceGrant(
@@ -23,6 +24,32 @@ data class DeviceGrantRefreshToken(
     val expiresAt: Instant,
     val supersededAt: Instant? = null,
 )
+
+data class EdgeDeviceRevocation(
+    val eventId: String,
+    val edgeDeviceId: String,
+    val revokedAt: Instant,
+    val permanent: Boolean,
+)
+
+sealed interface DeviceGrantRefreshOutcome {
+    data class Issued(
+        val authentication: OAuth2AccessTokenAuthenticationToken,
+    ) : DeviceGrantRefreshOutcome
+
+    data object Rejected : DeviceGrantRefreshOutcome
+}
+
+/**
+ * Carries the grant that must be failed closed when refresh state cannot be persisted.
+ *
+ * The provider revokes this grant in a new transaction after the failed refresh transaction
+ * has rolled back, so the presented refresh token cannot remain usable.
+ */
+class DeviceGrantRefreshStateException(
+    val grant: DeviceGrant,
+    cause: Throwable,
+) : RuntimeException("device_grant_refresh_state_failed", cause)
 
 class BffAuthenticationException : RuntimeException("bff_client_authentication_failed")
 

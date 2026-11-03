@@ -296,7 +296,6 @@ class SecurityConfig {
                     providers.add(
                         SpecRefreshTokenAuthenticationProvider(
                             OAuth2RefreshTokenAuthenticationProvider(authorizationService, tokenGenerator),
-                            authorizationService,
                             deviceGrantService,
                             properties.deviceAuthorization.cameraClientId,
                         ),

@@ -10,7 +10,6 @@ import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationToken
-import org.springframework.transaction.annotation.Transactional
 
 /**
  * Device code grant provider that records the initial refresh token for reuse detection.
@@ -18,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional
  * The Spring Authorization Server provider remains responsible for the RFC 8628 error
  * behaviour and for issuing tokens. Device grants only add the refresh-token history used
  * to revoke a grant when an old token is presented again.
+ *
+ * This provider is created manually in [dev.usbharu.toloidp.config.SecurityConfig], so the
+ * transaction boundary is declared on [DeviceGrantService.recordIssuedRefreshToken] instead.
  */
 open class SpecDeviceCodeAuthenticationProvider(
     private val delegate: OAuth2DeviceCodeAuthenticationProvider,
@@ -25,7 +27,6 @@ open class SpecDeviceCodeAuthenticationProvider(
     private val deviceGrantService: DeviceGrantService,
     private val cameraClientId: String,
 ) : AuthenticationProvider {
-    @Transactional
     override fun authenticate(authentication: Authentication): Authentication {
         val result = delegate.authenticate(authentication) as OAuth2AccessTokenAuthenticationToken
         if (result.registeredClient.clientId != cameraClientId) {

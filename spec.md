@@ -1284,7 +1284,7 @@ Authorization: Basic base64(console-ui:client_secret)
 X-Tolo-Staff-Token: {staff_tenant_access}
 Content-Type: application/json
 
-{"user_code":"ABCD-EFGH","event_id":"event-1","edge_device_id":"0123456789abcdef"}
+{"user_code":"ABCD-EFGH","event_id":"event-1","edge_device_id":"0123456789abcdef","reapproval":false}
 ```
 
 ```http
@@ -1292,8 +1292,16 @@ POST /api/device-authorization/revoke
 Authorization: Basic base64(console-ui:client_secret)
 Content-Type: application/json
 
-{"event_id":"event-1","edge_device_id":"0123456789abcdef"}
+{"event_id":"event-1","edge_device_id":"0123456789abcdef","permanent":true}
 ```
+
+`reapproval` は省略可で既定 `false` とする。`true` は、一時失効した端末をスタッフが明示的に再承認する意思を表す。`permanent` は省略可で既定 `true` とする。旧 BFF が省略しても失効が暗黙に解除されないよう、安全側に倒す。
+
+失効には二種類ある。
+
+- 永久失効（`permanent=true`）: 端末の登録解除、イベントの終了・アーカイブで使う。`edge_device_id` は再利用されないため、以後の承認は `reapproval` に関係なく拒否する
+- 一時失効（`permanent=false`）: 管理 UI からの停止、Refresh Token の再利用検出、Refresh 状態の永続化失敗で使う。Refresh は拒否し、`reapproval=true` を付けた明示的な承認だけが失効を解除して新しいデバイス認可を作れる
+- 永久失効は sticky とし、後から一時失効を記録しても永久失効へ格下げしない
 
 承認時は次を検証する。
 
@@ -1304,12 +1312,13 @@ Content-Type: application/json
 - user_code が pending で未使用・未期限切れであること
 - client が esp-camera、要求 scope が events.stream だけであること
 - event_id / edge_device_id の形式
-- edge_device_id が失効済みでないこと
+- edge_device_id が永久失効していないこと
+- 一時失効している場合は reapproval=true であること
 ```
 
-承認すると、IdP は承認したスタッフの `sub`、`tenant_id`、`event_id`、`edge_device_id`、承認日時、承認から7日の絶対期限をデバイス認可として保存し、SAS の device authorization を承認済みにする。承認と失効は `edge_device_id` 単位で直列化する。
+承認すると、IdP は承認したスタッフの `sub`、`tenant_id`、`event_id`、`edge_device_id`、承認日時、承認から7日の絶対期限をデバイス認可として保存し、SAS の device authorization を承認済みにする。承認、失効、Refresh は `edge_device_id` 単位のロック（`idp_device_grant_lock` の行ロック）で直列化し、ロック取得後にデバイス認可、認可状態、失効状態を読み直す。一時失効の解除も同じロックの下で行う。
 
-失効は冪等とする。失効済みの `edge_device_id` への新しい承認と、そのデバイス認可の Refresh は `invalid_grant` または承認拒否とする。
+失効は冪等とする。永久失効済みの `edge_device_id` への新しい承認と、永久・一時を問わず失効中のデバイス認可の Refresh は `invalid_grant` または承認拒否とする。
 
 ### 20.4 トークンと Rotation
 
@@ -1320,4 +1329,6 @@ AT.exp = min(now + 10m, grant.approved_at + 7d)
 RT.exp = min(now + 24h, grant.approved_at + 7d)
 ```
 
-Refresh Token は使うたびにローテーションし、古い token は使えなくする。置き換え済みの Refresh Token を再び提示した場合は、そのデバイス認可を失効させる。Refresh のたびに、承認したスタッフのイベントロール、scope、デバイス認可の有効性を再確認する。7日の絶対期限を超えた Refresh は `invalid_grant` とする。
+Refresh Token は使うたびにローテーションし、古い token は使えなくする。IdP は提示された Refresh Token を条件付き UPDATE で一度だけ消費し、更新行数が 0 なら再利用とみなしてデバイス認可を一時失効させる。古い token の消費、認可の更新、新しい token の履歴追加は同じトランザクションで行い、途中で保存に失敗した場合はロールバックしたうえでデバイス認可を一時失効させ、古い token を使い続けられないようにする。
+
+置き換え済みの Refresh Token を再び提示した場合は、そのデバイス認可を一時失効させる。Refresh のたびに、承認したスタッフのイベントロール、scope、デバイス認可の有効性を再確認する。7日の絶対期限を超えた Refresh は `invalid_grant` とする。
