@@ -42,7 +42,7 @@ import kotlin.test.assertTrue
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class DeviceAuthorizationFlowTests(
+open class DeviceAuthorizationFlowTests(
     @Autowired private val mockMvc: MockMvc,
     @Autowired private val jwtEncoder: JwtEncoder,
     @Autowired private val jwtDecoder: JwtDecoder,
@@ -256,6 +256,7 @@ class DeviceAuthorizationFlowTests(
         assertEquals(400, rejected.status)
         assertEquals("invalid_grant", json(rejected.contentAsString)["error"].asText())
         assertNotNull(grant(edgeDeviceId).revokedAt)
+        assertEquals(1L, grantLockCount(edgeDeviceId))
 
         val winnerToken = json(responses.single { it.status == 200 }.contentAsString)["refresh_token"].asText()
         refresh(winnerToken)
@@ -279,6 +280,7 @@ class DeviceAuthorizationFlowTests(
 
         assertNotNull(grant(edgeDeviceId).revokedAt)
         assertEquals(204, responses[1].status)
+        assertEquals(1L, grantLockCount(edgeDeviceId))
         val refreshResponse = responses[0]
         if (refreshResponse.status == 200) {
             val rotated = json(refreshResponse.contentAsString)["refresh_token"].asText()
@@ -463,7 +465,7 @@ class DeviceAuthorizationFlowTests(
             .andExpect(jsonPath("$.edge_device_id").value(edgeDeviceId))
     }
 
-    private fun startDeviceAuthorization(): String {
+    protected fun startDeviceAuthorization(): String {
         val result = mockMvc.perform(
             post("/oauth2/device_authorization")
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
@@ -480,7 +482,7 @@ class DeviceAuthorizationFlowTests(
         return json(result.response.contentAsString)["device_code"].asText()
     }
 
-    private fun poll(deviceCode: String) =
+    protected fun poll(deviceCode: String) =
         mockMvc.perform(
             post("/oauth2/token")
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
@@ -489,7 +491,7 @@ class DeviceAuthorizationFlowTests(
                 .param("device_code", deviceCode),
         )
 
-    private fun refresh(refreshToken: String) =
+    protected fun refresh(refreshToken: String) =
         mockMvc.perform(
             post("/oauth2/token")
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
@@ -498,7 +500,7 @@ class DeviceAuthorizationFlowTests(
                 .param("refresh_token", refreshToken),
         )
 
-    private fun approve(
+    protected fun approve(
         userCode: String,
         eventId: String,
         edgeDeviceId: String,
@@ -512,7 +514,7 @@ class DeviceAuthorizationFlowTests(
                 .content(approvalBody(userCode, eventId, edgeDeviceId, reapproval)),
         )
 
-    private fun revoke(
+    protected fun revoke(
         eventId: String,
         edgeDeviceId: String,
         permanent: Boolean? = null,
@@ -549,7 +551,7 @@ class DeviceAuthorizationFlowTests(
         }
     }
 
-    private fun userCodeFor(deviceCode: String): String =
+    protected fun userCodeFor(deviceCode: String): String =
         jdbcClient.sql("SELECT user_code_value FROM oauth2_authorization WHERE device_code_value = ?")
             .param(deviceCode)
             .query(String::class.java)
@@ -587,6 +589,12 @@ class DeviceAuthorizationFlowTests(
         jdbcClient.sql("SELECT refresh_token_expires_at FROM oauth2_authorization WHERE id = ?")
             .param(grantId)
             .query { rs, _ -> rs.getTimestamp("refresh_token_expires_at").toInstant() }
+            .single()
+
+    private fun grantLockCount(edgeDeviceId: String): Long =
+        jdbcClient.sql("SELECT COUNT(*) FROM idp_device_grant_lock WHERE edge_device_id = ?")
+            .param(edgeDeviceId)
+            .query(Long::class.java)
             .single()
 
     private fun assertEventAccess(accessToken: String, edgeDeviceId: String, eventId: String) {
@@ -638,7 +646,7 @@ class DeviceAuthorizationFlowTests(
         return """{"event_id":"$eventId","edge_device_id":"$edgeDeviceId"$permanentField}"""
     }
 
-    private fun json(body: String) = tools.jackson.databind.json.JsonMapper.builder().build().readTree(body)
+    protected fun json(body: String) = tools.jackson.databind.json.JsonMapper.builder().build().readTree(body)
 
     private data class GrantRow(
         val approvedAt: Instant,

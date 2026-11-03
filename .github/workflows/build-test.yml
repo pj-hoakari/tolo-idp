@@ -62,6 +62,16 @@ jobs:
           "-PimageRuntime=$IMAGE_RUNTIME"
           "-PreleaseVersion=$RELEASE_VERSION"
 
+      - name: Verify PostgreSQL device authorization tests
+        run: |
+          result=build/test-results/test/TEST-dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests.xml
+          test -f "$result"
+          if grep -q '<skipped' "$result"; then
+            echo "PostgreSQL device authorization tests were skipped" >&2
+            exit 1
+          fi
+          grep -Eq 'tests="[1-9][0-9]*"' "$result"
+
       - name: Build Native image with Buildpacks
         if: matrix.runtime == 'native'
         run: >-

@@ -25,6 +25,34 @@ docker compose -f docker-compose.dev-native.yaml --profile scenario run --rm --n
 
 `runn` コンテナは `scenario/` を `/books` に読み取り専用でマウントし、直下の `*.yml` を実行します。`helpers/` は include 専用です。
 
+## PostgreSQL でのデバイス認可回帰テスト
+
+デバイス認可の Refresh は `edge_device_id` 単位の行ロックと PostgreSQL の `ON CONFLICT` に依存します。既定の Kotlin テストは H2 で動くため、同じテストクラスを PostgreSQL の Testcontainers でも実行します。
+
+`DeviceAuthorizationPostgresFlowTests` は `postgres:17-alpine` を起動し、次を H2 と同じシナリオで検証します。
+
+- 同じ Refresh Token の同時更新は 1 回だけ成功し、もう一方は `invalid_grant` になり、デバイス認可が失効する
+- Refresh と revoke の競合後、revoke 済みの端末で更新が成功し続けない
+- 一時失効と永久失効、`reapproval=true` による明示的な再承認
+- Refresh の永続化失敗時にデバイス認可と古い Token が失効する
+- `idp_device_grant_lock` の行が 1 つに保たれる
+
+Docker が使える環境では `./gradlew test` に含まれます。クラスだけを実行する場合は次のとおりです。
+
+```bash
+./gradlew test --tests 'dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests'
+```
+
+Docker がない環境ではこのクラスはスキップされます。Colima など Docker の socket が `/var/run/docker.sock` 以外にある場合は、Testcontainers に socket を指定します。
+
+```bash
+DOCKER_HOST=unix://$HOME/.colima/default/docker.sock \
+TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+./gradlew test --tests 'dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests'
+```
+
+CI は JVM／Native のビルドで `./gradlew build` を実行したあと、PostgreSQL のテスト結果が存在し、スキップされていないことを確認します。
+
 ## 接続とテストデータ
 
 issuer は `http://localhost:18080` です。コンテナ内では `localhost` が runn 自身を指すため、`--host-rules "localhost app:8080"` で接続先を変更します。HTTP の Host ヘッダと Discovery の URL は issuer の値を維持します。
