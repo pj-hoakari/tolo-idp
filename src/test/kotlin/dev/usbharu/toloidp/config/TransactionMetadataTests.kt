@@ -78,6 +78,8 @@ class TransactionMetadataTests {
             "revoke",
             String::class.java,
             String::class.java,
+            String::class.java,
+            org.springframework.security.oauth2.server.authorization.client.RegisteredClient::class.java,
             Boolean::class.javaPrimitiveType!!,
         )
         assertReadWrite(

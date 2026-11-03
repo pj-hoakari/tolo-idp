@@ -179,8 +179,18 @@ class DeviceGrantService(
     }
 
     @Transactional
-    fun revoke(eventId: String, edgeDeviceId: String, permanent: Boolean = true) {
+    fun revoke(
+        eventId: String,
+        edgeDeviceId: String,
+        staffToken: String?,
+        bffClient: RegisteredClient,
+        permanent: Boolean = true,
+    ) {
         requireEventAndEdge(eventId, edgeDeviceId)
+        val bffPolicy = ClientPolicy.from(bffClient) ?: throw BffAuthenticationException()
+        val staff = verifyStaffToken(staffToken, bffPolicy.allowedAudiences)
+        requireEventRole(staff.tenantId, staff.subject, eventId)
+
         repository.lockEdgeDevice(edgeDeviceId)
         val now = Instant.now(clock)
         // The repository keeps an existing permanent revocation sticky.

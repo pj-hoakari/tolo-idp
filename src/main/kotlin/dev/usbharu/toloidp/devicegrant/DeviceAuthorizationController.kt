@@ -58,9 +58,10 @@ class DeviceAuthorizationController(
     @PostMapping("/revoke")
     fun revoke(
         @RequestHeader(HttpHeaders.AUTHORIZATION, required = false) authorization: String?,
+        @RequestHeader(STAFF_TOKEN_HEADER, required = false) staffToken: String?,
         @RequestBody request: DeviceAuthorizationRevocationRequest,
     ): ResponseEntity<Void> {
-        try {
+        val bffClient = try {
             bffClientAuthenticator.authenticate(authorization)
         } catch (_: BffAuthenticationException) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
@@ -69,9 +70,15 @@ class DeviceAuthorizationController(
             deviceGrantService.revoke(
                 request.eventId,
                 request.edgeDeviceId,
+                staffToken = staffToken,
+                bffClient = bffClient,
                 permanent = request.permanent ?: true,
             )
             ResponseEntity.noContent().build()
+        } catch (_: StaffTokenInvalidException) {
+            ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
+        } catch (_: StaffNotAuthorizedException) {
+            ResponseEntity.status(HttpStatus.FORBIDDEN).build()
         } catch (_: DeviceGrantRejectedException) {
             ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
         }

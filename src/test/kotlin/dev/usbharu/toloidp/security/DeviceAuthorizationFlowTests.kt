@@ -399,6 +399,29 @@ class DeviceAuthorizationFlowTests(
     }
 
     @Test
+    fun revocationRequiresVerifiedStaffEventRoleAndBffCredentials() {
+        val edgeDeviceId = "aaaaaaaaaaaaaaab"
+
+        revoke("event-1", edgeDeviceId, staffToken = null)
+            .andExpect(status().isUnauthorized)
+        revoke("event-1", edgeDeviceId, staffToken = staffToken(tenantId = "tenant-b"))
+            .andExpect(status().isForbidden)
+        revoke("event-3", edgeDeviceId)
+            .andExpect(status().isForbidden)
+        revoke("event-1", edgeDeviceId)
+            .andExpect(status().isNoContent)
+
+        mockMvc.perform(
+            post("/api/device-authorization/revoke")
+                .with(httpBasic("console-ui", "wrong-secret"))
+                .header(STAFF_TOKEN_HEADER, staffToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(revocationBody("event-1", edgeDeviceId, null)),
+        )
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test
     fun deviceAuthorizationRejectsCameraSuppliedEventAndEdgeBindings() {
         mockMvc.perform(
             post("/oauth2/device_authorization")
@@ -489,13 +512,18 @@ class DeviceAuthorizationFlowTests(
                 .content(approvalBody(userCode, eventId, edgeDeviceId, reapproval)),
         )
 
-    private fun revoke(eventId: String, edgeDeviceId: String, permanent: Boolean? = null) =
-        mockMvc.perform(
-            post("/api/device-authorization/revoke")
-                .with(httpBasic("console-ui", "secret"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(revocationBody(eventId, edgeDeviceId, permanent)),
-        )
+    private fun revoke(
+        eventId: String,
+        edgeDeviceId: String,
+        permanent: Boolean? = null,
+        staffToken: String? = staffToken(),
+    ) = mockMvc.perform(
+        post("/api/device-authorization/revoke")
+            .with(httpBasic("console-ui", "secret"))
+            .apply { if (staffToken != null) header(STAFF_TOKEN_HEADER, staffToken) }
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(revocationBody(eventId, edgeDeviceId, permanent)),
+    )
 
     private fun performConcurrently(
         vararg requests: () -> MockHttpServletResponse,
@@ -574,17 +602,20 @@ class DeviceAuthorizationFlowTests(
         assertTrue(!jwt.expiresAt!!.isAfter(Instant.now().plusSeconds(601)))
     }
 
-    private fun staffToken(): String {
+    private fun staffToken(
+        tenantId: String = "tenant-a",
+        subject: String = IdpUserDetailsManager.DEVELOPMENT_USER_ID,
+    ): String {
         val now = Instant.now()
         val claims = JwtClaimsSet.builder()
             .issuer("http://localhost:8080")
-            .subject(IdpUserDetailsManager.DEVELOPMENT_USER_ID)
+            .subject(subject)
             .audience(listOf("backend-api"))
             .issuedAt(now)
             .notBefore(now)
             .expiresAt(now.plusSeconds(300))
             .claim("client_id", "console-ui")
-            .claim("tenant_id", "tenant-a")
+            .claim("tenant_id", tenantId)
             .claim("token_use", TOKEN_USE_TENANT_ACCESS)
             .build()
         return jwtEncoder.encode(
