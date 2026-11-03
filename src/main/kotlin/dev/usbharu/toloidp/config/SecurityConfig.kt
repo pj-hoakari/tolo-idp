@@ -6,6 +6,8 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet
 import com.nimbusds.jose.jwk.source.JWKSource
 import com.nimbusds.jose.proc.SecurityContext
 import dev.usbharu.toloidp.audit.AuditService
+import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
@@ -34,6 +36,7 @@ import org.springframework.security.access.hierarchicalroles.RoleHierarchy
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer
+import org.springframework.security.core.Authentication
 import org.springframework.security.core.AuthenticationException
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
@@ -62,6 +65,8 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationServerMetadataClaimNames
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationProvider
@@ -254,6 +259,15 @@ class SecurityConfig {
                 .tokenIntrospectionEndpoint { introspectionEndpoint ->
                     introspectionEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
                     introspectionEndpoint.introspectionResponseHandler(tokenIntrospectionResponseHandler())
+                    introspectionEndpoint.authenticationProviders { providers ->
+                        providers.replaceAll { provider ->
+                            if (provider is OAuth2TokenIntrospectionAuthenticationProvider) {
+                                tokenIntrospectionClientGuard(provider)
+                            } else {
+                                provider
+                            }
+                        }
+                    }
                 }
                 .tokenRevocationEndpoint { revocationEndpoint ->
                     revocationEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
@@ -394,6 +408,23 @@ class SecurityConfig {
         httpResponse.setStatusCode(HttpStatus.BAD_REQUEST)
         converter.write(error, null, httpResponse)
     }
+
+    private fun tokenIntrospectionClientGuard(delegate: AuthenticationProvider): AuthenticationProvider =
+        object : AuthenticationProvider {
+            override fun authenticate(authentication: Authentication): Authentication? {
+                val client = (authentication.principal as? OAuth2ClientAuthenticationToken)
+                    ?.takeIf { it.isAuthenticated }
+                    ?.registeredClient
+                    ?: return delegate.authenticate(authentication)
+                val policy = ClientPolicy.from(client)
+                if (policy == null || policy.clientType != ClientType.CONFIDENTIAL || !policy.tokenIntrospectionAllowed) {
+                    throw OAuth2AuthenticationException(OAuth2Error(OAuth2ErrorCodes.INVALID_CLIENT))
+                }
+                return delegate.authenticate(authentication)
+            }
+
+            override fun supports(authentication: Class<*>): Boolean = delegate.supports(authentication)
+        }
 
     private fun tokenIntrospectionResponseHandler(): AuthenticationSuccessHandler {
         val converter = OAuth2TokenIntrospectionHttpMessageConverter()

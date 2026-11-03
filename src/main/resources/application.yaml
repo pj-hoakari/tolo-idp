@@ -100,6 +100,16 @@ spring:
               authorization-code-time-to-live: 5m
               access-token-time-to-live: 15m
               access-token-format: self-contained
+          service-gateway:
+            registration:
+              client-id: service-gateway
+              client-secret: "${TOLO_IDP_SERVICE_GATEWAY_CLIENT_SECRET:gateway-secret}"
+              client-name: Development service gateway
+              client-authentication-methods:
+                - client_secret_basic
+                - client_secret_post
+              authorization-grant-types:
+                - refresh_token
 
 tolo-idp:
   relation:
@@ -115,6 +125,10 @@ tolo-idp:
         - tenant_access:event_access
       tenant-access-ttl: 15m
       event-access-ttl: 10m
+    service-gateway:
+      allowed-audiences:
+        - backend-api
+      token-introspection-allowed: true
   issuer: http://localhost:18080
   seed:
     enabled: true

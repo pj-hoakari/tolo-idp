@@ -15,6 +15,7 @@ fun RegisteredClientConfigurationSynchronizer.synchronizeTestClients(
             } else {
                 emptySet()
             },
+            tokenIntrospectionAllowed = client.registration.clientId == "service-gateway",
         )
     })
 }

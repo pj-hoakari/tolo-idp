@@ -31,7 +31,7 @@ issuer は `http://localhost:18080` です。コンテナ内では `localhost` �
 
 ログイン API は IdP と同一オリジンから呼ぶ前提です。RP の callback は seed client に登録済みの `http://127.0.0.1:8080/login/oauth2/code/client-123` を使用します。302 は追従しないため、callback サーバーは不要です。
 
-seed user `user-123`、client `client-123` と `relation-stub/sample.json` を使用します。seed の認証情報や client policy を変更した既存 DB では、シナリオの前提と一致させてください。テストのために既存 volume を削除する必要はありません。
+seed user `user-123`、client `client-123`、Introspection 用の client `service-gateway` と `relation-stub/sample.json` を使用します。seed の認証情報や client policy を変更した既存 DB では、シナリオの前提と一致させてください。テストのために既存 volume を削除する必要はありません。
 
 ホストに同じバージョンの runn がある場合は、起動済みアプリに直接実行できます。
 
@@ -47,7 +47,7 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 2. `/api/login` で tenant-a を選択し、HttpOnly のセッション cookie を保持する。
 3. PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定し、認可コード付きの302を確認する。
 4. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
-5. 認証付き Introspection で tenant_access の claim を確認する。
+5. `service-gateway` の認証付き Introspection で tenant_access の claim を確認する。`client-123` の Introspection は `invalid_client` になることを確認する。
 6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
 7. staff の event-2 への設計・構成の書き込みは `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
 8. Refresh Token による更新、ローテーション、旧 token の再利用拒否、新 token での再更新と scope 縮小を確認する。

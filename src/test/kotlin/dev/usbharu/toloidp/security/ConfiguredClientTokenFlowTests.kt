@@ -111,7 +111,7 @@ class ConfiguredClientTokenFlowTests(
                 assertEquals(listOf("configured-api"), event.audience)
                 assertEquals(45, Duration.between(event.issuedAt, event.expiresAt).seconds.toInt())
                 assertEquals("event_access", event.claims["token_use"])
-                val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to eventToken)), authenticate = true)
+                val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to eventToken)), basicCredentials = "service-gateway:gateway-secret")
                 assertEquals(200, introspection.statusCode())
                 assertEquals(true, json(introspection)["active"])
                 assertEquals(0, jdbc.queryForObject(
@@ -217,7 +217,7 @@ class ConfiguredClientTokenFlowTests(
                 assertEquals(400, rejected.statusCode())
                 assertEquals("invalid_grant", json(rejected)["error"])
                 for (token in listOf(currentRefresh, access)) {
-                    val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to token)), authenticate = true)
+                    val introspection = send(http, "/oauth2/introspect", form(mapOf("token" to token)), basicCredentials = "service-gateway:gateway-secret")
                     assertEquals(200, introspection.statusCode())
                     assertEquals(mapOf("active" to false), json(introspection))
                 }

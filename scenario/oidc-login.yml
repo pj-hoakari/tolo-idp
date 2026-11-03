@@ -21,6 +21,8 @@ vars:
   tenant_id: tenant-a
   client_id: client-123
   client_secret: secret
+  gateway_client_id: service-gateway
+  gateway_client_secret: gateway-secret
   redirect_uri: http://127.0.0.1:8080/login/oauth2/code/client-123
   audience: backend-api
   scope: openid tenant.read events.read events.manage events.operate events.report
@@ -37,6 +39,8 @@ secrets:
   - vars.client_secret
   - vars.code_verifier
   - '"Basic " + toBase64(vars.client_id + ":" + vars.client_secret)'
+  - vars.gateway_client_secret
+  - '"Basic " + toBase64(vars.gateway_client_id + ":" + vars.gateway_client_secret)'
   - authorization_code
   - tenant_access_token
   - 'split(tenant_access_token, ".")[1]'
@@ -179,7 +183,7 @@ steps:
         post:
           useCookie: false
           headers:
-            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+            Authorization: 'Basic {{ toBase64(vars.gateway_client_id + ":" + vars.gateway_client_secret) }}'
           body:
             application/x-www-form-urlencoded:
               token: "{{ tenant_access_token }}"
@@ -206,6 +210,19 @@ steps:
       && "role" not in current.res.body
       && "tenant_role" not in current.res.body
       && "event_role" not in current.res.body
+
+  reject_client_introspection:
+    desc: Service Gateway 以外の client による Introspection を拒否する
+    idp:
+      "{{ introspection_path }}":
+        post:
+          useCookie: false
+          headers:
+            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+          body:
+            application/x-www-form-urlencoded:
+              token: "{{ tenant_access_token }}"
+    test: current.res.status == 400 && current.res.body == {"error":"invalid_client"}
 
   exchange:
     desc: tenant_access を event-1 の event_access に交換する
@@ -253,7 +270,7 @@ steps:
         post:
           useCookie: false
           headers:
-            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+            Authorization: 'Basic {{ toBase64(vars.gateway_client_id + ":" + vars.gateway_client_secret) }}'
           body:
             application/x-www-form-urlencoded:
               token: "{{ event_access_token }}"
@@ -428,7 +445,7 @@ steps:
         post:
           useCookie: false
           headers:
-            Authorization: 'Basic {{ toBase64(vars.client_id + ":" + vars.client_secret) }}'
+            Authorization: 'Basic {{ toBase64(vars.gateway_client_id + ":" + vars.gateway_client_secret) }}'
           body:
             application/x-www-form-urlencoded:
               token: "{{ final_access_token }}"
