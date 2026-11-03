@@ -90,6 +90,41 @@ class OidcRequestContractTests(
     }
 
     @Test
+    fun promptNoneIssuesCodeForAuthenticatedConnectionClientSession() {
+        val session = login()
+        val redirect = "http://127.0.0.1:3000/api/auth/connection/callback"
+        val result = mvc.perform(
+            get("/oauth2/authorize").session(session)
+                .queryParam("response_type", "code")
+                .queryParam("client_id", "observation-connection")
+                .queryParam("redirect_uri", redirect)
+                .queryParam("scope", "openid events.read")
+                .queryParam("state", "connection-state")
+                .queryParam("nonce", "connection-nonce")
+                .queryParam("prompt", "none")
+                .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+                .queryParam("code_challenge_method", "S256"),
+        ).andExpect(status().isFound).andReturn()
+        val parameters = UriComponentsBuilder.fromUriString(result.response.redirectedUrl!!).build().queryParams
+        assertNull(parameters.getFirst("error"))
+        assertEquals("connection-state", parameters.getFirst("state"))
+        val code = parameters.getFirst("code")!!
+        val tokens = mvc.perform(
+            post("/oauth2/token").with(httpBasic("observation-connection", "secret"))
+                .param("grant_type", "authorization_code")
+                .param("code", code)
+                .param("redirect_uri", redirect)
+                .param("code_verifier", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        ).andExpect(status().isOk).andReturn().response.contentAsString
+        val access = decoder.decode(json.readTree(tokens)["access_token"].stringValue())
+        assertEquals("observation-connection", access.claims["client_id"])
+        assertEquals("tenant_access", access.claims["token_use"])
+        assertEquals("tenant-a", access.claims["tenant_id"])
+        assertEquals(setOf("openid", "events.read"), (access.claims["scope"] as String).split(" ").toSet())
+        assertTrue(tokens.contains("refresh_token"))
+    }
+
+    @Test
     fun initialPromptLoginCanResumeAfterFrontendLoginWithoutTenantParameter() {
         val initial = mvc.perform(authorize().queryParam("prompt", "login"))
         assertError(initial, "login_required")

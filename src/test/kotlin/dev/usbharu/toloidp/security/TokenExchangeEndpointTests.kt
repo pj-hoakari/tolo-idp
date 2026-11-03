@@ -713,6 +713,33 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
+    fun connectionClientExchangesItsOwnTenantAccessForEventsReadEventAccess() {
+        val subjectToken = saveTenantAuthorization(
+            clientId = CONNECTION_CLIENT_ID,
+            scopes = setOf("openid", "events.read"),
+        )
+
+        val result = mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken = subjectToken,
+                clientId = CONNECTION_CLIENT_ID,
+                clientSecret = CONNECTION_CLIENT_SECRET,
+            ),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").value("events.read"))
+            .andReturn()
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        assertEquals("observation-connection", jwt.claims["client_id"])
+        assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
+        assertEquals("tenant-a", jwt.claims["tenant_id"])
+        assertEquals("event-1", jwt.claims["event_id"])
+        assertEquals("events.read", jwt.claims["scope"])
+        assertEquals("success", latestAudit()["result"])
+    }
+
+    @Test
     fun edgeDeviceIdIsRejectedForOtherClientsAndInvalidValues() {
         val subjectToken = saveTenantAuthorization()
         mockMvc.perform(tokenExchangeRequest(subjectToken, edgeDeviceId = "0123456789abcdef"))
@@ -971,5 +998,7 @@ class TokenExchangeEndpointTests(
         const val OTHER_CONFIDENTIAL_CLIENT_SECRET = "other-secret"
         const val EDGE_PAGE_CLIENT_ID = "edge-page"
         const val EDGE_PAGE_CLIENT_SECRET = "edge-page-secret"
+        const val CONNECTION_CLIENT_ID = "observation-connection"
+        const val CONNECTION_CLIENT_SECRET = "secret"
     }
 }
