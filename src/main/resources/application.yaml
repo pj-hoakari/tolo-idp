@@ -171,6 +171,13 @@ spring:
                 - http://127.0.0.1:3000/api/auth/machine/callback
                 - http://localhost:13001/api/auth/machine/callback
                 - http://127.0.0.1:13001/api/auth/machine/callback
+              post-logout-redirect-uris:
+                - http://localhost:3000/auth/logged-out
+                - http://127.0.0.1:3000/auth/logged-out
+                - http://localhost:13000/auth/logged-out
+                - http://127.0.0.1:13000/auth/logged-out
+                - http://localhost:13001/auth/logged-out
+                - http://127.0.0.1:13001/auth/logged-out
               scopes:
                 - openid
                 - profile
