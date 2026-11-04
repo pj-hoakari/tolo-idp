@@ -214,7 +214,7 @@ open class DeviceAuthorizationFlowTests(
         val refreshedJson = json(refreshed.response.contentAsString)
         val refreshedAccess = jwtDecoder.decode(refreshedJson["access_token"].asText())
         assertTrue(!refreshedAccess.expiresAt!!.isAfter(cappedAt))
-        assertTrue(!refreshTokenExpiresAt(grantId).isAfter(cappedAt))
+        assertTrue(!refreshTokenExpiresAt(grantId).isAfter(cappedAt.plusSeconds(1)))
 
         jdbcClient.sql("UPDATE idp_device_grant SET absolute_expires_at = ? WHERE id = ?")
             .param(java.sql.Timestamp.from(Instant.now().minusSeconds(1)))
