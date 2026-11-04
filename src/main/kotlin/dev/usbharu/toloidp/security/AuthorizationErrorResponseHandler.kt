@@ -3,12 +3,15 @@ package dev.usbharu.toloidp.security
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.security.core.AuthenticationException
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationContext
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationValidator
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.web.DefaultRedirectStrategy
 import org.springframework.security.web.authentication.AuthenticationFailureHandler
@@ -95,8 +98,8 @@ class AuthorizationErrorResponseHandler(
         val authorization = exception.authorizationCodeRequestAuthentication
         val redirectUri = authorization?.redirectUri
         val registeredClient = authorization?.clientId?.let(registeredClientRepository::findByClientId)
-        if (authorization == null || redirectUri.isNullOrEmpty() ||
-            registeredClient == null || redirectUri !in registeredClient.redirectUris
+        if (authorization == null || redirectUri.isNullOrEmpty() || registeredClient == null ||
+            !isAllowedRedirectUri(authorization, registeredClient)
         ) {
             redirects.sendRedirect(request, response, errorPage(error.errorCode))
             return
@@ -110,6 +113,21 @@ class AuthorizationErrorResponseHandler(
             if (!value.isNullOrEmpty()) location.queryParam(name, UriUtils.encode(value, Charsets.UTF_8))
         }
         redirects.sendRedirect(request, response, location.build(true).toUriString())
+    }
+
+    private fun isAllowedRedirectUri(
+        authorization: OAuth2AuthorizationCodeRequestAuthenticationToken,
+        registeredClient: org.springframework.security.oauth2.server.authorization.client.RegisteredClient,
+    ): Boolean {
+        val context = OAuth2AuthorizationCodeRequestAuthenticationContext.with(authorization)
+            .registeredClient(registeredClient)
+            .build()
+        return try {
+            OAuth2AuthorizationCodeRequestAuthenticationValidator.DEFAULT_REDIRECT_URI_VALIDATOR.accept(context)
+            true
+        } catch (_: OAuth2AuthenticationException) {
+            false
+        }
     }
 }
 

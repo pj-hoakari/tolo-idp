@@ -225,6 +225,19 @@ class OidcRequestContractTests(
     }
 
     @Test
+    fun clientErrorRedirectAllowsLoopbackDynamicPorts() {
+        val session = login()
+        val redirect = "http://127.0.0.1:49152/login/oauth2/code/client-123"
+        val location = mvc.perform(authorize(session, redirectUri = redirect, resource = null))
+            .andExpect(status().isFound)
+            .andReturn().response.redirectedUrl!!
+        val parameters = UriComponentsBuilder.fromUriString(location).build().queryParams
+        assertTrue(location.startsWith("$redirect?"))
+        assertEquals("invalid_request", parameters.getFirst("error"))
+        assertEquals("request-state", parameters.getFirst("state"))
+    }
+
+    @Test
     fun scopeAndMembershipErrorsReturnToClientWithState() {
         val session = login()
         cache.deleteAll()
