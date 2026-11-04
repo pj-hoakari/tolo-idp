@@ -5,39 +5,32 @@ import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
-import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationToken
 
-/**
- * Device code grant provider that records the initial refresh token for reuse detection.
- *
- * The Spring Authorization Server provider remains responsible for the RFC 8628 error
- * behaviour and for issuing tokens. Device grants only add the refresh-token history used
- * to revoke a grant when an old token is presented again.
- *
- * This provider is created manually in [dev.usbharu.toloidp.config.SecurityConfig], so the
- * transaction boundary is declared on [DeviceGrantService.recordIssuedRefreshToken] instead.
- */
+/** Delegates the camera's complete initial exchange to a Spring-managed transaction. */
 open class SpecDeviceCodeAuthenticationProvider(
     private val delegate: OAuth2DeviceCodeAuthenticationProvider,
-    private val authorizationService: OAuth2AuthorizationService,
     private val deviceGrantService: DeviceGrantService,
     private val cameraClientId: String,
 ) : AuthenticationProvider {
-    override fun authenticate(authentication: Authentication): Authentication {
-        val result = delegate.authenticate(authentication) as OAuth2AccessTokenAuthenticationToken
-        if (result.registeredClient.clientId != cameraClientId) {
-            return result
+    override fun authenticate(authentication: Authentication): Authentication? {
+        val request = authentication as OAuth2DeviceCodeAuthenticationToken
+        val client = (request.principal as? OAuth2ClientAuthenticationToken)?.registeredClient
+        if (client?.clientId != cameraClientId) {
+            return delegate.authenticate(authentication)
         }
-        val refreshToken = result.refreshToken
-            ?: throw OAuth2AuthenticationException(OAuth2Error("server_error"))
-        val authorization = authorizationService.findByToken(refreshToken.tokenValue, OAuth2TokenType.REFRESH_TOKEN)
-            ?: throw OAuth2AuthenticationException(OAuth2Error("server_error"))
-        deviceGrantService.recordIssuedRefreshToken(authorization.id, refreshToken)
-        return result
+        return try {
+            deviceGrantService.exchangeDeviceCode(request.deviceCode) {
+                delegate.authenticate(authentication) as OAuth2AccessTokenAuthenticationToken
+            }
+        } catch (ex: OAuth2AuthenticationException) {
+            throw ex
+        } catch (_: RuntimeException) {
+            throw OAuth2AuthenticationException(OAuth2Error("server_error"))
+        }
     }
 
     override fun supports(authentication: Class<*>): Boolean =

@@ -1,6 +1,8 @@
 package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.audit.AuditLogRepository
+import dev.usbharu.toloidp.devicegrant.DeviceGrantRepository
+import dev.usbharu.toloidp.devicegrant.DeviceGrantService
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
@@ -8,28 +10,9 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.RelationRole
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-import org.springframework.http.MediaType
-import org.springframework.jdbc.core.simple.JdbcClient
-import org.springframework.mock.web.MockHttpServletResponse
-import org.springframework.security.oauth2.core.AuthorizationGrantType
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm
-import org.springframework.security.oauth2.jwt.JwtClaimsSet
-import org.springframework.security.oauth2.jwt.JwtDecoder
-import org.springframework.security.oauth2.jwt.JwtEncoder
-import org.springframework.security.oauth2.jwt.JwtEncoderParameters
-import org.springframework.security.oauth2.jwt.JwsHeader
-import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
-import org.springframework.test.web.servlet.MockMvc
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -39,6 +22,33 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.http.MediaType
+import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.mock.web.MockHttpServletResponse
+import org.springframework.mock.web.MockHttpSession
+import org.springframework.security.core.userdetails.User
+import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm
+import org.springframework.security.oauth2.jwt.JwsHeader
+import org.springframework.security.oauth2.jwt.JwtClaimsSet
+import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.jwt.JwtEncoder
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.web.util.UriComponentsBuilder
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -50,6 +60,10 @@ open class DeviceAuthorizationFlowTests(
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
     @Autowired private val auditLogRepository: AuditLogRepository,
 ) {
+    @Autowired private lateinit var clients: RegisteredClientRepository
+    @Autowired private lateinit var users: IdpUserDetailsManager
+    @Autowired private lateinit var deviceRepository: DeviceGrantRepository
+
     @BeforeEach
     fun setUp() {
         jdbcClient.sql("DELETE FROM idp_device_grant_refresh_token").update()
@@ -75,6 +89,34 @@ open class DeviceAuthorizationFlowTests(
                 expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
             ),
         )
+    }
+
+    @Test
+    fun unapprovedCameraDeviceCodeWithoutGrantRemainsPending() {
+        val code = startDeviceAuthorization()
+        assertEquals(0L, jdbcClient.sql("SELECT COUNT(*) FROM idp_device_grant").query(Long::class.java).single())
+
+        poll(code).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("authorization_pending"))
+    }
+
+    @Test
+    fun expiredCameraDeviceCodeWithoutGrantReturnsExpiredToken() {
+        val code = startDeviceAuthorization()
+        jdbcClient.sql("UPDATE oauth2_authorization SET device_code_issued_at = ?, device_code_expires_at = ? WHERE device_code_value = ?")
+            .param(java.sql.Timestamp.from(Instant.now().minusSeconds(600)))
+            .param(java.sql.Timestamp.from(Instant.now().minusSeconds(1)))
+            .param(code)
+            .update()
+        assertEquals(0L, jdbcClient.sql("SELECT COUNT(*) FROM idp_device_grant").query(Long::class.java).single())
+
+        poll(code).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("expired_token"))
+    }
+
+    @Test
+    fun unknownCameraDeviceCodeWithoutGrantReturnsInvalidGrant() {
+        assertEquals(0L, jdbcClient.sql("SELECT COUNT(*) FROM idp_device_grant").query(Long::class.java).single())
+
+        poll("unknown-device-code").andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_grant"))
     }
 
     @Test
@@ -465,6 +507,190 @@ open class DeviceAuthorizationFlowTests(
             .andExpect(jsonPath("$.edge_device_id").value(edgeDeviceId))
     }
 
+    @Test
+    fun approvedButExpiredCodeRetainsTheDeviceFlowError() {
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", "bdbdbdbdbdbdbdbd").andExpect(status().isOk)
+        jdbcClient.sql("UPDATE oauth2_authorization SET device_code_issued_at = ?, device_code_expires_at = ? WHERE device_code_value = ?")
+            .param(java.sql.Timestamp.from(Instant.now().minusSeconds(600)))
+            .param(java.sql.Timestamp.from(Instant.now().minusSeconds(60))).param(code).update()
+        poll(code).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("expired_token"))
+    }
+
+    @Test
+    fun initialCodeCanOnlyBeExchangedOnceUnderConcurrency() {
+        val edge = "dddddddddddddddd"
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", edge).andExpect(status().isOk)
+        val responses = performConcurrently({ poll(code).andReturn().response }, { poll(code).andReturn().response })
+        assertEquals(listOf(200, 400), responses.map { it.status }.sorted())
+        assertEquals("invalid_grant", json(responses.single { it.status == 400 }.contentAsString)["error"].stringValue())
+        assertEquals(1L, jdbcClient.sql("SELECT COUNT(*) FROM idp_device_grant_refresh_token").query(Long::class.java).single())
+    }
+
+    @Test
+    fun initialExchangeRacingWithRevokeLeavesNoUsableTokens() {
+        val edge = "eeeeeeeeeeeeeeee"
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", edge).andExpect(status().isOk)
+        val responses = performConcurrently({ poll(code).andReturn().response }, { revoke("event-1", edge).andReturn().response })
+        assertEquals(204, responses[1].status)
+        assertNotNull(grant(edge).revokedAt)
+        if (responses[0].status == 200) {
+            val tokens = json(responses[0].contentAsString)
+            val jti = jwtDecoder.decode(tokens["access_token"].stringValue()).id!!
+            assertEquals(1L, jdbcClient.sql("SELECT COUNT(*) FROM idp_jti_denylist WHERE jti = ?").param(jti).query(Long::class.java).single())
+            refresh(tokens["refresh_token"].stringValue()).andExpect(status().isBadRequest)
+        } else {
+            assertEquals(400, responses[0].status)
+            assertEquals("invalid_grant", json(responses[0].contentAsString)["error"].stringValue())
+        }
+    }
+
+    @Test
+    fun initialHistoryFailureRollsBackCodeConsumptionAndAuthorization() {
+        val edge = "ffffffffffffffff"
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", edge).andExpect(status().isOk)
+        jdbcClient.sql("ALTER TABLE idp_device_grant_refresh_token ADD COLUMN persistence_fault varchar(1) NOT NULL").update()
+        try {
+            poll(code).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("server_error"))
+            assertEquals(0L, jdbcClient.sql("SELECT COUNT(*) FROM oauth2_authorization WHERE access_token_value IS NOT NULL OR refresh_token_value IS NOT NULL").query(Long::class.java).single())
+            assertEquals(0L, jdbcClient.sql("SELECT COUNT(*) FROM idp_device_grant_refresh_token").query(Long::class.java).single())
+        } finally {
+            jdbcClient.sql("ALTER TABLE idp_device_grant_refresh_token DROP COLUMN persistence_fault").update()
+        }
+        poll(code).andExpect(status().isOk)
+        poll(code).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_grant"))
+    }
+
+    @Test
+    fun removedCameraScopeRejectsRefreshAndInitialIssuance() {
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", "abababababababab").andExpect(status().isOk)
+        val rt = json(poll(code).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].stringValue()
+        val next = startDeviceAuthorization()
+        approve(userCodeFor(next), "event-1", "acacacacacacacac").andExpect(status().isOk)
+        val original = clients.findByClientId("esp-camera")!!
+        try {
+            clients.save(RegisteredClient.from(original).scopes { it.clear() }.build())
+            refresh(rt).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_scope"))
+            poll(next).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_scope"))
+        } finally {
+            clients.save(original)
+        }
+    }
+
+    @Test
+    fun staffTokenWithoutJtiCannotApproveOrRevoke() {
+        val token = staffToken(jti = null)
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", "babababababababa", token = token).andExpect(status().isUnauthorized)
+        revoke("event-1", "babababababababa", staffToken = token).andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun revokedIssuedStaffAccessTokenCannotApproveOrRevoke() {
+        val session = mockMvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+            .content("""{"username":"user-123","password":"password","tenantId":"tenant-a"}"""))
+            .andExpect(status().isOk).andReturn().request.session as MockHttpSession
+        val redirect = "http://127.0.0.1:8080/login/oauth2/code/client-123"
+        val location = mockMvc.perform(get("/oauth2/authorize").session(session)
+            .queryParam("client_id", "client-123").queryParam("response_type", "code").queryParam("redirect_uri", redirect)
+            .queryParam("scope", "tenant.read").queryParam("resource", "https://api.example.com/tenants/tenant-a").queryParam("audience", "backend-api")
+            .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"))
+            .andExpect(status().isFound).andReturn().response.redirectedUrl!!
+        val authCode = UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
+        val tokens = json(mockMvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
+            .param("grant_type", "authorization_code").param("code", authCode).param("redirect_uri", redirect)
+            .param("code_verifier", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        val token = tokens["access_token"].stringValue()
+        val edge = "adadadadadadadad"
+        revoke("event-1", edge, permanent = false, staffToken = token).andExpect(status().isNoContent)
+        mockMvc.perform(post("/oauth2/revoke").with(httpBasic("client-123", "secret")).param("token", token)).andExpect(status().isOk)
+        revoke("event-1", edge, staffToken = token).andExpect(status().isUnauthorized)
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", edge, reapproval = true, token = token).andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun lifecycleRevocationRequiresExactServiceResourceAndSurvivesMembershipRemoval() {
+        val edge = "aeaeaeaeaeaeaeae"
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", edge).andExpect(status().isOk)
+        val rt = json(poll(code).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].stringValue()
+        // A valid tenant membership without any event membership represents an archived event.
+        cacheRepository.deleteAll()
+        cacheRepository.save(RelationMembershipCache(
+            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+            membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
+            cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
+        ))
+        revoke("event-1", edge).andExpect(status().isForbidden)
+        val original = clients.findByClientId("console-ui")!!
+        fun serviceRevoke(tenant: String = "tenant-a", event: String = "event-1", permanent: Boolean = true) =
+            mockMvc.perform(post("/api/device-authorization/revoke").with(httpBasic("console-ui", "secret"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"tenant_id":"$tenant","event_id":"$event","edge_device_id":"$edge","permanent":$permanent}"""))
+        serviceRevoke().andExpect(status().isForbidden)
+        try {
+            val settings = ClientSettings.withSettings(original.clientSettings.settings)
+                .setting(DeviceGrantService.LIFECYCLE_RESOURCES_SETTING,
+                    listOf("https://api.example.com/tenants/tenant-a/events/event-1")).build()
+            clients.save(RegisteredClient.from(original).clientSettings(settings).build())
+            serviceRevoke(tenant = "tenant-b").andExpect(status().isForbidden)
+            serviceRevoke(event = "event-2").andExpect(status().isForbidden)
+            serviceRevoke(permanent = false).andExpect(status().isForbidden)
+            serviceRevoke().andExpect(status().isNoContent)
+            serviceRevoke().andExpect(status().isNoContent)
+            assertEquals(true, revocation(edge)?.permanent)
+            refresh(rt).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("invalid_grant"))
+        } finally {
+            clients.save(original)
+        }
+    }
+
+    @Test
+    fun sameEventAndEdgeInTwoTenantsRemainIndependent() {
+        val edge = "afafafafafafafaf"
+        users.createUser("tenant-b", User.withUsername("camera-staff").password("{noop}password").roles("USER").build())
+        try {
+            val subject = users.loadUserByUsername("tenant-b", "camera-staff").id
+            cacheRepository.save(RelationMembershipCache(
+                cacheId = RelationMembershipCacheId("tenant-b", "camera-staff"),
+                membership = TenantMembership("tenant-b", RelationRole.OWNER, listOf(EventMembership("event-1", RelationRole.OWNER))),
+                cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
+            ))
+            val tokenB = staffToken("tenant-b", subject)
+            val codeA = startDeviceAuthorization()
+            approve(userCodeFor(codeA), "event-1", edge).andExpect(status().isOk)
+            val rtA = json(poll(codeA).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].stringValue()
+            val codeB = startDeviceAuthorization()
+            approve(userCodeFor(codeB), "event-1", edge, token = tokenB).andExpect(status().isOk)
+            val rtB = json(poll(codeB).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].stringValue()
+            refresh(rtA).andExpect(status().isOk)
+            val replaceA = startDeviceAuthorization()
+            approve(userCodeFor(replaceA), "event-1", edge).andExpect(status().isOk)
+            revoke("event-1", edge, permanent = false).andExpect(status().isNoContent)
+            assertNull(deviceRepository.findRevocation("tenant-b", "event-1", edge))
+            refresh(rtB).andExpect(status().isOk)
+            revoke("event-1", edge, staffToken = tokenB).andExpect(status().isNoContent)
+            val reapproveA = startDeviceAuthorization()
+            approve(userCodeFor(reapproveA), "event-1", edge, reapproval = true).andExpect(status().isOk)
+            assertNull(deviceRepository.findRevocation("tenant-a", "event-1", edge))
+            assertEquals(true, deviceRepository.findRevocation("tenant-b", "event-1", edge)?.permanent)
+            poll(reapproveA).andExpect(status().isOk)
+            val replacementA = startDeviceAuthorization()
+            approve(userCodeFor(replacementA), "event-1", edge).andExpect(status().isOk)
+            val nextB = startDeviceAuthorization()
+            approve(userCodeFor(nextB), "event-1", edge, reapproval = true, token = tokenB).andExpect(status().isBadRequest)
+            assertEquals(2L, grantLockCount(edge))
+        } finally {
+            users.deleteUser("tenant-b", "camera-staff")
+        }
+    }
+
     protected fun startDeviceAuthorization(): String {
         val result = mockMvc.perform(
             post("/oauth2/device_authorization")
@@ -505,11 +731,12 @@ open class DeviceAuthorizationFlowTests(
         eventId: String,
         edgeDeviceId: String,
         reapproval: Boolean? = null,
+        token: String = staffToken(),
     ) =
         mockMvc.perform(
             post("/api/device-authorization/approve")
                 .with(httpBasic("console-ui", "secret"))
-                .header(STAFF_TOKEN_HEADER, staffToken())
+                .header(STAFF_TOKEN_HEADER, token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(approvalBody(userCode, eventId, edgeDeviceId, reapproval)),
         )
@@ -605,6 +832,7 @@ open class DeviceAuthorizationFlowTests(
         assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.getClaimAsString("token_use"))
         assertEquals("tenant-a", jwt.getClaimAsString("tenant_id"))
         assertEquals(eventId, jwt.getClaimAsString("event_id"))
+        assertEquals("https://api.example.com/tenants/tenant-a/events/$eventId", jwt.getClaimAsString("resource"))
         assertEquals(edgeDeviceId, jwt.getClaimAsString("edge_device_id"))
         assertEquals(listOf("backend-api"), jwt.audience)
         assertTrue(!jwt.expiresAt!!.isAfter(Instant.now().plusSeconds(601)))
@@ -613,6 +841,7 @@ open class DeviceAuthorizationFlowTests(
     private fun staffToken(
         tenantId: String = "tenant-a",
         subject: String = IdpUserDetailsManager.DEVELOPMENT_USER_ID,
+        jti: String? = UUID.randomUUID().toString(),
     ): String {
         val now = Instant.now()
         val claims = JwtClaimsSet.builder()
@@ -622,6 +851,7 @@ open class DeviceAuthorizationFlowTests(
             .issuedAt(now)
             .notBefore(now)
             .expiresAt(now.plusSeconds(300))
+            .apply { if (jti != null) id(jti) }
             .claim("client_id", "console-ui")
             .claim("tenant_id", tenantId)
             .claim("token_use", TOKEN_USE_TENANT_ACCESS)

@@ -288,7 +288,6 @@ class SecurityConfig {
                     providers.add(
                         SpecDeviceCodeAuthenticationProvider(
                             OAuth2DeviceCodeAuthenticationProvider(authorizationService, tokenGenerator),
-                            authorizationService,
                             deviceGrantService,
                             properties.deviceAuthorization.cameraClientId,
                         ),

@@ -10,6 +10,8 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.stereotype.Component
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.time.Clock
+import java.time.Instant
 import java.util.Base64
 
 /**
@@ -23,6 +25,7 @@ class BffClientAuthenticator(
     private val registeredClientRepository: RegisteredClientRepository,
     private val passwordEncoder: PasswordEncoder,
     private val properties: IdpProperties,
+    private val clock: Clock,
 ) {
     fun authenticate(authorizationHeader: String?): RegisteredClient {
         val credentials = parseBasicCredentials(authorizationHeader)
@@ -35,6 +38,9 @@ class BffClientAuthenticator(
         if (policy.clientType != ClientType.CONFIDENTIAL ||
             ClientAuthenticationMethod.CLIENT_SECRET_BASIC !in client.clientAuthenticationMethods
         ) {
+            throw BffAuthenticationException()
+        }
+        if (client.clientSecretExpiresAt?.let { !it.isAfter(Instant.now(clock)) } == true) {
             throw BffAuthenticationException()
         }
         val encodedSecret = client.clientSecret ?: throw BffAuthenticationException()

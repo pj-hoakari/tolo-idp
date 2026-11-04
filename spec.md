@@ -1276,7 +1276,7 @@ Resource Server:
 
 ### 20.3 BFF の承認・失効 API
 
-BFF は IdP のログインセッションを持たず、`console-ui` の client 認証（HTTP Basic）で次の API を呼ぶ。承認するスタッフの識別は、本文の `sub` ではなく `X-Tolo-Staff-Token` の検証済み `tenant_access` から取る。
+BFF は IdP のログインセッションを持たず、`console-ui` の client 認証（HTTP Basic）で次の API を呼ぶ。client secret の有効期限が設定されている場合は現在時刻より後であることを要求する。承認するスタッフの識別は、本文の `sub` ではなく `X-Tolo-Staff-Token` の検証済み `tenant_access` から取る。
 
 ```http
 POST /api/device-authorization/approve
@@ -1290,10 +1290,28 @@ Content-Type: application/json
 ```http
 POST /api/device-authorization/revoke
 Authorization: Basic base64(console-ui:client_secret)
+X-Tolo-Staff-Token: {staff_tenant_access}
 Content-Type: application/json
 
 {"event_id":"event-1","edge_device_id":"0123456789abcdef","permanent":true}
 ```
+
+失効 API は次のいずれかの認証経路を要求する。
+
+- スタッフ操作: `tenant_id` を本文に含めず、`X-Tolo-Staff-Token` と対象イベントの現在の所属権限を検証する。対象テナントはスタッフ JWT から取得する。
+- イベントライフサイクル処理: 本文に `tenant_id` を指定し、スタッフヘッダーは送らない。認証済み BFF の RegisteredClient の ClientSettings にある `tolo-idp.device-lifecycle-resources`（文字列の配列）に、対象の canonical resource `https://{allowed-host}/tenants/{tenant_id}/events/{event_id}` が完全一致で登録されていることを要求する。ワイルドカードやテナント全体の権限は認めない。この経路は `permanent=true` のみ許可し、イベント所属の削除後も冪等に失効できる。未登録・異なるテナント・異なるイベントは `403` とする。
+
+ライフサイクル処理の例:
+
+```http
+POST /api/device-authorization/revoke
+Authorization: Basic base64(console-ui:client_secret)
+Content-Type: application/json
+
+{"tenant_id":"tenant-a","event_id":"event-1","edge_device_id":"0123456789abcdef","permanent":true}
+```
+
+サービス権限は管理者が RegisteredClient に設定する。BFF 認証だけでは失効を許可しない。構成管理対象の client は起動時の同期で設定が置き換わるため、同期後にもサービス権限の登録が必要となる。
 
 `reapproval` は省略可で既定 `false` とする。`true` は、一時失効した端末をスタッフが明示的に再承認する意思を表す。`permanent` は省略可で既定 `true` とする。旧 BFF が省略しても失効が暗黙に解除されないよう、安全側に倒す。
 
@@ -1307,7 +1325,7 @@ Content-Type: application/json
 
 ```text
 - BFF の client 認証
-- スタッフの tenant_access の署名、issuer、期限、audience、token_use、tenant_id
+- スタッフの tenant_access の署名、issuer、期限、audience、token_use、tenant_id、空でない jti、および jti denylist に登録されていないこと（スタッフ操作の失効でも同様）
 - スタッフの tenant 内の user と対象イベントのイベントロール
 - user_code が pending で未使用・未期限切れであること
 - client が esp-camera、要求 scope が events.stream だけであること
@@ -1316,13 +1334,13 @@ Content-Type: application/json
 - 一時失効している場合は reapproval=true であること
 ```
 
-承認すると、IdP は承認したスタッフの `sub`、`tenant_id`、`event_id`、`edge_device_id`、承認日時、承認から7日の絶対期限をデバイス認可として保存し、SAS の device authorization を承認済みにする。承認、失効、Refresh は `edge_device_id` 単位のロック（`idp_device_grant_lock` の行ロック）で直列化し、ロック取得後にデバイス認可、認可状態、失効状態を読み直す。一時失効の解除も同じロックの下で行う。
+承認すると、IdP は承認したスタッフの `sub`、`tenant_id`、`event_id`、`edge_device_id`、承認日時、承認から7日の絶対期限をデバイス認可として保存し、SAS の device authorization を承認済みにする。承認、失効、初回 Device Code 交換、Refresh は `(tenant_id, event_id, edge_device_id)` 単位のロック（`idp_device_grant_lock` の行ロック）で直列化し、ロック取得後にデバイス認可、認可状態、失効状態を読み直す。一時失効の解除、既存認可の置換、失効マーカーの検索・登録も同じテナント・イベントの範囲で行う。初回交換ではロック取得後にコードとデバイス認可を再読込し、コード消費、SAS の token 発行・保存、初回 Refresh Token 履歴保存を同一トランザクションにまとめる。履歴保存に失敗した場合はコード消費を含めてロールバックし、token を返さない。
 
 失効は冪等とする。永久失効済みの `edge_device_id` への新しい承認と、永久・一時を問わず失効中のデバイス認可の Refresh は `invalid_grant` または承認拒否とする。
 
 ### 20.4 トークンと Rotation
 
-デバイス認可から発行する `event_access` は、`sub` を承認したスタッフ、`client_id` を `esp-camera`、`scope` を `events.stream`、`token_use` を `event_access` とし、`tenant_id`、`event_id`、`edge_device_id` を持つ。
+デバイス認可から発行する `event_access` は、`sub` を承認したスタッフ、`client_id` を `esp-camera`、`scope` を `events.stream`、`token_use` を `event_access` とし、`tenant_id`、`event_id`、`edge_device_id`、対象イベントの canonical URI の `resource` を持つ。初回・Refresh の両方で現在の RegisteredClient の scope 上限を検証し、`events.stream` が許可されなくなった場合は `invalid_scope` とする。標準 Refresh でも現在の client の scope 上限を再検証する。
 
 ```text
 AT.exp = min(now + 10m, grant.approved_at + 7d)
@@ -1332,3 +1350,7 @@ RT.exp = min(now + 24h, grant.approved_at + 7d)
 Refresh Token は使うたびにローテーションし、古い token は使えなくする。IdP は提示された Refresh Token を条件付き UPDATE で一度だけ消費し、更新行数が 0 なら再利用とみなしてデバイス認可を一時失効させる。古い token の消費、認可の更新、新しい token の履歴追加は同じトランザクションで行い、途中で保存に失敗した場合はロールバックしたうえでデバイス認可を一時失効させ、古い token を使い続けられないようにする。
 
 置き換え済みの Refresh Token を再び提示した場合は、そのデバイス認可を一時失効させる。Refresh のたびに、承認したスタッフのイベントロール、scope、デバイス認可の有効性を再確認する。7日の絶対期限を超えた Refresh は `invalid_grant` とする。
+
+### 20.5 テナント境界のスキーマ移行
+
+V9 は失効マーカーと端末ロックの主キーを `(tenant_id, event_id, edge_device_id)` に変更する。既存失効マーカーは保存済みデバイス認可が持つ tenant_id へ移す。旧マーカーに対応する認可が複数テナントにある場合は、既存の失効を弱めないよう、それぞれへコピーする。対応する認可がなくテナントを特定できないマーカーがある場合は、黙って削除せず移行を失敗させる。運用側で対象テナントを特定し、旧データの対応付けを解決してから再実行する。H2 で移行に失敗した場合は、残った `idp_device_revocation_migration_guard` の削除と Flyway repair も行う。移行中はアプリケーションを停止し、端末ロック行は再作成する。

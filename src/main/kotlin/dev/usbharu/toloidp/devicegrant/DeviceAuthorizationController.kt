@@ -73,6 +73,7 @@ class DeviceAuthorizationController(
                 staffToken = staffToken,
                 bffClient = bffClient,
                 permanent = request.permanent ?: true,
+                serviceTenantId = request.tenantId,
             )
             ResponseEntity.noContent().build()
         } catch (_: StaffTokenInvalidException) {
@@ -114,6 +115,8 @@ data class DeviceAuthorizationApprovalResponse(
 )
 
 data class DeviceAuthorizationRevocationRequest(
+    @JsonProperty("tenant_id")
+    val tenantId: String? = null,
     @JsonProperty("event_id")
     val eventId: String = "",
     @JsonProperty("edge_device_id")

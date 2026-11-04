@@ -31,6 +31,9 @@ open class SpecRefreshTokenAuthenticationProvider(
         val refreshAuthentication = authentication as OAuth2RefreshTokenAuthenticationToken
         val client = (refreshAuthentication.principal as? OAuth2ClientAuthenticationToken)?.registeredClient
             ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_client"))
+        deviceGrantService.requireCurrentRefreshScopes(
+            refreshAuthentication.refreshToken, client, refreshAuthentication.scopes.orEmpty(),
+        )
         if (client.clientId != cameraClientId) {
             return delegate.authenticate(authentication)
                 ?: throw OAuth2AuthenticationException(OAuth2Error("server_error"))

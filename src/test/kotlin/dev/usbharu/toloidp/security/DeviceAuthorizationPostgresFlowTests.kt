@@ -86,6 +86,15 @@ class DeviceAuthorizationPostgresFlowTests(
         assertEquals(204, response.status)
     }
 
+    @Test
+    fun initialExchangeWaitsForThePostgresEdgeDeviceRowLock() {
+        val edgeDeviceId = "bcbcbcbcbcbcbcbc"
+        val code = startDeviceAuthorization()
+        approve(userCodeFor(code), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val response = assertBlocksOnEdgeLock(edgeDeviceId) { poll(code).andReturn().response }
+        assertEquals(200, response.status)
+    }
+
     private fun assertBlocksOnEdgeLock(
         edgeDeviceId: String,
         request: () -> MockHttpServletResponse,
@@ -95,7 +104,7 @@ class DeviceAuthorizationPostgresFlowTests(
             dataSource.connection.use { lockConnection ->
                 lockConnection.autoCommit = false
                 lockConnection.prepareStatement(
-                    "SELECT edge_device_id FROM idp_device_grant_lock WHERE edge_device_id = ? FOR UPDATE",
+                    "SELECT edge_device_id FROM idp_device_grant_lock WHERE tenant_id = 'tenant-a' AND event_id = 'event-1' AND edge_device_id = ? FOR UPDATE",
                 ).use { statement ->
                     statement.setString(1, edgeDeviceId)
                     statement.executeQuery().use { result ->

@@ -26,6 +26,7 @@ data class DeviceGrantRefreshToken(
 )
 
 data class EdgeDeviceRevocation(
+    val tenantId: String,
     val eventId: String,
     val edgeDeviceId: String,
     val revokedAt: Instant,

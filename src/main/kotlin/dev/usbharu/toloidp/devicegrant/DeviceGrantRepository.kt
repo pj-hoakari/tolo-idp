@@ -24,16 +24,18 @@ class DeviceGrantRepository(
             .optional()
             .orElse(null)
 
-    fun findActiveByEventAndEdge(eventId: String, edgeDeviceId: String): DeviceGrant? =
-        jdbc.sql("$SELECT_GRANT WHERE event_id = :event_id AND edge_device_id = :edge_device_id AND revoked_at IS NULL")
+    fun findActiveByEventAndEdge(tenantId: String, eventId: String, edgeDeviceId: String): DeviceGrant? =
+        jdbc.sql("$SELECT_GRANT WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id AND revoked_at IS NULL")
+            .param("tenant_id", tenantId)
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .query(::mapGrant)
             .optional()
             .orElse(null)
 
-    fun findUnrevokedByEventAndEdge(eventId: String, edgeDeviceId: String): List<DeviceGrant> =
-        jdbc.sql("$SELECT_GRANT WHERE event_id = :event_id AND edge_device_id = :edge_device_id AND revoked_at IS NULL")
+    fun findUnrevokedByEventAndEdge(tenantId: String, eventId: String, edgeDeviceId: String): List<DeviceGrant> =
+        jdbc.sql("$SELECT_GRANT WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id AND revoked_at IS NULL")
+            .param("tenant_id", tenantId)
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .query(::mapGrant)
@@ -78,35 +80,38 @@ class DeviceGrantRepository(
             .param("id", id)
             .update()
 
-    fun markRevokedForEventAndEdge(eventId: String, edgeDeviceId: String, revokedAt: Instant, reason: String): Int =
+    fun markRevokedForEventAndEdge(tenantId: String, eventId: String, edgeDeviceId: String, revokedAt: Instant, reason: String): Int =
         jdbc.sql(
             """
             UPDATE idp_device_grant
             SET revoked_at = :revoked_at, revoked_reason = :reason
-            WHERE event_id = :event_id AND edge_device_id = :edge_device_id AND revoked_at IS NULL
+            WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id AND revoked_at IS NULL
             """.trimIndent(),
         )
             .param("revoked_at", Timestamp.from(revokedAt))
             .param("reason", reason)
+            .param("tenant_id", tenantId)
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .update()
 
-    fun isRevoked(eventId: String, edgeDeviceId: String): Boolean =
-        findRevocation(eventId, edgeDeviceId) != null
+    fun isRevoked(tenantId: String, eventId: String, edgeDeviceId: String): Boolean =
+        findRevocation(tenantId, eventId, edgeDeviceId) != null
 
-    fun findRevocation(eventId: String, edgeDeviceId: String): EdgeDeviceRevocation? =
+    fun findRevocation(tenantId: String, eventId: String, edgeDeviceId: String): EdgeDeviceRevocation? =
         jdbc.sql(
             """
-            SELECT event_id, edge_device_id, revoked_at, permanent
+            SELECT tenant_id, event_id, edge_device_id, revoked_at, permanent
             FROM idp_revoked_edge_device
-            WHERE event_id = :event_id AND edge_device_id = :edge_device_id
+            WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id
             """.trimIndent(),
         )
+            .param("tenant_id", tenantId)
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .query { rs, _ ->
                 EdgeDeviceRevocation(
+                    tenantId = rs.getString("tenant_id"),
                     eventId = rs.getString("event_id"),
                     edgeDeviceId = rs.getString("edge_device_id"),
                     revokedAt = rs.getTimestamp("revoked_at").toInstant(),
@@ -123,6 +128,7 @@ class DeviceGrantRepository(
      * reapprovable again.
      */
     fun markEdgeDeviceRevoked(
+        tenantId: String,
         eventId: String,
         edgeDeviceId: String,
         revokedAt: Instant,
@@ -133,11 +139,12 @@ class DeviceGrantRepository(
             UPDATE idp_revoked_edge_device
             SET revoked_at = :revoked_at,
                 permanent = CASE WHEN permanent THEN TRUE ELSE :permanent END
-            WHERE event_id = :event_id AND edge_device_id = :edge_device_id
+            WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id
             """.trimIndent(),
         )
             .param("revoked_at", Timestamp.from(revokedAt))
             .param("permanent", permanent)
+            .param("tenant_id", tenantId)
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .update()
@@ -147,11 +154,12 @@ class DeviceGrantRepository(
         if (postgres) {
             jdbc.sql(
                 """
-                INSERT INTO idp_revoked_edge_device (event_id, edge_device_id, revoked_at, permanent)
-                VALUES (:event_id, :edge_device_id, :revoked_at, :permanent)
-                ON CONFLICT (event_id, edge_device_id) DO NOTHING
+                INSERT INTO idp_revoked_edge_device (tenant_id, event_id, edge_device_id, revoked_at, permanent)
+                VALUES (:tenant_id, :event_id, :edge_device_id, :revoked_at, :permanent)
+                ON CONFLICT (tenant_id, event_id, edge_device_id) DO NOTHING
                 """.trimIndent(),
             )
+                .param("tenant_id", tenantId)
                 .param("event_id", eventId)
                 .param("edge_device_id", edgeDeviceId)
                 .param("revoked_at", Timestamp.from(revokedAt))
@@ -160,11 +168,12 @@ class DeviceGrantRepository(
         } else {
             jdbc.sql(
                 """
-                MERGE INTO idp_revoked_edge_device (event_id, edge_device_id, revoked_at, permanent)
-                KEY (event_id, edge_device_id)
-                VALUES (:event_id, :edge_device_id, :revoked_at, :permanent)
+                MERGE INTO idp_revoked_edge_device (tenant_id, event_id, edge_device_id, revoked_at, permanent)
+                KEY (tenant_id, event_id, edge_device_id)
+                VALUES (:tenant_id, :event_id, :edge_device_id, :revoked_at, :permanent)
                 """.trimIndent(),
             )
+                .param("tenant_id", tenantId)
                 .param("event_id", eventId)
                 .param("edge_device_id", edgeDeviceId)
                 .param("revoked_at", Timestamp.from(revokedAt))
@@ -176,30 +185,37 @@ class DeviceGrantRepository(
     /**
      * Clears only a temporary revocation. A permanently revoked edge stays revoked.
      */
-    fun clearTemporaryRevocation(eventId: String, edgeDeviceId: String): Int =
+    fun clearTemporaryRevocation(tenantId: String, eventId: String, edgeDeviceId: String): Int =
         jdbc.sql(
             """
             DELETE FROM idp_revoked_edge_device
-            WHERE event_id = :event_id AND edge_device_id = :edge_device_id AND permanent = FALSE
+            WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id AND permanent = FALSE
             """.trimIndent(),
         )
+            .param("tenant_id", tenantId)
             .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .update()
 
-    fun lockEdgeDevice(edgeDeviceId: String) {
-        if (postgres) {
-            jdbc.sql("INSERT INTO idp_device_grant_lock (edge_device_id) VALUES (:edge_device_id) ON CONFLICT DO NOTHING")
-                .param("edge_device_id", edgeDeviceId)
-                .update()
+    fun lockEdgeDevice(tenantId: String, eventId: String, edgeDeviceId: String) {
+        val sql = if (postgres) {
+            "INSERT INTO idp_device_grant_lock (tenant_id, event_id, edge_device_id) " +
+                "VALUES (:tenant_id, :event_id, :edge_device_id) ON CONFLICT DO NOTHING"
         } else {
-            jdbc.sql(
-                "MERGE INTO idp_device_grant_lock (edge_device_id) KEY (edge_device_id) VALUES (:edge_device_id)",
-            )
-                .param("edge_device_id", edgeDeviceId)
-                .update()
+            "MERGE INTO idp_device_grant_lock (tenant_id, event_id, edge_device_id) " +
+                "KEY (tenant_id, event_id, edge_device_id) VALUES (:tenant_id, :event_id, :edge_device_id)"
         }
-        jdbc.sql("SELECT edge_device_id FROM idp_device_grant_lock WHERE edge_device_id = :edge_device_id FOR UPDATE")
+        jdbc.sql(sql)
+            .param("tenant_id", tenantId)
+            .param("event_id", eventId)
+            .param("edge_device_id", edgeDeviceId)
+            .update()
+        jdbc.sql(
+            "SELECT edge_device_id FROM idp_device_grant_lock " +
+                "WHERE tenant_id = :tenant_id AND event_id = :event_id AND edge_device_id = :edge_device_id FOR UPDATE",
+        )
+            .param("tenant_id", tenantId)
+            .param("event_id", eventId)
             .param("edge_device_id", edgeDeviceId)
             .query(String::class.java)
             .single()

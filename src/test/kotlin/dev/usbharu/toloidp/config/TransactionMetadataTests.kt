@@ -81,6 +81,7 @@ class TransactionMetadataTests {
             String::class.java,
             org.springframework.security.oauth2.server.authorization.client.RegisteredClient::class.java,
             Boolean::class.javaPrimitiveType!!,
+            String::class.java,
         )
         assertReadWrite(
             DeviceGrantService::class.java,
@@ -96,9 +97,9 @@ class TransactionMetadataTests {
         )
         assertReadWrite(
             DeviceGrantService::class.java,
-            "recordIssuedRefreshToken",
+            "exchangeDeviceCode",
             String::class.java,
-            org.springframework.security.oauth2.core.OAuth2RefreshToken::class.java,
+            kotlin.jvm.functions.Function0::class.java,
         )
         assertReadOnly(
             DeviceGrantService::class.java,

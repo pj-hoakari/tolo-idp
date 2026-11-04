@@ -81,7 +81,9 @@ class ToloJwtCustomizer(
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throw OAuth2AuthenticationException("invalid_request")
         val grant = deviceGrantService.requireActiveGrant(context.authorization?.id, clientId)
-        if (context.authorizedScopes != setOf(IdpScopes.EVENTS_STREAM)) {
+        if (context.authorizedScopes != setOf(IdpScopes.EVENTS_STREAM) ||
+            !policy.allowedScopes.containsAll(context.authorizedScopes)
+        ) {
             throw OAuth2AuthenticationException(OAuth2Error("invalid_scope"))
         }
         val now = Instant.now()
@@ -104,6 +106,7 @@ class ToloJwtCustomizer(
             .claim("tenant_id", grant.tenantId)
             .claim("event_id", grant.eventId)
             .claim("edge_device_id", grant.edgeDeviceId)
+            .claim("resource", resourceParser.tenantResource(grant.tenantId) + "/events/${grant.eventId}")
         log.structuredDebug(
             "Device event access JWT claims customized",
             "event" to "device_event_access_jwt_claims_customized",
