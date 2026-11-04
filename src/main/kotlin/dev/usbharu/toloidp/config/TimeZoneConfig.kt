@@ -2,8 +2,7 @@ package dev.usbharu.toloidp.config
 
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
+import org.springframework.stereotype.Component
 import java.util.TimeZone
 
 /**
@@ -17,12 +16,9 @@ object UtcTimeZone {
     }
 }
 
-@Configuration
-class TimeZoneConfig {
-    @Bean
-    fun utcTimeZonePostProcessor(): BeanFactoryPostProcessor = object : BeanFactoryPostProcessor {
-        override fun postProcessBeanFactory(beanFactory: ConfigurableListableBeanFactory) {
-            UtcTimeZone.configure()
-        }
+@Component
+class UtcTimeZonePostProcessor : BeanFactoryPostProcessor {
+    override fun postProcessBeanFactory(beanFactory: ConfigurableListableBeanFactory) {
+        UtcTimeZone.configure()
     }
 }
