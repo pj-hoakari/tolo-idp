@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import org.springframework.dao.EmptyResultDataAccessException
 import org.springframework.jdbc.core.JdbcOperations
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
@@ -11,12 +12,13 @@ import org.springframework.transaction.support.TransactionTemplate
 
 interface RefreshRevocationAware {
     fun saveRefreshRevocation(authorization: OAuth2Authorization)
+    fun saveAccessRevocation(authorization: OAuth2Authorization)
 }
 
 /**
- * Serializes refresh-token state changes per authorization row. A normal save after a
- * completed refresh revocation is rejected; the revocation save itself uses the
- * non-checking entry point.
+ * Serializes refresh-token state changes on the authorization row. A normal save after
+ * a completed refresh revocation is rejected; revocation entry points re-read the
+ * current row under the same lock so a stale snapshot cannot overwrite a rotation.
  */
 class RefreshAwareOAuth2AuthorizationService(
     jdbcOperations: JdbcOperations,
@@ -32,7 +34,7 @@ class RefreshAwareOAuth2AuthorizationService(
             return
         }
         transactions.executeWithoutResult {
-            if (stateStore.lockRefreshRevoked(id)) {
+            if (lockRefreshState(id) == true) {
                 throw OAuth2AuthenticationException(OAuth2Error("invalid_grant"))
             }
             super.save(authorization)
@@ -40,13 +42,37 @@ class RefreshAwareOAuth2AuthorizationService(
     }
 
     override fun saveRefreshRevocation(authorization: OAuth2Authorization) {
-        val id = authorization.id ?: run {
-            save(authorization)
-            return
-        }
+        val id = authorization.id ?: return
+        val target = authorization.refreshToken?.token?.tokenValue ?: return
         transactions.executeWithoutResult {
-            stateStore.lockAndRevokeRefresh(id)
-            super.save(authorization)
+            if (lockRefreshState(id) != false) return@executeWithoutResult
+            val current = super.findById(id) ?: return@executeWithoutResult
+            val currentRefresh = current.refreshToken?.token ?: return@executeWithoutResult
+            if (currentRefresh.tokenValue != target) return@executeWithoutResult
+            stateStore.markRefreshRevoked(id)
+            super.save(OAuth2Authorization.from(current).invalidate(currentRefresh).build())
         }
     }
+
+    override fun saveAccessRevocation(authorization: OAuth2Authorization) {
+        val id = authorization.id ?: return
+        val target = authorization.accessToken?.token?.tokenValue ?: return
+        transactions.executeWithoutResult {
+            // Lock the same row so a concurrent refresh cannot rotate the access token
+            // between the read and the invalidation. Access revocation is allowed after
+            // refresh revocation.
+            if (lockRefreshState(id) == null) return@executeWithoutResult
+            val current = super.findById(id) ?: return@executeWithoutResult
+            val currentAccess = current.accessToken?.token ?: return@executeWithoutResult
+            if (currentAccess.tokenValue != target) return@executeWithoutResult
+            super.save(OAuth2Authorization.from(current).invalidate(currentAccess).build())
+        }
+    }
+
+    private fun lockRefreshState(id: String): Boolean? =
+        try {
+            stateStore.lockRefreshRevoked(id)
+        } catch (_: EmptyResultDataAccessException) {
+            null
+        }
 }
