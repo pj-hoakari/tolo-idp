@@ -90,7 +90,9 @@ class Bucket4jRedisRateLimitServiceTests {
         assertFalse(decision.allowed)
         assertEquals(RateLimitDimension.IP, decision.rejectedDimension)
         assertEquals(Duration.ofMinutes(1), decision.retryAfter)
-        assertEquals(2, fixture.buckets.values.count { it.availableTokens == 10L })
+        // IP is checked first, so the denied request must not create user buckets.
+        assertEquals(3, fixture.buckets.size)
+        assertEquals(0, fixture.buckets.values.count { it.availableTokens == 10L })
         assertTrue(fixture.service.consume(RateLimitIdentity("192.0.2.2", "user-456")).allowed)
     }
 
