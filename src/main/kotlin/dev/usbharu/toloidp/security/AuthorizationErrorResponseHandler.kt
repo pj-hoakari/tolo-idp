@@ -9,6 +9,7 @@ import org.springframework.security.oauth2.core.OAuth2ErrorCodes
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.web.DefaultRedirectStrategy
 import org.springframework.security.web.authentication.AuthenticationFailureHandler
 import org.springframework.web.util.UriComponentsBuilder
@@ -25,6 +26,7 @@ class LoginChallengeRejectedException :
 
 class AuthorizationErrorResponseHandler(
     private val challenges: LoginChallenges,
+    private val registeredClientRepository: RegisteredClientRepository,
     private val loginPage: URI,
     private val errorPage: URI,
 ) : AuthenticationFailureHandler {
@@ -92,7 +94,10 @@ class AuthorizationErrorResponseHandler(
         val error = exception.error
         val authorization = exception.authorizationCodeRequestAuthentication
         val redirectUri = authorization?.redirectUri
-        if (authorization == null || redirectUri.isNullOrEmpty()) {
+        val registeredClient = authorization?.clientId?.let(registeredClientRepository::findByClientId)
+        if (authorization == null || redirectUri.isNullOrEmpty() ||
+            registeredClient == null || redirectUri !in registeredClient.redirectUris
+        ) {
             redirects.sendRedirect(request, response, errorPage(error.errorCode))
             return
         }

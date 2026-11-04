@@ -258,6 +258,7 @@ class SecurityConfig {
                 authorizationEndpoint.errorResponseHandler(
                     AuthorizationErrorResponseHandler(
                         loginChallenges,
+                        registeredClientRepository,
                         properties.login.pageUri(),
                         properties.login.errorPageUri(),
                     ),

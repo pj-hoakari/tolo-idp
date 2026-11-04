@@ -183,6 +183,33 @@ class OidcRequestContractTests(
     }
 
     @Test
+    fun preValidationErrorsNeverRedirectToTheRequestedUri() {
+        assertLoginErrorPage(
+            mvc.perform(
+                get("/oauth2/authorize")
+                    .queryParam("response_type", "code")
+                    .queryParam("client_id", "service-gateway")
+                    .queryParam("redirect_uri", "https://attacker.invalid/callback")
+                    .queryParam("scope", "tenant.read")
+                    .queryParam("state", "request-state"),
+            ),
+            "unauthorized_client",
+        )
+        assertLoginErrorPage(
+            mvc.perform(
+                get("/oauth2/authorize")
+                    .queryParam("response_type", "code")
+                    .queryParam("client_id", "client-123")
+                    .queryParam("redirect_uri", "https://attacker.invalid/callback")
+                    .queryParam("scope", "tenant.read")
+                    .queryParam("state", "request-state")
+                    .queryParam("request_uri", "urn:ietf:params:oauth:request_uri:probe___0"),
+            ),
+            "invalid_request",
+        )
+    }
+
+    @Test
     fun unreturnableAuthorizationErrorsGoToTheWebErrorPage() {
         assertLoginErrorPage(mvc.perform(authorize(clientId = "unknown-client", redirectUri = "https://attacker.invalid/callback")), "invalid_request")
         assertLoginErrorPage(mvc.perform(authorize(redirectUri = "https://attacker.invalid/callback")), "invalid_request")
