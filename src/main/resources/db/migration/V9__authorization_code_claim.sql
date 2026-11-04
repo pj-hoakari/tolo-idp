@@ -1,4 +1,5 @@
 CREATE TABLE idp_authorization_code_claim (
     code_hash varchar(64) NOT NULL PRIMARY KEY,
-    expires_at timestamp NOT NULL
+    expires_at timestamp NOT NULL,
+    completed boolean NOT NULL DEFAULT false
 );

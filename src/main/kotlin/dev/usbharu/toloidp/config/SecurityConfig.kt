@@ -296,7 +296,12 @@ class SecurityConfig {
                         ?.let { codeProvider ->
                             providers.remove(codeProvider)
                             providers.add(
-                                SingleUseAuthorizationCodeAuthenticationProvider(codeProvider, codeClaimStore, clock),
+                                SingleUseAuthorizationCodeAuthenticationProvider(
+                                    codeProvider,
+                                    codeClaimStore,
+                                    authorizationService,
+                                    clock,
+                                ),
                             )
                         }
                 }
