@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpSession
@@ -46,6 +47,7 @@ class LoginChallengeFlowTests(
     @Autowired private val cache: RelationMembershipCacheRepository,
     @Autowired private val json: JsonMapper,
     @Autowired private val decoder: JwtDecoder,
+    @Autowired private val jdbc: JdbcTemplate,
 ) {
     @BeforeEach
     fun membership() {
@@ -137,6 +139,16 @@ class LoginChallengeFlowTests(
         assertLoginErrorPage(mvc.perform(resumeAuthorization(challenge, session).queryParam("challenge", challenge)))
         assertLoginErrorPage(mvc.perform(post("/oauth2/authorize").param("challenge", challenge).session(session)))
         exchange(mvc.perform(resumeAuthorization(challenge, session)))
+    }
+
+    @Test
+    fun codeRedemptionIsClaimedInTheDatabase() {
+        val challenge = mvc.challengeFrom(authorize())
+        val session = mvc.loginWithChallengeSession(challenge)
+        exchange(mvc.perform(resumeAuthorization(challenge, session)))
+
+        val claims = jdbc.queryForObject("SELECT COUNT(*) FROM idp_authorization_code_claim", Int::class.java)!!
+        assertTrue(claims > 0)
     }
 
     @Test
