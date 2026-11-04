@@ -725,7 +725,7 @@ jti
 token_use
 resource
 tenant_id または event_id
-edge_device_id（ESP カメラの event_access と観測ページのedge用 event_access）
+edge_device_id（ESP カメラ、およびカメラを指定した観測ページ・接続用 client の event_access）
 ```
 
 Introspection Response とログに以下を含めてはならない。
@@ -769,6 +769,8 @@ event_id
 
 デバイス認可から発行した ESP カメラの `event_access` は、さらに `edge_device_id` を必須とする。`sub` は承認したスタッフ、`scope` は `events.stream`、`client_id` は `esp-camera` とする。
 
+観測ページ・接続用 client の Token Exchange で `edge_device_id` を指定した場合、発行する `event_access` に同名の claim を含める。省略した場合は claim を含めない。
+
 ### 13.5 JWT に含めない claim
 
 以下の claim は JWT に含めない。
@@ -798,7 +800,7 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &scope=events.read events.manage events.operate events.report
 ```
 
-観測ページ client（`edge-page`）の Token Exchange では、`edge_device_id` パラメータを追加できる。16 桁の小文字 hex だけを受理し、`event_access` の `edge_device_id` claim に載せる。ほかの client がこのパラメータを送った場合は `invalid_request` とする。
+観測ページ client（`tolo-idp.device-authorization.observation-page-client-id`、既定 `edge-page`）と接続用 client（`tolo-idp.device-authorization.connection-client-id`、既定 `observation-connection`）の Token Exchange では、対象カメラの `edge_device_id` パラメータを追加できる。`^[0-9a-f]{16}$` に一致する16桁の小文字 hex だけを受理し、入力値を変更せず `event_access` の `edge_device_id` claim に載せる。不正な値、またはほかの client がこのパラメータを送った場合は `invalid_request` とする。
 
 Authorization Server は以下を確認する。
 
@@ -816,7 +818,7 @@ Authorization Server は以下を確認する。
 - resource の eventId が relation service の memberships[0].event_roles[].event_id に存在する
 - requested_scope が subject_token.scope を超えていない
 - requested_scope が client / event_role に許可されている
-- `edge_device_id` を送る場合は client が `edge-page` で、値が `^[0-9a-f]{16}$` に一致する
+- `edge_device_id` を送る場合は client が設定された観測ページ・接続用 client のいずれかで、値が `^[0-9a-f]{16}$` に一致する
 ```
 
 ---
@@ -1267,6 +1269,8 @@ Resource Server:
 | `console-ui` | confidential | `client_secret_basic` / `client_secret_post` | Authorization Code、Refresh Token、Token Exchange | ロールに応じた scope | `backend-api` |
 
 `esp-camera` は Token Exchange を使えない。`events.stream` は `esp-camera` と承認済みデバイス認可だけに発行し、ほかの client の scope 上限には加えない。
+
+接続用 client は、自身の `tenant_access` から `events.read` の `event_access` へ交換する際に、対象カメラの `edge_device_id` を指定できる。指定時は同名の claim を発行し、Edge Bridge は接続対象カメラの ID と照合して最終認可に使う。カメラの指定は省略可能とし、既存の audience・resource・membership・scope 検証は指定の有無にかかわらず適用する。
 
 ### 20.2 標準エンドポイント
 

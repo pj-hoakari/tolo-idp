@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.NullSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -716,8 +717,10 @@ class TokenExchangeEndpointTests(
         assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
     }
 
-    @Test
-    fun connectionClientExchangesItsOwnTenantAccessForEventsReadEventAccess() {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = ["0123456789abcdef"])
+    fun connectionClientExchangesItsOwnTenantAccessForEventsReadEventAccess(edgeDeviceId: String?) {
         val subjectToken = saveTenantAuthorization(
             clientId = CONNECTION_CLIENT_ID,
             scopes = setOf("openid", "events.read"),
@@ -728,6 +731,7 @@ class TokenExchangeEndpointTests(
                 subjectToken = subjectToken,
                 clientId = CONNECTION_CLIENT_ID,
                 clientSecret = CONNECTION_CLIENT_SECRET,
+                edgeDeviceId = edgeDeviceId,
             ),
         )
             .andExpect(status().isOk)
@@ -740,29 +744,46 @@ class TokenExchangeEndpointTests(
         assertEquals("tenant-a", jwt.claims["tenant_id"])
         assertEquals("event-1", jwt.claims["event_id"])
         assertEquals("events.read", jwt.claims["scope"])
+        if (edgeDeviceId == null) {
+            assertFalse(jwt.claims.containsKey("edge_device_id"))
+        } else {
+            assertEquals(edgeDeviceId, jwt.claims["edge_device_id"])
+        }
         assertEquals("success", latestAudit()["result"])
     }
 
     @Test
-    fun edgeDeviceIdIsRejectedForOtherClientsAndInvalidValues() {
+    fun edgeDeviceIdIsRejectedForOtherClients() {
         val subjectToken = saveTenantAuthorization()
         mockMvc.perform(tokenExchangeRequest(subjectToken, edgeDeviceId = "0123456789abcdef"))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
         assertEquals("edge_device_id_not_allowed", latestAudit()["failure_reason"])
+        assertEquals("failure", latestAudit()["result"])
+    }
 
-        val edgeSubjectToken = saveTenantAuthorization(clientId = EDGE_PAGE_CLIENT_ID)
-        mockMvc.perform(
-            tokenExchangeRequest(
-                subjectToken = edgeSubjectToken,
-                clientId = EDGE_PAGE_CLIENT_ID,
-                clientSecret = EDGE_PAGE_CLIENT_SECRET,
-                edgeDeviceId = "0123456789ABCDEF",
-            ),
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_request"))
-        assertEquals("edge_device_id_invalid", latestAudit()["failure_reason"])
+    @ParameterizedTest
+    @ValueSource(strings = ["", "0123456789ABCDEF", "0123456789abcdeg", "0123456789abcde", "0123456789abcdef0", " 0123456789abcdef", "0123456789abcdef ", "０１２３４５６７８９abcdef"])
+    fun edgeDeviceIdIsRejectedForInvalidValues(edgeDeviceId: String) {
+        for ((clientId, clientSecret) in listOf(
+            EDGE_PAGE_CLIENT_ID to EDGE_PAGE_CLIENT_SECRET,
+            CONNECTION_CLIENT_ID to CONNECTION_CLIENT_SECRET,
+        )) {
+            val subjectToken = saveTenantAuthorization(clientId = clientId)
+            mockMvc.perform(
+                tokenExchangeRequest(
+                    subjectToken = subjectToken,
+                    clientId = clientId,
+                    clientSecret = clientSecret,
+                    edgeDeviceId = edgeDeviceId,
+                ),
+            )
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_request"))
+                .andExpect(jsonPath("$.error_description").doesNotExist())
+            assertEquals("edge_device_id_invalid", latestAudit()["failure_reason"])
+            assertEquals("failure", latestAudit()["result"])
+        }
     }
 
     private fun tokenExchangeRequest(

@@ -522,6 +522,7 @@ class SecurityConfig {
             auditService,
             clock,
             properties.deviceAuthorization.observationPageClientId,
+            properties.deviceAuthorization.connectionClientId,
         )
 
     /**

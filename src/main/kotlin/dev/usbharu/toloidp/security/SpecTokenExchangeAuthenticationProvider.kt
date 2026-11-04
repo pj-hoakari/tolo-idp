@@ -59,6 +59,7 @@ open class SpecTokenExchangeAuthenticationProvider(
     private val auditService: AuditService,
     private val clock: Clock,
     private val observationPageClientId: String,
+    private val connectionClientId: String,
 ) : AuthenticationProvider {
     /**
      * Token Exchange リクエストを認証し、すべての仕様チェックに成功した場合だけ単一の
@@ -124,7 +125,9 @@ open class SpecTokenExchangeAuthenticationProvider(
             }
             val edgeDeviceId = tokenExchange.additionalParameters[EDGE_DEVICE_ID_PARAMETER]
             if (edgeDeviceId != null) {
-                if (registeredClient.clientId != observationPageClientId) {
+                if (registeredClient.clientId != observationPageClientId &&
+                    registeredClient.clientId != connectionClientId
+                ) {
                     fail("invalid_request", "edge_device_id_not_allowed")
                 }
                 if (edgeDeviceId !is String || !EDGE_DEVICE_ID_PATTERN.matches(edgeDeviceId)) {
