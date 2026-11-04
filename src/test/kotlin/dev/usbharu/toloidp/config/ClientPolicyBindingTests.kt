@@ -10,6 +10,8 @@ import org.springframework.boot.context.properties.source.MapConfigurationProper
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ClientPolicyBindingTests {
     @Test
@@ -17,10 +19,14 @@ class ClientPolicyBindingTests {
         val properties = bind(mapOf(
             "tolo-idp.clients.web-app.allowed-audiences" to "backend-api",
             "tolo-idp.clients.web-app.event-access-ttl" to "45s",
+            "tolo-idp.clients.gateway.allowed-audiences" to "backend-api",
+            "tolo-idp.clients.gateway.token-introspection-allowed" to "true",
         ))
         val config = properties.clients.getValue("web-app")
         assertEquals(setOf("backend-api"), config.allowedAudiences)
         assertEquals(Duration.ofSeconds(45), config.eventAccessTtl)
+        assertFalse(config.tokenIntrospectionAllowed)
+        assertTrue(properties.clients.getValue("gateway").tokenIntrospectionAllowed)
     }
 
     @Test

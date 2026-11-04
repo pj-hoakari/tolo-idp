@@ -236,7 +236,7 @@ class TokenIntrospectionClientRemovalTests(
 
     private fun introspect(token: String): HttpResponse<String> =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build().use { http ->
-            val credentials = Base64.getEncoder().encodeToString("client-123:secret".toByteArray(Charsets.UTF_8))
+            val credentials = Base64.getEncoder().encodeToString("service-gateway:gateway-secret".toByteArray(Charsets.UTF_8))
             val request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/oauth2/introspect"))
                 .timeout(Duration.ofSeconds(10))
                 .header("Authorization", "Basic $credentials")

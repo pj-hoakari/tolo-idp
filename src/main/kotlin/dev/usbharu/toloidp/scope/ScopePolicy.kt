@@ -26,7 +26,7 @@ class UnknownRelationRoleException : RuntimeException("relation_role_unknown")
 /**
  * relation role から scope を導出し、要求 scope を検証する中心的な policy。
  *
- * 呼び出し側は requested scope を明示的に渡す。許可外 scope は暗黙に縮小せず拒否する。
+ * 呼び出し側は requested scope を明示的に渡す。tenant_access の認可要求ではロールと client の登録 scope を超える scope を発行対象から外し、それ以外の許可外 scope は拒否する。
  */
 @Component
 class ScopePolicy(
@@ -55,19 +55,42 @@ class ScopePolicy(
         }
     }
 
-    /** 所有権取得用 scope と通常の業務 scope の併用を拒否し、tenant role を検証する。 */
+    /** tenant role を検証する。 */
     fun requireTenantAccessScopes(requested: Set<String>, role: RelationRole, reason: String) {
-        if (IdpScopes.TENANT_CLAIM in requested &&
-            (requested - IDENTITY_SCOPES - IdpScopes.TENANT_CLAIM).isNotEmpty()
-        ) {
-            throw ScopeNotAllowedException(reason)
-        }
         requireAllowed(requested - IDENTITY_SCOPES, allowedScopes(role), reason)
     }
 
-    /** client / subject の保存済み設定にかかわらず、廃止済み scope と tenant.claim を拒否する。 */
+    fun isRegistrationRequest(requested: Set<String>): Boolean = requested == REGISTRATION_SCOPES
+
+    fun requireRegistrationRequest(clientScopes: Set<String>) {
+        if (IdpScopes.TENANT_JOIN !in clientScopes) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_client")
+        }
+    }
+
+    fun requireTenantAccessRequest(requested: Set<String>, clientScopes: Set<String>) {
+        requireAllowed(requested, IdpScopes.SUPPORTED, "scope_not_allowed_for_role")
+        if (IdpScopes.TENANT_JOIN in requested) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_token_use")
+        }
+        if (IdpScopes.OPENID in requested && IdpScopes.OPENID !in clientScopes) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_client")
+        }
+    }
+
+    fun grantTenantAccessScopes(requested: Set<String>, role: RelationRole, clientScopes: Set<String>): Set<String> {
+        requireTenantAccessRequest(requested, clientScopes)
+        val allowed = (IDENTITY_SCOPES + allowedScopes(role)) intersect clientScopes
+        val granted = requested.filterTo(linkedSetOf()) { it in allowed }
+        if (granted.isEmpty() && requested.isNotEmpty()) {
+            throw ScopeNotAllowedException("scope_not_allowed_for_role")
+        }
+        return granted
+    }
+
+    /** client / subject の保存済み設定にかかわらず、廃止済み scope と tenant.join を拒否する。 */
     fun requireEventAccessScopes(requested: Set<String>) {
-        if (IdpScopes.TENANT_CLAIM in requested) {
+        if (IdpScopes.TENANT_JOIN in requested) {
             throw ScopeNotAllowedException("scope_not_allowed_for_token_use")
         }
         requireAllowed(requested, IdpScopes.SUPPORTED, "scope_not_allowed_for_role")
@@ -77,6 +100,7 @@ class ScopePolicy(
         const val SCOPE_AUTHORITY_PREFIX = "SCOPE_"
 
         val IDENTITY_SCOPES: Set<String> = IdpScopes.IDENTITY
+        val REGISTRATION_SCOPES: Set<String> = setOf(IdpScopes.TENANT_JOIN)
 
         fun defaultRoleHierarchy(): RoleHierarchy =
             RoleHierarchyImpl.fromHierarchy(
@@ -84,12 +108,10 @@ class ScopePolicy(
                 ROLE_OWNER > ROLE_STAFF
                 ROLE_ADMIN > ROLE_STAFF
                 ROLE_OWNER > SCOPE_${IdpScopes.TENANT_WRITE}
-                ROLE_OWNER > SCOPE_${IdpScopes.EVENTS_MANAGE}
                 ROLE_ADMIN > SCOPE_${IdpScopes.TENANT_WRITE}
-                ROLE_ADMIN > SCOPE_${IdpScopes.EVENTS_MANAGE}
                 ROLE_STAFF > SCOPE_${IdpScopes.TENANT_READ}
-                ROLE_STAFF > SCOPE_${IdpScopes.TENANT_CLAIM}
                 ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_READ}
+                ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_MANAGE}
                 ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_OPERATE}
                 ROLE_STAFF > SCOPE_${IdpScopes.EVENTS_REPORT}
                 """.trimIndent(),

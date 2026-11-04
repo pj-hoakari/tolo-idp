@@ -31,6 +31,8 @@ docker compose -f docker-compose.dev.native.yaml up -d --build
 
 The example environment uses `http://localhost:18080` for both IdP URLs. The Better Auth callback is `http://localhost:3000/api/auth/callback/tolo-idp`, which is registered for the development client `client-123`.
 
+After a revocation, the app checks the access token through Introspection with the development Service Gateway client `service-gateway`. Only that client may call the Introspection endpoint. Set `TOLO_IDP_GATEWAY_CLIENT_ID` and `TOLO_IDP_GATEWAY_CLIENT_SECRET` to use other credentials.
+
 ## Run this app
 
 ```bash
@@ -41,20 +43,22 @@ npx auth@latest migrate
 npm run dev
 ```
 
-Open http://localhost:3000 and use:
+Open http://localhost:3000 and sign in with:
 
 - username: `user-123`
 - password: `password`
-- tenant: `tenant-a`
+
+The harness selects tenant `tenant-a` with the `resource` authorization parameter in `src/lib/auth.ts`.
 
 The example credentials are for local development only. `.env.local` and `sqlite.db` are excluded from Git.
 
 ## Phase 1: OIDC login
 
-1. Click **1. Login to IdP**.
-2. Click **2. Continue with OIDC**.
+1. Click **Sign in with tolo-idp**.
+2. tolo-idp redirects to http://localhost:3000/login with a login challenge. Enter the credentials and click **Log in**.
+3. The login page sends the credentials and the challenge to `/api/login`, then opens `/oauth2/authorize?challenge=...`. tolo-idp resumes the original authorization request and redirects to the Better Auth callback.
 
-Better Auth completes the Authorization Code flow with PKCE and verifies the ID token. After OIDC completes, open http://localhost:3000/dashboard.
+Better Auth completes the Authorization Code flow with PKCE and verifies the ID token. After OIDC completes, open http://localhost:3000/dashboard. When tolo-idp rejects a challenge, it redirects to http://localhost:3000/auth/error.
 
 ## Phase 2: Token Exchange
 
@@ -75,7 +79,7 @@ Event ID `event-3` with `user-123` should fail because relation-stub has no even
 ## Phase 3: Refresh and revoke
 
 1. Click **4. Refresh tokens**. Expect `refreshTokenRotated: true`, `refreshTokenSaved: true`, `idTokenIssued: true`, and a new `jti`. Better Auth's standard refresh API updates and saves the tokens.
-2. Click **End IdP session**, then refresh again. Refresh should still succeed because the Better Auth session and refresh token remain valid.
+2. Click **End IdP session**. The harness sends the browser to the `end_session_endpoint` from Discovery with the latest ID token as `id_token_hint`. tolo-idp ends its session and redirects to http://localhost:3000/auth/logged-out, which is registered for `client-123`. Go back to the dashboard and refresh again. Refresh should still succeed because the Better Auth session and refresh token remain valid.
 3. Click **5. Revoke refresh token**. Expect `revoked: true` and `accessTokenActive: false`.
 4. Refresh again. Expect the operation to fail because the refresh token has been revoked.
 5. Click **Sign out of Better Auth and sign in again** to start over.

@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import com.sun.net.httpserver.HttpServer
 import dev.usbharu.toloidp.audit.AuditLogRepository
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.savePolicy
@@ -12,6 +13,7 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.RelationRole
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -36,14 +38,18 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.net.InetSocketAddress
 import java.security.Principal
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import kotlin.test.assertEquals
@@ -70,13 +76,15 @@ class TokenExchangeEndpointTests(
         auditLogRepository.deleteAll()
         jtiDenylistRepository.deleteAll()
         cacheRepository.deleteAll()
+        relationPaths.clear()
+        relationEventRoles = """[{"event_id": "event-1", "role": "owner"}, {"event_id": "event-staff", "role": "staff"}]"""
         replaceClient123Policy()
         ensurePublicPolicyClient()
         ensureOtherConfidentialClient()
         ensureEdgePageClient()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -385,23 +393,6 @@ class TokenExchangeEndpointTests(
         assertEquals("scope_exceeds_subject_token", latestAudit()["failure_reason"])
     }
 
-    @Test
-    fun rejectsManageScopeForStaffEventMemberAsInvalidScope() {
-        val subjectToken = saveTenantAuthorization()
-
-        mockMvc.perform(
-            tokenExchangeRequest(
-                subjectToken = subjectToken,
-                resource = "https://api.example.com/tenants/tenant-a/events/event-staff",
-                scope = "events.manage",
-            ),
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_scope"))
-
-        assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
-    }
-
     @ParameterizedTest
     @CsvSource(
         "event-1, events.manage",
@@ -410,7 +401,8 @@ class TokenExchangeEndpointTests(
         "event-1, events.read events.manage events.operate events.report",
         "event-staff, events.operate",
         "event-staff, events.report",
-        "event-staff, events.read events.operate events.report",
+        "event-staff, events.manage",
+        "event-staff, events.read events.manage events.operate events.report",
         "event-1, tenant.read tenant.write",
         "event-staff, tenant.read",
     )
@@ -468,9 +460,9 @@ class TokenExchangeEndpointTests(
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["tenant.claim", "tenant.claim events.read"])
-    fun rejectsClaimOnTokenExchangeAsInvalidScope(scope: String) {
-        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.claim"))
+    @ValueSource(strings = ["tenant.join", "tenant.join events.read"])
+    fun rejectsTenantJoinOnTokenExchangeAsInvalidScope(scope: String) {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.join"))
         mockMvc.perform(tokenExchangeRequest(subjectToken, scope = scope))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_scope"))
@@ -481,8 +473,8 @@ class TokenExchangeEndpointTests(
     }
 
     @Test
-    fun claimOnlySubjectCannotBeExchangedForEventScopes() {
-        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.claim"))
+    fun tenantJoinOnlySubjectCannotBeExchangedForEventScopes() {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("tenant.join"))
         mockMvc.perform(tokenExchangeRequest(subjectToken))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
@@ -655,6 +647,41 @@ class TokenExchangeEndpointTests(
             .andExpect(jsonPath("$.error").value("invalid_grant"))
             .andExpect(jsonPath("$.error_description").doesNotExist())
 
+        assertEquals("user_not_event_member", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun exchangesForEventAddedUpstreamAfterMembershipWasCached() {
+        relationEventRoles = """[{"event_id": "event-1", "role": "owner"}, {"event_id": "event-new", "role": "owner"}]"""
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken = subjectToken,
+                resource = "https://api.example.com/tenants/tenant-a/events/event-new",
+                scope = "events.manage",
+            ),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").value("events.manage"))
+
+        assertEquals(listOf("/tenants/tenant-a/users/${IdpUserDetailsManager.DEVELOPMENT_USER_ID}/memberships"), relationPaths)
+    }
+
+    @Test
+    fun missingEventIsRefetchedExactlyOnceBeforeDenial() {
+        val subjectToken = saveTenantAuthorization()
+
+        mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken = subjectToken,
+                resource = "https://api.example.com/tenants/tenant-a/events/event-missing",
+            ),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+
+        assertEquals(listOf("/tenants/tenant-a/users/${IdpUserDetailsManager.DEVELOPMENT_USER_ID}/memberships"), relationPaths)
         assertEquals("user_not_event_member", latestAudit()["failure_reason"])
     }
 
@@ -834,7 +861,7 @@ class TokenExchangeEndpointTests(
         subjectAudience: Any? = listOf("backend-api"),
         tenantId: String = "tenant-a",
         subjectResource: String? = "https://api.example.com/tenants/$tenantId",
-        scopes: Set<String> = IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_CLAIM,
+        scopes: Set<String> = IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_JOIN,
         jti: String? = "jti-${UUID.randomUUID()}",
         clientId: String = "client-123",
     ): String {
@@ -1025,5 +1052,32 @@ class TokenExchangeEndpointTests(
         const val EDGE_PAGE_CLIENT_SECRET = "edge-page-secret"
         const val CONNECTION_CLIENT_ID = "observation-connection"
         const val CONNECTION_CLIENT_SECRET = "secret"
+
+        private val relationPaths = CopyOnWriteArrayList<String>()
+
+        @Volatile
+        private var relationEventRoles = "[]"
+
+        private val relationServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { exchange ->
+                relationPaths.add(exchange.requestURI.rawPath)
+                val body = """{"memberships": [{"user_id": "${IdpUserDetailsManager.DEVELOPMENT_USER_ID}", "tenant_id": "tenant-a", "tenant_role": "owner", "event_roles": $relationEventRoles}]}"""
+                    .toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            Thread(this::start).apply {
+                isDaemon = true
+                start()
+                join()
+            }
+        }
+
+        @DynamicPropertySource
+        @JvmStatic
+        fun relationProperties(registry: DynamicPropertyRegistry) {
+            registry.add("tolo-idp.relation.base-url") { "http://127.0.0.1:${relationServer.address.port}" }
+        }
     }
 }

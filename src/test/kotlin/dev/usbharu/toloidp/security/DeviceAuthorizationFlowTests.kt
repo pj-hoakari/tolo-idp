@@ -76,7 +76,7 @@ open class DeviceAuthorizationFlowTests(
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -497,7 +497,7 @@ open class DeviceAuthorizationFlowTests(
 
         mockMvc.perform(
             post("/oauth2/introspect")
-                .with(httpBasic("console-ui", "secret"))
+                .with(httpBasic("service-gateway", "gateway-secret"))
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .param("token", accessToken),
         )
@@ -591,14 +591,15 @@ open class DeviceAuthorizationFlowTests(
 
     @Test
     fun revokedIssuedStaffAccessTokenCannotApproveOrRevoke() {
-        val session = mockMvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
-            .content("""{"username":"user-123","password":"password","tenantId":"tenant-a"}"""))
-            .andExpect(status().isOk).andReturn().request.session as MockHttpSession
         val redirect = "http://127.0.0.1:8080/login/oauth2/code/client-123"
-        val location = mockMvc.perform(get("/oauth2/authorize").session(session)
-            .queryParam("client_id", "client-123").queryParam("response_type", "code").queryParam("redirect_uri", redirect)
-            .queryParam("scope", "tenant.read").queryParam("resource", "https://api.example.com/tenants/tenant-a").queryParam("audience", "backend-api")
-            .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"))
+        val challenge = mockMvc.challengeFrom(
+            get("/oauth2/authorize")
+                .queryParam("client_id", "client-123").queryParam("response_type", "code").queryParam("redirect_uri", redirect)
+                .queryParam("scope", "tenant.read").queryParam("resource", "https://api.example.com/tenants/tenant-a").queryParam("audience", "backend-api")
+                .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
+        )
+        val session = mockMvc.loginWithChallengeSession(challenge)
+        val location = mockMvc.perform(resumeAuthorization(challenge, session))
             .andExpect(status().isFound).andReturn().response.redirectedUrl!!
         val authCode = UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
         val tokens = json(mockMvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
@@ -623,7 +624,7 @@ open class DeviceAuthorizationFlowTests(
         // A valid tenant membership without any event membership represents an archived event.
         cacheRepository.deleteAll()
         cacheRepository.save(RelationMembershipCache(
-            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+            cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
             membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))
@@ -658,7 +659,7 @@ open class DeviceAuthorizationFlowTests(
         try {
             val subject = users.loadUserByUsername("tenant-b", "camera-staff").id
             cacheRepository.save(RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-b", "camera-staff"),
+                cacheId = RelationMembershipCacheId("tenant-b", subject),
                 membership = TenantMembership("tenant-b", RelationRole.OWNER, listOf(EventMembership("event-1", RelationRole.OWNER))),
                 cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
             ))

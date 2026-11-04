@@ -2,6 +2,8 @@ package dev.usbharu.toloidp.ratelimit
 
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.relation.EventMembership
+import dev.usbharu.toloidp.security.LoginChallenges
+import dev.usbharu.toloidp.security.challengeFrom
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
@@ -45,7 +47,7 @@ class RateLimitFilterTests(
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
-                cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
                 membership = TenantMembership(
                     tenantId = "tenant-a",
                     tenantRole = RelationRole.OWNER,
@@ -77,32 +79,49 @@ class RateLimitFilterTests(
 
     @Test
     fun authenticatedRequestsUsePrincipalForUserDimensions() {
-        mockMvc.perform(post("/api/logout").with(user("user-123")).withRemoteAddr("192.0.2.11"))
-            .andExpect(status().isNoContent)
+        mockMvc.perform(get("/actuator/health").with(user("user-123")).withRemoteAddr("192.0.2.11"))
+            .andExpect(status().isOk)
 
         assertEquals(RateLimitIdentity("192.0.2.11", "user-123"), rateLimitService.lastIdentity.get())
     }
 
     @Test
-    fun loginRequestsUseUsernameAndStillReachController() {
+    fun loginRequestsUseChallengeTenantAndUsernameAndStillReachController() {
+        val challenge = mockMvc.challengeFrom(
+            get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
+                .queryParam("redirect_uri", "http://127.0.0.1:8080/login/oauth2/code/client-123")
+                .queryParam("scope", "openid tenant.read").queryParam("resource", "https://api.example.com/tenants/tenant-a")
+                .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
+        )
         mockMvc.perform(
             post("/api/login")
                 .withRemoteAddr("192.0.2.12")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    """
-                    {
-                      "username": "user-123",
-                      "password": "password",
-                      "tenantId": "tenant-a"
-                    }
-                    """.trimIndent(),
-                ),
+                .content("""{"username":"user-123","password":"password","challenge":"$challenge"}"""),
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.username").value("user-123"))
 
         assertEquals(RateLimitIdentity("192.0.2.12", "[\"tenant-a\",\"user-123\"]"), rateLimitService.lastIdentity.get())
+    }
+
+    @Test
+    fun signupRequestsUseChallengeTenantAndUsername() {
+        val challenge = mockMvc.challengeFrom(
+            get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
+                .queryParam("redirect_uri", "http://127.0.0.1:8080/login/oauth2/code/client-123")
+                .queryParam("scope", "tenant.join").queryParam("resource", "https://api.example.com/tenants/tenant-rate")
+                .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
+        )
+        mockMvc.perform(
+            post("/api/signup")
+                .withRemoteAddr("192.0.2.13")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"username":"rate-owner","password":"correct horse","challenge":"$challenge"}"""),
+        )
+            .andExpect(status().isCreated)
+
+        assertEquals(RateLimitIdentity("192.0.2.13", "[\"tenant-rate\",\"rate-owner\"]"), rateLimitService.lastIdentity.get())
     }
 
     @Test
@@ -158,8 +177,8 @@ class RateLimitFilterTests(
             RecordingRateLimitService()
 
         @Bean
-        fun rateLimitIdentityExtractor(objectMapper: ObjectMapper): RateLimitIdentityExtractor =
-            RateLimitIdentityExtractor(objectMapper)
+        fun rateLimitIdentityExtractor(objectMapper: ObjectMapper, challenges: LoginChallenges): RateLimitIdentityExtractor =
+            RateLimitIdentityExtractor(objectMapper, challenges::tenant)
 
         @Bean
         fun rateLimitFilter(

@@ -8,6 +8,10 @@ import com.nimbusds.jose.proc.SecurityContext
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.devicegrant.DeviceGrantRepository
 import dev.usbharu.toloidp.devicegrant.DeviceGrantService
+import dev.usbharu.toloidp.client.ClientPolicy
+import dev.usbharu.toloidp.client.ClientType
+import dev.usbharu.toloidp.logging.structuredInfo
+import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
@@ -24,9 +28,11 @@ import dev.usbharu.toloidp.security.SpecRefreshTokenAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.security.TenantAuthorizationValidator
-import dev.usbharu.toloidp.security.TenantAwareAuthorizationRequestConverter
 import dev.usbharu.toloidp.security.ToloJwtCustomizer
 import dev.usbharu.toloidp.security.OidcAuthenticationRequestValidator
+import dev.usbharu.toloidp.security.AuthorizationRequestConverter
+import dev.usbharu.toloidp.security.AuthorizationErrorResponseHandler
+import dev.usbharu.toloidp.security.LoginChallenges
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
@@ -39,11 +45,16 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.converter.HttpMessageConverter
 import org.springframework.http.server.ServletServerHttpResponse
 import org.springframework.jdbc.core.JdbcTemplate
+import org.slf4j.LoggerFactory
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer
+import org.springframework.security.authentication.AnonymousAuthenticationToken
+import org.springframework.security.core.Authentication
 import org.springframework.security.core.AuthenticationException
+import org.springframework.security.core.authority.AuthorityUtils
+import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
@@ -71,6 +82,8 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationServerMetadataClaimNames
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2RefreshTokenAuthenticationProvider
@@ -79,6 +92,9 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.http.converter.OAuth2TokenIntrospectionHttpMessageConverter
+import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcLogoutAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcLogoutAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.oidc.web.authentication.OidcLogoutAuthenticationSuccessHandler
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings
 import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.token.JwtGenerator
@@ -93,6 +109,7 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import org.springframework.security.web.context.SecurityContextHolderFilter
+import jakarta.servlet.DispatcherType
 import tools.jackson.databind.JacksonModule
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator
@@ -159,7 +176,7 @@ class SecurityConfig {
     /**
      * Authorization Server endpoint を構成し、この IDP でセキュリティ上重要な拡張点を差し替える。
      *
-     * Authorization Code endpoint では tenant resource を注入・検証し、token endpoint では
+     * Authorization Code endpoint では tenant resource を検証し、token endpoint では
      * `spec.md` の tenant-access から event-access への Token Exchange に
      * [SpecTokenExchangeAuthenticationProvider] を使う。
      */
@@ -183,6 +200,7 @@ class SecurityConfig {
         @Qualifier("specTokenRevocationAuthenticationProvider")
         specTokenRevocationAuthenticationProvider: AuthenticationProvider,
         settings: AuthorizationServerSettings,
+        loginChallenges: LoginChallenges,
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
@@ -239,6 +257,13 @@ class SecurityConfig {
                             claims.build()
                         }
                     }
+                    oidc.logoutEndpoint { logoutEndpoint ->
+                        logoutEndpoint.authenticationProviders { providers ->
+                            providers.replaceAll { if (it is OidcLogoutAuthenticationProvider) sessionMismatchTolerantLogoutProvider(it) else it }
+                        }
+                        logoutEndpoint.logoutResponseHandler(logoutResponseHandler())
+                        logoutEndpoint.errorResponseHandler(logoutErrorResponseHandler())
+                    }
                     oidc.providerConfigurationEndpoint { providerConfigurationEndpoint ->
                         providerConfigurationEndpoint.providerConfigurationCustomizer { metadata ->
                             metadata.claims(discoveryMetadataClaimsCustomizer())
@@ -261,8 +286,15 @@ class SecurityConfig {
                 .authorizationEndpoint { authorizationEndpoint ->
                 authorizationEndpoint.authorizationRequestConverters { converters ->
                     converters.removeIf { it is OAuth2AuthorizationCodeRequestAuthenticationConverter }
-                    converters.add(0, TenantAwareAuthorizationRequestConverter(resourceParser))
+                    converters.add(0, AuthorizationRequestConverter(loginChallenges))
                 }
+                authorizationEndpoint.errorResponseHandler(
+                    AuthorizationErrorResponseHandler(
+                        loginChallenges,
+                        properties.login.pageUri(),
+                        properties.login.errorPageUri(),
+                    ),
+                )
                 authorizationEndpoint.authenticationProviders { providers ->
                     providers.filterIsInstance<OAuth2AuthorizationCodeRequestAuthenticationProvider>()
                         .forEach {
@@ -304,6 +336,15 @@ class SecurityConfig {
                 .tokenIntrospectionEndpoint { introspectionEndpoint ->
                     introspectionEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
                     introspectionEndpoint.introspectionResponseHandler(tokenIntrospectionResponseHandler())
+                    introspectionEndpoint.authenticationProviders { providers ->
+                        providers.replaceAll { provider ->
+                            if (provider is OAuth2TokenIntrospectionAuthenticationProvider) {
+                                tokenIntrospectionClientGuard(provider)
+                            } else {
+                                provider
+                            }
+                        }
+                    }
                 }
                 .tokenRevocationEndpoint { revocationEndpoint ->
                     revocationEndpoint.errorResponseHandler(oauth2CodeOnlyErrorResponseHandler())
@@ -361,9 +402,10 @@ class SecurityConfig {
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         http.authorizeHttpRequests {
-            it.requestMatchers("/actuator/health").permitAll()
-                .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/logout").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/login").permitAll()
+            it.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/logout", "/api/signup").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/login", "/api/signup").permitAll()
                 .requestMatchers(
                     HttpMethod.POST,
                     "/api/device-authorization/approve",
@@ -445,12 +487,87 @@ class SecurityConfig {
             writeOAuth2Error(response, error)
         }
 
+    private fun sessionMismatchTolerantLogoutProvider(delegate: AuthenticationProvider): AuthenticationProvider =
+        object : AuthenticationProvider by delegate {
+            override fun authenticate(authentication: Authentication): Authentication? {
+                val logout = authentication as OidcLogoutAuthenticationToken
+                return try {
+                    delegate.authenticate(logout)
+                } catch (ex: OAuth2AuthenticationException) {
+                    if (!logout.isPrincipalAuthenticated) throw ex
+                    delegate.authenticate(
+                        OidcLogoutAuthenticationToken(
+                            logout.idTokenHint,
+                            AnonymousAuthenticationToken("anonymous", "anonymousUser", AuthorityUtils.createAuthorityList("ROLE_ANONYMOUS")),
+                            logout.sessionId,
+                            logout.clientId,
+                            logout.postLogoutRedirectUri,
+                            logout.state,
+                        ),
+                    )
+                }
+            }
+        }
+
+    private fun logoutResponseHandler(): AuthenticationSuccessHandler {
+        val delegate = OidcLogoutAuthenticationSuccessHandler()
+        return AuthenticationSuccessHandler { request, response, authentication ->
+            val logout = authentication as OidcLogoutAuthenticationToken
+            val clientId = logout.idToken?.audience?.firstOrNull()
+            val sessionPresent = SecurityContextHolder.getContext().authentication
+                .let { it != null && it.isAuthenticated && it !is AnonymousAuthenticationToken }
+            log.structuredInfo(
+                "Logout started",
+                "event" to "logout_started",
+                "client_id" to clientId,
+                "session_present" to sessionPresent,
+            )
+            delegate.onAuthenticationSuccess(request, response, authentication)
+            log.structuredInfo(
+                "Logout completed",
+                "event" to "logout_completed",
+                "client_id" to clientId,
+                "session_invalidated" to logout.isPrincipalAuthenticated,
+                "result" to if (sessionPresent && !logout.isPrincipalAuthenticated) "session_mismatch_not_ended" else "success",
+            )
+        }
+    }
+
+    private fun logoutErrorResponseHandler(): AuthenticationFailureHandler {
+        val delegate = oauth2CodeOnlyErrorResponseHandler()
+        return AuthenticationFailureHandler { request, response, exception ->
+            log.structuredWarn(
+                "Logout rejected",
+                "event" to "logout_rejected",
+                "failure_reason" to (exception as? OAuth2AuthenticationException)?.error?.errorCode,
+            )
+            delegate.onAuthenticationFailure(request, response, exception)
+        }
+    }
+
     private fun writeOAuth2Error(response: jakarta.servlet.http.HttpServletResponse, error: OAuth2Error) {
         val converter: HttpMessageConverter<OAuth2Error> = OAuth2ErrorHttpMessageConverter()
         val httpResponse = ServletServerHttpResponse(response)
         httpResponse.setStatusCode(HttpStatus.BAD_REQUEST)
         converter.write(error, null, httpResponse)
     }
+
+    private fun tokenIntrospectionClientGuard(delegate: AuthenticationProvider): AuthenticationProvider =
+        object : AuthenticationProvider {
+            override fun authenticate(authentication: Authentication): Authentication? {
+                val client = (authentication.principal as? OAuth2ClientAuthenticationToken)
+                    ?.takeIf { it.isAuthenticated }
+                    ?.registeredClient
+                    ?: return delegate.authenticate(authentication)
+                val policy = ClientPolicy.from(client)
+                if (policy == null || policy.clientType != ClientType.CONFIDENTIAL || !policy.tokenIntrospectionAllowed) {
+                    throw OAuth2AuthenticationException(OAuth2Error(OAuth2ErrorCodes.INVALID_CLIENT))
+                }
+                return delegate.authenticate(authentication)
+            }
+
+            override fun supports(authentication: Class<*>): Boolean = delegate.supports(authentication)
+        }
 
     private fun tokenIntrospectionResponseHandler(): AuthenticationSuccessHandler {
         val converter = OAuth2TokenIntrospectionHttpMessageConverter()
@@ -676,9 +793,17 @@ class SecurityConfig {
     ): OAuth2TokenGenerator<OAuth2Token> {
         val jwtGenerator = JwtGenerator(jwtEncoder)
         jwtGenerator.setJwtCustomizer(jwtCustomizer)
+        val refreshTokenGenerator = OAuth2RefreshTokenGenerator()
+        val refreshTokenDelegate = OAuth2TokenGenerator<OAuth2Token> { context ->
+            if (context.authorizedScopes == ScopePolicy.REGISTRATION_SCOPES) {
+                null
+            } else {
+                refreshTokenGenerator.generate(context)
+            }
+        }
         return DelegatingOAuth2TokenGenerator(
             jwtGenerator,
-            CappedRefreshTokenGenerator(OAuth2RefreshTokenGenerator(), deviceGrantRepository),
+            CappedRefreshTokenGenerator(refreshTokenDelegate, deviceGrantRepository),
         )
     }
 
@@ -691,6 +816,7 @@ class SecurityConfig {
     fun clock(): java.time.Clock = java.time.Clock.systemUTC()
 
     private companion object {
+        val log = LoggerFactory.getLogger(SecurityConfig::class.java)
         val INTROSPECTION_RESPONSE_CLAIMS = setOf(
             "active",
             "client_id",

@@ -29,21 +29,6 @@ export function TokenLifecyclePanel({ onRefresh }: { onRefresh: () => void }) {
     }
   }
 
-  async function logoutIdp() {
-    setBusy(true);
-    setError(null);
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_TOLO_IDP_URL ?? "http://localhost:18080";
-      const response = await fetch(`${baseUrl}/api/logout`, { method: "POST", credentials: "include" });
-      if (!response.ok) throw new Error(`IdP logout failed (${response.status})`);
-      setResult({ idpSessionEnded: true, message: "The Better Auth session is still active. You can try refreshing the token." });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "IdP logout failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <section style={{ display: "grid", gap: "1rem", marginTop: "2rem" }}>
       <h2>4. Refresh / 5. Revoke</h2>
@@ -51,7 +36,9 @@ export function TokenLifecyclePanel({ onRefresh }: { onRefresh: () => void }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
         <button disabled={busy} onClick={() => void operate("refresh")}>4. Refresh tokens</button>
         <button disabled={busy} onClick={() => void operate("revoke")}>5. Revoke refresh token</button>
-        <button disabled={busy} onClick={() => void logoutIdp()}>End IdP session</button>
+        <form method="post" action="/api/tolo-idp/logout">
+          <button disabled={busy} type="submit">End IdP session</button>
+        </form>
       </div>
       <p>After revocation, refreshing again should fail. Ending the IdP session alone does not revoke the refresh token.</p>
       {result && <pre style={{ background: "#f4f4f4", padding: "1rem", overflow: "auto" }}>{JSON.stringify(result, null, 2)}</pre>}

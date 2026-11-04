@@ -12,8 +12,10 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @SpringBootTest(properties = [
     "spring.datasource.url=jdbc:h2:mem:client-policy-config;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
@@ -40,6 +42,10 @@ class ClientPolicyConfigurationTests(
         assertEquals(config.eventAccessTtl, policy.eventAccessTtl)
         assertEquals(client.scopes, policy.allowedScopes)
         assertEquals(client.authorizationGrantTypes.map { it.value }.toSet(), policy.allowedGrantTypes)
+        assertFalse(policy.tokenIntrospectionAllowed)
+        val gateway = checkNotNull(ClientPolicy.from(checkNotNull(clients.findByClientId("service-gateway"))))
+        assertEquals(ClientType.CONFIDENTIAL, gateway.clientType)
+        assertTrue(gateway.tokenIntrospectionAllowed)
     }
 
     @Test
@@ -93,7 +99,7 @@ class ClientPolicyConfigurationTests(
     }
 
     @Test
-    fun publicClientCannotEnableTokenExchangeOrMixAuthenticationMethods() {
+    fun publicClientCannotEnableTokenExchangeOrIntrospectionOrMixAuthenticationMethods() {
         val public = registration("public-client").apply {
             registration.clientSecret = null
             registration.clientAuthenticationMethods = linkedSetOf("none")
@@ -108,6 +114,12 @@ class ClientPolicyConfigurationTests(
             synchronizer.synchronize(standard.client + ("public" to public), custom.clients + ("public" to policy))
         }
         public.registration.authorizationGrantTypes.remove("urn:ietf:params:oauth:grant-type:token-exchange")
+        assertFailsWith<IllegalArgumentException> {
+            synchronizer.synchronize(
+                standard.client + ("public" to public),
+                custom.clients + ("public" to policy.copy(tokenIntrospectionAllowed = true)),
+            )
+        }
         public.registration.clientSecret = "dummy-secret"
         public.registration.clientAuthenticationMethods.add("client_secret_basic")
         assertFailsWith<IllegalArgumentException> {

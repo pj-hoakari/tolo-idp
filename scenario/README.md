@@ -57,9 +57,9 @@ CI は JVM／Native のビルドで `./gradlew build` を実行したあと、Po
 
 issuer は `http://localhost:18080` です。コンテナ内では `localhost` が runn 自身を指すため、`--host-rules "localhost app:8080"` で接続先を変更します。HTTP の Host ヘッダと Discovery の URL は issuer の値を維持します。
 
-ログイン API は IdP と同一オリジンから呼ぶ前提です。RP の callback は seed client に登録済みの `http://127.0.0.1:8080/login/oauth2/code/client-123` を使用します。302 は追従しないため、callback サーバーは不要です。
+ログイン API は Web のログイン画面（`http://localhost:3000/login`）から呼ぶ形で、`Origin` と `Referer` を付けます。RP の callback は seed client に登録済みの `http://127.0.0.1:8080/login/oauth2/code/client-123` を使用します。302 は追従しないため、callback サーバーは不要です。
 
-seed user `user-123`、client `client-123` と `relation-stub/sample.json` を使用します。seed の認証情報や client policy を変更した既存 DB では、シナリオの前提と一致させてください。テストのために既存 volume を削除する必要はありません。
+seed user `user-123`、client `client-123`、Introspection 用の client `service-gateway` と `relation-stub/sample.json` を使用します。seed の認証情報や client policy を変更した既存 DB では、シナリオの前提と一致させてください。テストのために既存 volume を削除する必要はありません。
 
 ホストに同じバージョンの runn がある場合は、起動済みアプリに直接実行できます。
 
@@ -72,19 +72,30 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 `oidc-login.yml` は次のフローを検証します。
 
 1. Health と Discovery の issuer、endpoint、対応フローを確認する。
-2. `/api/login` で tenant-a を選択し、HttpOnly のセッション cookie を保持する。
-3. PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定し、認可コード付きの302を確認する。
-4. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
-5. 認証付き Introspection で tenant_access の claim を確認する。
-6. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
-7. staff の event-2 への設計・構成の書き込みは `invalid_scope`、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
-8. Refresh Token による更新、ローテーション、旧 token の再利用拒否、新 token での再更新と scope 縮小を確認する。
-9. Refresh Token を revoke し、更新が `invalid_grant`、現在の Access Token の Introspection が `active: false` になることを確認する。
-10. 終了時にセッションを破棄する。ログインが200を返した場合は、レスポンスや cookie の検証が失敗しても logout を試行する。
+2. tenant-a の resource、PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定した認可要求が、Web のログイン画面へ `challenge` だけを付けた302を返すことを確認する。
+3. `challenge` と資格情報で `/api/login` を呼び、tenant-a のログインと HttpOnly のセッション cookie を確認する。
+4. `challenge` だけを付けた認可要求で元の要求を再開し、認可コード付きの302を確認する。
+5. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
+6. `service-gateway` の認証付き Introspection で tenant_access の claim を確認する。`client-123` の Introspection は `invalid_client` になることを確認する。
+7. `backend-api` 向けの event-1 の `event_access` に交換し、JWT 形式と Introspection の claim を確認する。
+8. staff の event-2 への設計・構成の書き込み（`events.manage`）は発行され、未所属の event-3 は `invalid_grant`、許可外 audience は `invalid_target` になることを確認する。
+9. Refresh Token による更新、ローテーション、旧 token の再利用拒否、新 token での再更新と scope 縮小を確認する。
+10. Refresh Token を revoke し、更新が `invalid_grant`、現在の Access Token の Introspection が `active: false` になることを確認する。
+11. 終了時に、発行された最新の ID Token を `id_token_hint` にして Discovery の `end_session_endpoint` を呼び、登録済みの `post_logout_redirect_uri` へ `state` 付きでリダイレクトされることを確認する。ID Token が発行されていれば、後続の検証が失敗してもログアウトを試行する。
+
+`signup-registration.yml` は次のフローを検証します。ユーザー名は実行ごとに変えるので、同じ DB で繰り返し実行できます。
+
+1. Discovery の `scopes_supported` が `tenant.join` を含み、`tenant.claim` を含まないことを確認する。
+2. `openid tenant.join` の認可要求が、challenge を発行せずに `invalid_scope` を返すことを確認する。
+3. tenant-onboarding の resource と `tenant.join` だけの認可要求が、Web のログイン画面へ `challenge` だけを付けた302を返すことを確認する。
+4. `challenge` と新しいユーザー名・パスワードで `/api/signup` を呼び、tenant-onboarding のユーザーと HttpOnly のセッション cookie が作られることを確認する。
+5. 認可要求を再開し、コードを registration に交換する。ID Token と Refresh Token がなく、scope が `tenant.join` だけであることを確認する。
+6. JWT 本体と Introspection で `token_use=registration` を確認し、`tenant_id`、`event_id`、`resource` がないことを確認する。
+7. registration を交換元にした Token Exchange が `invalid_grant` になることを確認する。
 
 scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
 
-password、client secret、認可コード、token、セッション cookie は runn の `secrets` に登録しています。runn v1.10.0 の失敗 trace にはマスクされない値が出るため、公開済み seed 値を使う専用開発環境で実行してください。標準の実行は HTTP 詳細を無効にし、ステップの成否と失敗時の trace を表示します。
+password、client secret、login challenge、認可コード、token、セッション cookie は runn の `secrets` に登録しています。runn v1.10.0 の失敗 trace にはマスクされない値が出るため、公開済み seed 値を使う専用開発環境で実行してください。標準の実行は HTTP 詳細を無効にし、ステップの成否と失敗時の trace を表示します。
 
 ## CI
 
@@ -92,12 +103,12 @@ GitHub Actions の `Scenario tests` は PR、main 更新、手動実行で動き
 
 両 runtime のイメージは `docker-compose.production.yaml` の別プロジェクトでも起動し、`production/startup.yml` で Health と Discovery の issuer を検証します。新規 DB と一時署名鍵を用意し、seed は無効のまま実行します。終了時は CI 専用 volume と署名鍵を削除します。本番 Compose には任意の `scenario` profile として runn が含まれています。
 
-ログインの cookie・認可の state・token の scope の検証失敗時に、セッション cookie を送って logout することも合成 HTTP レスポンスで検証します。ログインが拒否された場合は logout を呼ばないことを確認します。runn の失敗はジョブの失敗になります。
+token の scope の検証失敗時と token 発行後の検証失敗時に、セッション cookie と ID Token を送ってログアウトすることも合成 HTTP レスポンスで検証します。ID Token が発行される前に失敗した場合は、ログアウトを呼ばないことを確認します。end_session endpoint は `id_token_hint` を必須とするためです。このときのセッションはタイムアウトで破棄されます。runn の失敗はジョブの失敗になります。
 
 CI は実行 ID・runtime・architecture ごとの Compose project を使います。各 runtime のシナリオ成功後には、別の DB と使い捨ての署名鍵を使って本番プロファイルの Health と Discovery も確認します。成功・失敗を問わず、CI のコンテナと volume を終了時に削除します。ローカルの開発用 volume は対象外です。
 
 バージョンタグのリリース CI も同じ再利用ワークフローを呼びます。イメージのビルドと公開については [CI とリリース手順](../CI.md) を参照してください。
 
-失敗時の logout だけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
+失敗時のログアウトだけを確認する場合は、Docker と Python 3 を使って `python3 scenario/tests/test_runn_cleanup.py` を実行します。アプリの起動は不要です。
 
-ブラウザ画面、未ログイン時の画面遷移、別オリジンの CORS はこのシナリオの対象外です。
+ブラウザ画面と別オリジンの CORS はこのシナリオの対象外です。ログイン画面へのリダイレクトは `Location` だけを確認し、ログイン画面は開きません。

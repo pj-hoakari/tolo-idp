@@ -504,7 +504,7 @@ class DeviceGrantService(
             throw StaffNotAuthorizedException()
         }
         val membership = try {
-            relationService.getMembership(tenantId, user.username)
+            relationService.getMembership(tenantId, user.id)
         } catch (_: RelationLookupException) {
             throw StaffNotAuthorizedException()
         }

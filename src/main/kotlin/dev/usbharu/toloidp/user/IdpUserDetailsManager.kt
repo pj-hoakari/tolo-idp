@@ -16,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 import javax.sql.DataSource
 
-/** id is the surrogate key / OIDC subject; username is the userId in the tenant. */
+/** id is the surrogate key / OIDC subject; username is the login name in the tenant. */
 class IdpUserDetails(
     val id: String,
     val tenantId: String,

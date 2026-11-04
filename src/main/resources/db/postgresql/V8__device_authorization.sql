@@ -32,6 +32,7 @@ CREATE TABLE idp_revoked_edge_device (
     event_id varchar(64) NOT NULL,
     edge_device_id varchar(64) NOT NULL,
     revoked_at timestamptz NOT NULL,
+    permanent boolean NOT NULL DEFAULT TRUE,
     PRIMARY KEY (event_id, edge_device_id)
 );
 

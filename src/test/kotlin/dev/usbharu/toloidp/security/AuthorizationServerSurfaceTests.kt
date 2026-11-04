@@ -48,7 +48,7 @@ class AuthorizationServerSurfaceTests(
                 jsonPath(
                     "$.scopes_supported",
                     containsInAnyOrder(
-                        "openid", "profile", "tenant.read", "tenant.write", "tenant.claim",
+                        "openid", "profile", "tenant.read", "tenant.write", "tenant.join",
                         "events.read", "events.manage", "events.operate", "events.report",
                         "events.stream",
                     ),
@@ -114,7 +114,7 @@ class AuthorizationServerSurfaceTests(
                 jsonPath(
                     "$.scopes_supported",
                     containsInAnyOrder(
-                        "openid", "profile", "tenant.read", "tenant.write", "tenant.claim",
+                        "openid", "profile", "tenant.read", "tenant.write", "tenant.join",
                         "events.read", "events.manage", "events.operate", "events.report",
                         "events.stream",
                     ),
@@ -189,7 +189,7 @@ class AuthorizationServerSurfaceTests(
     @Test
     fun tokenIntrospectionEndpointAcceptsClientSecretPostAuthentication() {
         mockMvc.perform(
-            clientSecretPostRequest("/oauth2/introspect"),
+            clientSecretPostRequest("/oauth2/introspect", "service-gateway", "gateway-secret"),
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_request"))
@@ -198,7 +198,7 @@ class AuthorizationServerSurfaceTests(
     @Test
     fun tokenIntrospectionEndpointRejectsInvalidClientSecretPostAuthentication() {
         mockMvc.perform(
-            clientSecretPostRequest("/oauth2/introspect", clientSecret = "wrong-secret"),
+            clientSecretPostRequest("/oauth2/introspect", "service-gateway", "wrong-secret"),
         )
             .andExpect(status().isUnauthorized)
     }

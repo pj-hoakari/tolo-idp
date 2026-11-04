@@ -1,25 +1,16 @@
 package dev.usbharu.toloidp.security
 
 import jakarta.servlet.http.HttpServletRequest
-import jakarta.servlet.http.HttpServletResponse
-import jakarta.servlet.http.HttpSession
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
-import dev.usbharu.toloidp.resource.ResourceValidationException
-import dev.usbharu.toloidp.tenant.SELECTED_TENANT_SESSION_ATTRIBUTE
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.slf4j.LoggerFactory
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
-import org.springframework.security.core.authority.FactorGrantedAuthority
-import org.springframework.security.core.context.SecurityContextHolder
-import org.springframework.security.core.context.SecurityContextImpl
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.crypto.password.PasswordEncoder
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -35,6 +26,7 @@ class LoginController(
     private val passwordEncoder: PasswordEncoder,
     private val relationService: RelationService,
     private val resourceParser: ResourceParser,
+    private val challenges: LoginChallenges,
     private val clock: Clock,
 ) {
     @PostMapping("/login")
@@ -46,30 +38,17 @@ class LoginController(
             "Login started",
             "event" to "login_started",
             "username" to request.username,
-            "tenant_id" to request.tenantId,
         )
-        try {
-            resourceParser.requireValidId(request.tenantId)
-        } catch (ex: ResourceValidationException) {
-            log.structuredWarn(
-                "Login rejected",
-                ex,
-                "event" to "login_rejected",
-                "username" to request.username,
-                "tenant_id" to request.tenantId,
-                "failure_reason" to "invalid_tenant_id",
-            )
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenantId")
-        }
+        val tenantId = challenges.tenant(request.challenge) ?: rejectChallenge(request)
         val user = try {
-            userDetailsService.loadUserByUsername(request.tenantId, request.username)
+            userDetailsService.loadUserByUsername(tenantId, request.username)
         } catch (ex: RuntimeException) {
             log.structuredWarn(
                 "Login rejected",
                 ex,
                 "event" to "login_rejected",
                 "username" to request.username,
-                "tenant_id" to request.tenantId,
+                "tenant_id" to tenantId,
                 "failure_reason" to "user_lookup_failed",
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
@@ -79,46 +58,32 @@ class LoginController(
                 "Login rejected",
                 "event" to "login_rejected",
                 "username" to request.username,
-                "tenant_id" to request.tenantId,
+                "tenant_id" to tenantId,
                 "failure_reason" to "bad_credentials",
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
         try {
-            relationService.getMembership(request.tenantId, user.username)
+            if (!challenges.registration(request.challenge)) relationService.getMembership(tenantId, user.id)
         } catch (ex: RelationLookupException) {
             log.structuredWarn(
                 "Login rejected",
                 ex,
                 "event" to "login_rejected",
                 "username" to user.username,
-                "tenant_id" to request.tenantId,
+                "tenant_id" to tenantId,
                 "failure_reason" to ex.reason,
             )
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not allowed")
         }
-        val authentication = UsernamePasswordAuthenticationToken.authenticated(
-            user.id,
-            null,
-            user.authorities + FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
-        )
-        authentication.details = linkedMapOf(
-            OidcAuthenticationRequestValidator.AUTH_TIME to clock.instant().epochSecond.toString(),
-            OidcAuthenticationRequestValidator.LOGIN_ID to UUID.randomUUID().toString(),
-        )
-        val context = SecurityContextImpl(authentication)
-        SecurityContextHolder.setContext(context)
-        val session = httpRequest.getSession(true)
-        if (httpRequest.isRequestedSessionIdValid) {
-            httpRequest.changeSessionId()
-        }
-        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context)
-        session.setAttribute(SELECTED_TENANT_SESSION_ATTRIBUTE, request.tenantId)
+        val loginId = UUID.randomUUID().toString()
+        if (!challenges.authenticate(request.challenge, loginId, user.id)) rejectChallenge(request)
+        establishLoginSession(httpRequest, user, loginId, clock)
         log.structuredInfo(
             "Login completed",
             "event" to "login_completed",
             "username" to user.username,
-            "tenant_id" to request.tenantId,
+            "tenant_id" to tenantId,
             "authority_count" to user.authorities.size,
             "result" to "success",
         )
@@ -126,33 +91,21 @@ class LoginController(
             LoginResponse(
                 username = user.username,
                 sub = user.id,
-                tenantId = request.tenantId,
-                resource = resourceParser.tenantResource(request.tenantId),
+                tenantId = tenantId,
+                resource = resourceParser.tenantResource(tenantId),
                 authorities = user.authorities.mapNotNull { it.authority },
             ),
         )
     }
 
-    @PostMapping("/logout")
-    fun logout(
-        session: HttpSession?,
-        response: HttpServletResponse,
-    ): ResponseEntity<Void> {
-        log.structuredInfo(
-            "Logout started",
-            "event" to "logout_started",
-            "session_present" to (session != null),
+    private fun rejectChallenge(request: LoginRequest): Nothing {
+        log.structuredWarn(
+            "Login rejected",
+            "event" to "login_rejected",
+            "username" to request.username,
+            "failure_reason" to "login_challenge_invalid",
         )
-        SecurityContextHolder.clearContext()
-        session?.invalidate()
-        response.status = HttpStatus.NO_CONTENT.value()
-        log.structuredInfo(
-            "Logout completed",
-            "event" to "logout_completed",
-            "session_invalidated" to (session != null),
-            "result" to "success",
-        )
-        return ResponseEntity.noContent().build()
+        throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid login challenge")
     }
 
     companion object {
@@ -163,7 +116,7 @@ class LoginController(
 data class LoginRequest(
     val username: String,
     val password: String,
-    val tenantId: String,
+    val challenge: String,
 )
 
 data class LoginResponse(

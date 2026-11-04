@@ -36,6 +36,7 @@ class ClientPolicySettingsTests(
             allowedScopes = setOf("tenant.read", "events.read"),
             tenantAccessTtl = Duration.ofSeconds(123),
             eventAccessTtl = Duration.ofSeconds(45),
+            tokenIntrospectionAllowed = true,
         )
         clients.save(policy.toRegisteredClient(client))
         val loaded = checkNotNull(clients.findByClientId(client.clientId))
@@ -73,6 +74,12 @@ class ClientPolicySettingsTests(
         }
         assertNull(ClientPolicy.from(RegisteredClient.from(policy).clientSettings(
             ClientSettings.withSettings(policy.clientSettings.settings).setting(ClientPolicy.ALLOWED_AUDIENCES, listOf(1)).build(),
+        ).build()))
+        assertNull(ClientPolicy.from(RegisteredClient.from(policy).clientSettings(
+            ClientSettings.withSettings(policy.clientSettings.settings).setting(ClientPolicy.TOKEN_INTROSPECTION_ALLOWED, "true").build(),
+        ).build()))
+        assertNull(ClientPolicy.from(RegisteredClient.from(policy).clientSettings(
+            ClientSettings.withSettings(policy.clientSettings.settings).settings { it.remove(ClientPolicy.TOKEN_INTROSPECTION_ALLOWED) }.build(),
         ).build()))
     }
 

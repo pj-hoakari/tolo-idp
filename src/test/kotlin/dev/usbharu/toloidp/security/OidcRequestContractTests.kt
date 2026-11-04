@@ -13,7 +13,6 @@ import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpSession
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContext
@@ -52,37 +51,32 @@ class OidcRequestContractTests(
     fun membership() {
         cache.deleteAll()
         cache.save(RelationMembershipCache(
-            cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+            cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
             membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300),
         ))
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = ["", "none"])
-    fun unauthenticatedRequestsReturnLoginRequiredToValidatedCallback(prompt: String) {
-        val request = authorize()
-        if (prompt.isNotEmpty()) request.queryParam("prompt", prompt)
-        assertError(mvc.perform(request), "login_required")
+    @Test
+    fun silentRequestWithoutLoginStateReturnsLoginRequiredToValidatedCallback() {
+        assertError(mvc.perform(authorize().queryParam("prompt", "none")), "login_required")
     }
 
     @ParameterizedTest
     @ValueSource(strings = ["prompt", "max_age"])
-    fun forcedReauthenticationRequiresNewLoginAndResumesOnlyOnce(parameter: String) {
+    fun forcedReauthenticationRequiresItsOwnChallengeAndKeepsAuthTimeOnRefresh(parameter: String) {
         val session = login()
         fun request() = authorize(session).queryParam(parameter, if (parameter == "prompt") "login" else "0")
-        assertError(mvc.perform(request()), "login_required")
-        assertError(mvc.perform(request()), "login_required")
-        mvc.perform(post("/api/login").session(session).contentType(MediaType.APPLICATION_JSON)
-            .content("""{"username":"user-123","password":"wrong-password","tenantId":"tenant-a"}"""))
+        val challenge = mvc.challengeFrom(request())
+        mvc.perform(loginWithChallenge(challenge, password = "wrong-password", session = session))
             .andExpect(status().isUnauthorized)
-        assertError(mvc.perform(request()), "login_required")
-        login(session)
-        val tokens = exchange(mvc.perform(request()))
+        assertLoginErrorPage(mvc.perform(resumeAuthorization(challenge, session)))
+        mvc.loginWithChallengeSession(challenge, session = session)
+        val tokens = exchange(mvc.perform(resumeAuthorization(challenge, session)))
         val idToken = decoder.decode(tokens["id_token"].stringValue())
         assertEquals(authenticationTime(session), idToken.getClaimAsInstant("auth_time"))
-        // Reusing a completed authorization request must not reuse the reauthentication proof.
-        assertError(mvc.perform(request()), "login_required")
+        assertLoginErrorPage(mvc.perform(resumeAuthorization(challenge, session)))
+        mvc.challengeFrom(request())
         val refreshed = mvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
             .param("grant_type", "refresh_token").param("refresh_token", tokens["refresh_token"].stringValue()))
             .andExpect(status().isOk).andReturn().response.contentAsString
@@ -101,6 +95,7 @@ class OidcRequestContractTests(
                 .queryParam("scope", "openid events.read")
                 .queryParam("state", "connection-state")
                 .queryParam("nonce", "connection-nonce")
+                .queryParam("resource", "https://api.example.com/tenants/tenant-a")
                 .queryParam("prompt", "none")
                 .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
                 .queryParam("code_challenge_method", "S256"),
@@ -125,33 +120,15 @@ class OidcRequestContractTests(
     }
 
     @Test
-    fun initialPromptLoginCanResumeAfterFrontendLoginWithoutTenantParameter() {
-        val initial = mvc.perform(authorize().queryParam("prompt", "login"))
-        assertError(initial, "login_required")
-        val session = initial.andReturn().request.session as MockHttpSession
-        login(session)
-        exchange(mvc.perform(authorize(session).queryParam("prompt", "login")))
-    }
-
-    @Test
-    fun changedRequestCannotReuseReauthenticationProof() {
-        val session = login()
-        assertError(mvc.perform(authorize(session).queryParam("prompt", "login")), "login_required")
-        login(session)
-        // Use a separate nonce to bind the challenge to the complete original request.
-        assertError(mvc.perform(authorize(session).queryParam("prompt", "login").queryParam("nonce", "changed")), "login_required")
-    }
-
-    @Test
-    fun expiredAuthenticationAgeRequiresFrontendLogin() {
+    fun expiredAuthenticationAgeRequiresAChallengeLogin() {
         val session = login()
         val context = session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY) as SecurityContext
         val authentication = context.authentication as UsernamePasswordAuthenticationToken
         authentication.details = (authentication.details as Map<*, *>).entries.associate { it.key.toString() to it.value.toString() }
             .toMutableMap().apply { put("auth_time", Instant.now().minusSeconds(60).epochSecond.toString()) }
-        assertError(mvc.perform(authorize(session).queryParam("max_age", "30")), "login_required")
-        login(session)
-        val tokens = exchange(mvc.perform(authorize(session).queryParam("max_age", "30")))
+        val challenge = mvc.challengeFrom(authorize(session).queryParam("max_age", "30"))
+        mvc.loginWithChallengeSession(challenge, session = session)
+        val tokens = exchange(mvc.perform(resumeAuthorization(challenge, session)))
         assertEquals(authenticationTime(session), decoder.decode(tokens["id_token"].stringValue()).getClaimAsInstant("auth_time"))
     }
 
@@ -196,24 +173,22 @@ class OidcRequestContractTests(
         assertError(mvc.perform(authorize(session).queryParam("prompt", "select_account")), "account_selection_required")
         assertError(mvc.perform(authorize(session).queryParam("prompt", "unknown")), "invalid_request")
         // A completed login challenge does not prove consent or account selection.
-        assertError(mvc.perform(authorize(session).queryParam("prompt", "login consent")), "login_required")
-        login(session)
-        assertError(mvc.perform(authorize(session).queryParam("prompt", "login consent")), "consent_required")
+        val challenge = mvc.challengeFrom(authorize(session).queryParam("prompt", "login consent"))
+        mvc.loginWithChallengeSession(challenge, session = session)
+        assertError(mvc.perform(resumeAuthorization(challenge, session)), "consent_required")
     }
 
     @Test
     fun unsupportedRequestObjectIsRejectedInsteadOfIgnoringItsClaims() {
         assertError(mvc.perform(authorize(login()).queryParam("request", "unsupported-request-object")), "request_not_supported")
-        mvc.perform(authorize(clientId = "unknown-client").queryParam("request", "unsupported-request-object"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+        assertLoginErrorPage(mvc.perform(authorize(clientId = "unknown-client").queryParam("request", "unsupported-request-object")), "invalid_request")
     }
 
     @Test
     fun unsupportedRequestUriReturnsOidcErrorOnlyToTrustedRedirect() {
         assertError(mvc.perform(authorize(login()).queryParam("request_uri", "https://rp.invalid/request.jwt")), "request_uri_not_supported")
-        mvc.perform(authorize(login(), redirectUri = "https://attacker.invalid/callback")
-            .queryParam("request_uri", "https://rp.invalid/request.jwt"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+        assertLoginErrorPage(mvc.perform(authorize(login(), redirectUri = "https://attacker.invalid/callback")
+            .queryParam("request_uri", "https://rp.invalid/request.jwt")), "invalid_request")
     }
 
     @ParameterizedTest
@@ -244,22 +219,28 @@ class OidcRequestContractTests(
     }
 
     @Test
-    fun invalidRedirectAndUnknownClientNeverRedirect() {
-        mvc.perform(authorize(clientId = "unknown-client"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
-        mvc.perform(get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
-            .queryParam("redirect_uri", "https://attacker.invalid/callback").queryParam("scope", "openid"))
-            .andExpect(status().isBadRequest).andExpect(header().doesNotExist("Location"))
+    fun unreturnableAuthorizationErrorsGoToTheWebErrorPage() {
+        assertLoginErrorPage(mvc.perform(authorize(clientId = "unknown-client", redirectUri = "https://attacker.invalid/callback")), "invalid_request")
+        assertLoginErrorPage(mvc.perform(authorize(redirectUri = "https://attacker.invalid/callback")), "invalid_request")
+        assertLoginErrorPage(mvc.perform(get("/oauth2/authorize").queryParam("response_type", "code")
+            .queryParam("redirect_uri", "https://attacker.invalid/callback").queryParam("scope", "openid")
+            .queryParam("state", "request-state")), "invalid_request")
+    }
+
+    @Test
+    fun loggedInRequestWithoutTenantResourceIsRejected() {
+        val session = login()
+        assertError(mvc.perform(authorize(session, resource = null)), "invalid_request")
     }
 
     @Test
     fun scopeAndMembershipErrorsReturnToClientWithState() {
         val session = login()
         cache.deleteAll()
-        cache.save(RelationMembershipCache(cacheId = RelationMembershipCacheId("tenant-a", "user-123"),
+        cache.save(RelationMembershipCache(cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
             membership = TenantMembership("tenant-a", RelationRole.STAFF, emptyList()),
             cachedAt = Instant.now(), expiresAt = Instant.now().plusSeconds(300)))
-        assertError(mvc.perform(authorize(session, "openid tenant.write")), "invalid_scope")
+        assertError(mvc.perform(authorize(session, "tenant.write")), "invalid_scope")
     }
 
     @Test
@@ -276,7 +257,7 @@ class OidcRequestContractTests(
         assertTrue(denylist.existsById(oldJwt.id!!))
         assertEquals(oldJwt.expiresAt, denylist.findById(oldJwt.id!!).get().expiresAt)
         assertFalse(denylist.existsById(decoder.decode(current).id!!))
-        mvc.perform(post("/oauth2/introspect").with(httpBasic("client-123", "secret")).param("token", current))
+        mvc.perform(post("/oauth2/introspect").with(httpBasic("service-gateway", "gateway-secret")).param("token", current))
             .andExpect(status().isOk).andExpect(jsonPath("$.active").value(true))
     }
 
@@ -312,16 +293,15 @@ class OidcRequestContractTests(
         val context = session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY) as SecurityContext
         return Instant.ofEpochSecond(OidcAuthenticationRequestValidator.authenticationTime(context.authentication!!)!!)
     }
-    private fun login(session: MockHttpSession? = null): MockHttpSession {
-        val request = post("/api/login").contentType(MediaType.APPLICATION_JSON)
-            .content("""{"username":"user-123","password":"password","tenantId":"tenant-a"}""")
-        if (session != null) request.session(session)
-        return mvc.perform(request).andExpect(status().isOk).andReturn().request.session as MockHttpSession
-    }
-    private fun authorize(session: MockHttpSession? = null, scope: String = "openid tenant.read", clientId: String = "client-123", redirectUri: String = REDIRECT): MockHttpServletRequestBuilder {
+    private fun login(): MockHttpSession = mvc.loginWithChallengeSession(mvc.challengeFrom(authorize()))
+    private fun authorize(
+        session: MockHttpSession? = null, scope: String = "openid tenant.read", clientId: String = "client-123",
+        redirectUri: String = REDIRECT, resource: String? = "https://api.example.com/tenants/tenant-a",
+    ): MockHttpServletRequestBuilder {
         val request = get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", clientId)
             .queryParam("redirect_uri", redirectUri).queryParam("scope", scope).queryParam("state", "request-state")
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
+        if (resource != null) request.queryParam("resource", resource)
         if (session != null) request.session(session)
         return request
     }

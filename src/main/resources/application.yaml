@@ -16,6 +16,17 @@ spring:
       core:
         enabled: false
 
+server:
+  forward-headers-strategy: native
+  servlet:
+    session:
+      cookie:
+        name: __Host-tolo_idp_session
+        secure: true
+        http-only: true
+        same-site: lax
+        path: /
+
 logging:
   level:
     org.springframework.security: INFO
@@ -82,12 +93,14 @@ spring:
                 - http://127.0.0.1:8080/login/oauth2/code/client-123
                 - http://127.0.0.1:18080/login/oauth2/code/client-123
                 - http://localhost:3000/api/auth/callback/tolo-idp
+              post-logout-redirect-uris:
+                - http://localhost:3000/auth/logged-out
               scopes:
                 - openid
                 - profile
                 - tenant.read
                 - tenant.write
-                - tenant.claim
+                - tenant.join
                 - events.read
                 - events.manage
                 - events.operate
@@ -128,7 +141,7 @@ spring:
                 - profile
                 - tenant.read
                 - tenant.write
-                - tenant.claim
+                - tenant.join
                 - events.read
                 - events.manage
                 - events.operate
@@ -222,6 +235,23 @@ spring:
               device-code-time-to-live: 10m
               access-token-time-to-live: 10m
               access-token-format: self-contained
+          service-gateway:
+            registration:
+              client-id: service-gateway
+              client-secret: "${TOLO_IDP_SERVICE_GATEWAY_CLIENT_SECRET:gateway-secret}"
+              client-name: Development service gateway
+              client-authentication-methods:
+                - client_secret_basic
+                - client_secret_post
+              authorization-grant-types:
+                - refresh_token
+
+server:
+  servlet:
+    session:
+      cookie:
+        name: tolo_idp_session
+        secure: false
 
 tolo-idp:
   relation:
@@ -263,16 +293,15 @@ tolo-idp:
         - backend-api
       tenant-access-ttl: 15m
       event-access-ttl: 10m
+    service-gateway:
+      allowed-audiences:
+        - backend-api
+      token-introspection-allowed: true
   issuer: http://localhost:18080
   seed:
     enabled: true
   jwk:
     allow-ephemeral: true
-  cors:
-    allowed-origins:
-      - http://localhost:3000
-      - http://127.0.0.1:3000
-      - http://localhost:13000
-      - http://127.0.0.1:13000
-      - http://localhost:13001
-      - http://127.0.0.1:13001
+  login:
+    page-url: http://localhost:3000/login
+    error-page-url: http://localhost:3000/auth/error

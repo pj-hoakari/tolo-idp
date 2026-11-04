@@ -48,7 +48,7 @@
 
 Authorization Server は REST API を用いてユーザー認証を行う。
 
-認証成功後、Authorization Server は Spring Security セッションに選択 tenant を保存し、その後の Authorization Code フローで特定 tenant 文脈を持つ `tenant_access` token を JWT access token として発行する。
+Authorization Code フローでは、認可要求の `resource` で指定した tenant の文脈を持つ `tenant_access` token を JWT access token として発行する。ログイン状態から tenant を補わない。
 
 本仕様では `login` token は定義しない。
 
@@ -67,21 +67,24 @@ Content-Type: application/json
 {
   "username": "user-123",
   "password": "password",
-  "tenantId": "tenant-a"
+  "challenge": "<認可 endpoint が発行した login challenge>"
 }
 ```
 
-`/api/login` は未認証で呼び出せる。現行実装ではアプリケーション API の CSRF 検証は無効化する。
+`/api/login` は未認証で呼び出せる。呼び出すのは Web のログイン画面だけとし、OIDC client には呼び出させない。現行実装ではアプリケーション API の CSRF 検証は無効化する。
 
 Authorization Server は以下を確認する。
 
 ```text
-- tenantId が ID 形式に一致する
-- (tenantId, username) で特定した IdP 内の user の password が一致する
-- relation service 上で user が tenant に所属している
+- challenge が発行済みで、期限内で、まだ認証されていない
+- challenge と組にした認可要求の tenant resource から tenant を決める
+- (tenant, username) で特定した IdP 内の user の password が一致する
+- relation service 上で user が tenant に所属している（registration の認可要求（11.3）の challenge では確認しない）
 ```
 
-成功時は Spring Security セッションを作成し、選択 tenant をセッションに保存する。
+tenant は challenge だけから決め、本文の `tenantId` などからは受け取らない。
+
+成功時は Spring Security セッションを作成し、challenge をこのログインで認証済みにする。セッションに tenant を保存しない。
 
 レスポンス:
 
@@ -95,19 +98,19 @@ Authorization Server は以下を確認する。
 }
 ```
 
-認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。
+challenge が未知・期限切れ・認証済みの場合と本文が不正な場合は `400 Bad Request`、認証失敗は `401 Unauthorized`、tenant 不許可は `403 Forbidden` とする。Web のログイン画面は `401` だけを資格情報の誤りとして扱い、ほかの失敗では認可をやり直させる。認証失敗では challenge を認証済みにしないので、同じ challenge で再入力できる。
 
 ログイン成功時には、パスワードを検証した時刻とログインごとの識別子をサーバー側で記録する。認証時刻は ID Token の `auth_time` に使い、Refresh Token による更新でも元の認証時刻を維持する。token の更新を再ログインとして扱わない。
 
 ### 4.1.1 ユーザーの識別
 
-ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内の userId（ログイン名）であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
+ユーザーは `(tenant_id, username)` の組で一意に管理する。`username` はテナント内のログイン名であり、別テナントには同じ値を登録できる。ユーザー作成時に UUID v4 のサロゲートキー `id` を発行し、`idp_users.id` を主キーとする。パスワードやログイン名を更新しても `id` は変わらず、削除後の再作成では新しい `id` を発行する。
 
-権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, username)` を渡し、サロゲートキーを渡さない。
+権限は `idp_user_authorities.user_id` から主キーを参照する。認証済みセッションの principal、保存済み authorization / consent の principal_name、access token と ID Token の `sub`、UserInfo の `sub` にはサロゲートキーを使う。ログインレスポンスも `sub`、`username`、`tenantId` を返す。Relation Service へは `(tenantId, sub)` を渡し、username を渡さない。
 
-ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も `(tenantId, username)` ごとに分離する。
+ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。ログインでは challenge から決めた tenant を使う。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も challenge から決めた tenantId と username の組ごとに分離する。challenge が未知・期限切れ・認証済みの要求には、IP 単位の制限だけを適用する。
 
-開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId は従来どおり `user-123` とする。
+開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId もこの内部主キーとする。
 
 V6 は未リリースの開発用スキーマ変更としてユーザーテーブルを作り直す。旧テーブルには tenantId がないため所属を推測せず、旧ユーザー・権限・対応する authorization / consent・relation cache を削除する。開発用ユーザーは seed で再作成する。DB 以外の移行・旧識別方式との互換性対応は行わない。
 
@@ -128,37 +131,101 @@ access token に `profile` scope が含まれる場合、現在の username を 
 }
 ```
 
-### 4.1.3 OIDC の認可要求と再認証
+### 4.1.3 OIDC の認可要求と login challenge
 
-ログイン画面と `/api/login` の呼び出しは別フロントエンドの責務とする。IdP はログイン画面を提供しない。
+ログイン画面とエラー画面は Web が提供し、IdP は画面を提供しない。IdP はリダイレクトと JSON だけを返す。ログイン画面の URL は `tolo-idp.login.page-url`、エラー画面の URL は `tolo-idp.login.error-page-url` に設定する。
 
-認可 endpoint は最初に client、redirect URI、登録 scope を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。不正な client または redirect URI にはリダイレクトしない。未ログインの OIDC 要求は、tenant resource や membership の検証に進まず `login_required` を返す。
+認可 endpoint は最初に client と redirect URI を検証する。redirect URI の安全性を確認できた要求の失敗は、その URI に `error` と要求時の `state` を付けて返す。client へ返せない失敗（未登録または欠けた client、登録外の redirect URI など）は、エラー画面へ `error=<エラーコード>` だけを付けてリダイレクトする。要求の redirect URI、`state`、そのほかの要求の値はエラー画面の URL に含めない。
 
-認可要求の tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
+認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
-`prompt=login` と `max_age=0` は再ログインを要求する。正の `max_age` は認証からの経過秒数を検証し、超過時は再ログインを要求する。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、画面を表示せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。
+ログイン状態がない要求、ログインしたユーザーが要求の tenant のユーザーでない要求、再ログインが必要な要求には、一回限りの login challenge を発行する。registration の認可要求（11.3）も同じとし、別の tenant のログイン状態をログイン済みとして扱わない。発行の前に、client policy、`resource`、`audience`、OIDC のパラメータを検証する。membership と role による scope の検証は、ログイン後に要求を再開したときに行う。IdP は challenge を元の認可要求のパラメータと組にして保存し、ブラウザを `<ログイン画面の URL>?challenge=<challenge>` へ `302` でリダイレクトする。ほかのパラメータは付けない。
 
-フロントエンドは `login_required` を受けたら、同じブラウザセッションで `/api/login` を呼び、元の認可要求を再送する。IdP はセッションごとに1件、5分間だけ再認証待ちの要求を保持する。要求の全パラメータに結び付け、新たなパスワード認証を確認してから認可を再開する。完了した要求で同じ再認証結果を再利用しない。`state` などのパラメータを変更した要求は別の要求として扱う。
+challenge は 256 bit の乱数を base64url で表した値とし、発行から10分で期限が切れる。IdP は challenge の SHA-256 ハッシュだけを DB の `idp_login_challenge` に保存し、challenge の値をログに出さない。期限切れの challenge は次の challenge を発行するときに削除する。保存する認可要求は JSON で 8 KiB までとし、超える要求には challenge を発行せず、エラー画面へ `error=invalid_request` でリダイレクトする。
+
+Web のログイン画面は資格情報と challenge を `/api/login`（4.1 節）へ送り、成功したらブラウザで `<authorization_endpoint>?challenge=<challenge>` を開く。認可 endpoint はこの要求で `challenge` だけを受け付け、次をすべて満たすときに challenge を使用済みにして、保存した元の認可要求を同じ検証で再開する。
+
+```text
+- challenge が期限内で、まだ使われていない
+- challenge が /api/login で認証済みである
+- challenge を認証したログインが、現在のセッションのログインである
+```
+
+満たさない要求と、`challenge` 以外のパラメータを伴う要求は、元の認可要求を再開せず、エラー画面へ `error=invalid_challenge` でリダイレクトする。client の redirect URI へは返さない。照合に失敗した challenge は使用済みにしない。
+
+`prompt=login` と `max_age=0` は、ログイン状態があっても新しい challenge を発行する。その challenge を認証して再開した要求だけが満たし、ほかの challenge の認証や以前のログインでは満たさない。正の `max_age` は認証からの経過秒数を検証し、超過時は新しい challenge を発行する。再開した要求では経過秒数を改めて検証しない。負数、小数、空値、重複、整数の範囲を超える `max_age` は `invalid_request` とする。`prompt=none` でログインや再ログインが必要な場合は、challenge を発行せず `login_required` を返す。`none` と他の prompt 値の併用は拒否する。再開した要求の ID Token の `auth_time` は、challenge を認証したログインの時刻とする。
+
+challenge の発行、認証、使用、拒否は、`login_challenge_issued`、`login_challenge_authenticated`、`login_challenge_consumed`、`login_challenge_rejected` の構造化ログに記録する。challenge は値ではなくハッシュ（`challenge_id`）で識別する。
+
+challenge は DB に保存するので、どの IdP インスタンスでも照合できる。ログイン状態は各インスタンスのメモリ上のセッションに保存するので、複数のインスタンスで動かす場合は、セッションを1つのインスタンスに固定するか共有する。
 
 `id_token_hint` は署名、issuer、対象 client、ID Token の形式を検証する。過去に発行された期限切れ ID Token も hint として受け付けるが、access token や署名不正の値は受け付けない。hint の `sub` と認証済みユーザーが異なる場合は `login_required` とし、別ユーザーの token を発行しない。
 
 `nonce` は省略可能とし、指定時は単一の文字列を要求する。重複は認可コード発行前に `invalid_request` とする。空文字列は省略と同じ扱いにする。空白を含む値はそのまま受け付け、変更せず ID Token の `nonce` に含める。
 
-同意画面とアカウント選択画面は提供しない。認証済み要求の `prompt=consent` は `consent_required`、`prompt=select_account` は `account_selection_required` とし、要求された対話を省略して認可コードを発行しない。未知の prompt 値は `invalid_request` とする。再認証が必要な要求では、先に `login_required` を返す。
+同意画面とアカウント選択画面は提供しない。認証済み要求の `prompt=consent` は `consent_required`、`prompt=select_account` は `account_selection_required` とし、要求された対話を省略して認可コードを発行しない。未知の prompt 値は `invalid_request` とする。再ログインが必要な要求では、先に challenge でログインさせ、再開した要求にこれらのエラーを返す。
 
 OIDC Request Object は提供しない。`request` を指定した OIDC 認可要求は `request_not_supported`、`request_uri` を指定した OIDC 認可要求は `request_uri_not_supported` とし、外側のパラメータだけで認可を続行しない。Discovery の `request_parameter_supported` と `request_uri_parameter_supported` は明示的に `false` とする。
 
 認可応答は query 形式のみ提供する。`response_mode` の省略または単一の `query` を受け付け、それ以外の値・空値・重複は `invalid_request` とする。Discovery の `response_modes_supported` は `["query"]` とし、未対応形式の要求を query 形式へ暗黙に変更しない。
 
-### 4.2 ログアウト
+### 4.1.4 ログイン状態の cookie、CORS、転送ヘッダ
+
+IdP のログイン状態は Spring Security のセッションに保持し、セッションの cookie 名を `__Host-tolo_idp_session` とする。cookie には `Secure`、`HttpOnly`、`SameSite=Lax`、`Path=/` を付け、`Domain` を付けない。dev-jvm / dev-native プロファイルは平文の HTTP で動かすので、cookie 名を `tolo_idp_session` とし、`Secure` を付けない。
+
+`/api/login` の CORS は `tolo-idp.login.page-url` のオリジン（Web のルートドメイン）だけを許可する。許可するのは資格情報付きの `POST` と `content-type` ヘッダで、preflight にも同じ条件で応答する。tenant のサブドメインなど、ほかのオリジンは許可しない。
+
+送信元の IP アドレスと scheme は Tomcat の RemoteIpValve（`server.forward-headers-strategy=native`）で決める。`X-Forwarded-For` と `X-Forwarded-Proto` は `server.tomcat.remoteip.internal-proxies` に一致する接続元から届いたときだけ使い、ほかの接続元から届いた値は無視する。既定値は Spring Boot のプライベートアドレス帯なので、本番では前段の ingress のアドレスに絞る。ログインのレート制限はこうして決めた送信元 IP ごとに数える。
+
+### 4.1.5 サインアップ
 
 ```http
-POST /api/logout
+POST /api/signup
+Content-Type: application/json
+
+{
+  "username": "owner-1",
+  "password": "correct horse",
+  "challenge": "<registration の認可要求で発行した login challenge>"
+}
 ```
 
-認証済みセッションから呼び出す。
+`/api/signup` は未認証で呼び出せる。呼び出すのは Web のサインアップ画面だけとする。CORS とレート制限は `/api/login` と同じ扱いにする。
 
-セッションを破棄し、`204 No Content` を返す。
+challenge は、scope が `tenant.join` だけの認可要求（11.3）で発行した、期限内でまだ認証されていないものに限る。tenant_access の認可要求の challenge は受け付けない。ユーザーは challenge と組にした認可要求の tenant に作り、本文の `tenantId` などからは受け取らない。
+
+`username` は空白と制御文字を含まない 1〜50 文字、`password` は 8 文字以上かつ 72 バイト以下とする。IdP は新しい `sub`（4.1.1）を発行してユーザーを作り、relation service には問い合わせない。所属はまだない。
+
+成功時は 4.1 のログインと同じくセッションを作成し、challenge をこのサインアップで認証済みにする。レスポンスは `201 Created` とし、本文は 4.1 のログインレスポンスと同じ形にする。Web はその後、4.1.3 と同じく認可 endpoint で challenge を使って要求を再開する。
+
+challenge が不正な場合と本文が不正な場合は `400 Bad Request`、同じ tenant に同じ `username` がある場合は `409 Conflict` とする。別の tenant には同じ `username` を登録できる。
+
+サインアップは構造化ログ `user_registered` と `signup_completed` に記録し、拒否は `signup_rejected` に理由を付けて記録する。
+
+### 4.2 ログアウト
+
+ログアウトは OIDC RP-Initiated Logout 1.0 の end_session endpoint だけで提供する。IdP 独自のログアウト API は提供しない。endpoint の URL は Discovery の `end_session_endpoint` で公開し、RP はそこから取得する。
+
+```http
+GET /connect/logout?id_token_hint=...&post_logout_redirect_uri=...&state=...
+POST /connect/logout
+```
+
+POST では同じパラメータを `application/x-www-form-urlencoded` の本文で送る。RP はブラウザをこの endpoint へ遷移させる。IdP のセッション cookie を送るため、fetch ではなくトップレベルの遷移で呼ぶ。
+
+`id_token_hint` は必須とする。IdP が発行した認可の最新の ID Token と一致する値だけを受け付ける。Refresh で ID Token を再発行した後は、前の ID Token を受け付けない。期限切れの ID Token は受け付ける。`client_id` は省略でき、指定する場合は ID Token の発行先 client と一致させる。
+
+`post_logout_redirect_uri` は、ID Token の発行先 client に登録した値と完全に一致する場合だけ受け付ける。client 設定の `post-logout-redirect-uris` で登録する。`state` を指定した場合は、リダイレクト先の query に `state` として付ける。
+
+検証に成功すると、IdP は現在のセッションを破棄し、`302` で `post_logout_redirect_uri` へリダイレクトする。ログアウト後に IdP の画面は表示しない。セッションがない場合は、何も破棄せずにリダイレクトする。hint が現在のセッションに対応しない場合も、何も破棄せずにリダイレクトする。対応しないのは、セッションのユーザーが ID Token の認可のユーザーと異なる場合と、`sid` が現在のセッションと一致しない場合である。`post_logout_redirect_uri` を省略すると IdP の `/` へリダイレクトするため、RP は常に指定する。
+
+hint が IdP の発行した最新の ID Token でない場合、未登録の `post_logout_redirect_uri`、必須パラメータの欠落は `400` とし、OAuth2 のエラーコード（`invalid_token` または `invalid_request`）だけを JSON で返す。このときはリダイレクトせず、セッションも破棄しない。
+
+ログアウトで終了するのは IdP のセッションだけである。発行済みの Access Token と Refresh Token は失効しないため、失効には revocation endpoint を使う。
+
+`openid` を含む認可要求で発行する ID Token には、認可したセッションの ID のハッシュを `sid` claim に入れる。Refresh で再発行した ID Token も同じ `sid` を引き継ぐ。現在のセッションで `openid` の認可をしていれば、end_session は hint の `sid` が現在のセッションと一致するかを確かめる。`/api/login` で再ログインするとセッション ID が変わるため、その後に認可を受けると、再ログインの前に発行した ID Token は現在のセッションと一致しない。この ID Token による end_session は、現在のセッションを破棄せずにリダイレクトする。
+
+ログアウトの開始・完了・拒否は `logout_started`、`logout_completed`、`logout_rejected` の構造化ログに残す。hint が現在のセッションに対応せずセッションを破棄しなかった場合、`logout_completed` の `result` は `session_mismatch_not_ended` とする。
 
 ---
 
@@ -235,6 +302,31 @@ POST /api/logout
 }
 ```
 
+### 5.3 registration token
+
+`registration` token は、仮テナントの所有権の取得（ClaimTenantOwnership）と招待の受諾（AcceptTenantInvitation）に使う、tenant の文脈を持たない JWT access token である。発行の条件は 11.3 に従う。
+
+例:
+
+```json
+{
+  "iss": "https://auth.example.com",
+  "sub": "0b8e3f8c-6d0e-4a55-9b0c-3c1f7f6c2a11",
+  "aud": "backend-api",
+  "client_id": "client-123",
+  "scope": "tenant.join",
+  "token_use": "registration",
+  "iat": 1710000000,
+  "nbf": 1710000000,
+  "exp": 1710000300,
+  "jti": "jti-registration-001"
+}
+```
+
+`tenant_id`、`event_id`、`resource` を持たない。Service Gateway は `tenant_id` を持つ registration を拒否するためである。このため registration は、発行時の認可要求の tenant にかかわらず、どの tenant の所有権の取得と招待の受諾にも使える。別の tenant で使うと、その tenant にログインできない `sub` の所属ができる（権限は増えない）。BFF は、認可、サインアップ、所有権の取得、招待の受諾を同じ tenant で行う。IdP と Service Gateway ではこれを強制できない。
+
+Refresh Token は発行しない。registration は Token Exchange の subject token にできない（6 節）。
+
 ---
 
 ## 6. Token Exchange 遷移ルール
@@ -252,6 +344,7 @@ Authorization Server は以下の Token Exchange のみを許可する。
 | `tenant_access` | `tenant_access` |
 | `event_access` | `tenant_access` |
 | `event_access` | `event_access` |
+| `registration` | すべて |
 
 `login` token は本仕様では定義しない。
 
@@ -292,17 +385,20 @@ allowed_audiences
 allowed_scopes
 tenant_access_ttl_seconds
 event_access_ttl_seconds
+token_introspection_allowed
 ```
 
 ### 8.1 設定の保持と構成ファイル
 
 `allowed_grant_types` と `allowed_scopes` は、それぞれ RegisteredClient の `authorizationGrantTypes` と `scopes` を正とする。
 
-`client_type`、`allowed_audiences`、`allowed_token_exchange_transitions` は ClientSettings の `tolo-idp.*` 拡張設定に保存する。構成管理クライアントの `client_type` は認証方式から決める。`none` のみなら public、それ以外は confidential とし、`none` と他の認証方式の混在は拒否する。
+`client_type`、`allowed_audiences`、`allowed_token_exchange_transitions`、`token_introspection_allowed` は ClientSettings の `tolo-idp.*` 拡張設定に保存する。構成管理クライアントの `client_type` は認証方式から決める。`none` のみなら public、それ以外は confidential とし、`none` と他の認証方式の混在は拒否する。
 
 `tenant_access_ttl_seconds` は TokenSettings の標準 `accessTokenTimeToLive`、`event_access_ttl_seconds` は `tolo-idp.event-access-ttl-seconds` に保存する。認可処理はこれらを型付きの ClientPolicy ビューで読み取る。拡張設定が不足・不正の場合は token 発行を拒否し、既定値で補わない。
 
 構成管理では、Spring Boot 標準の登録設定と `tolo-idp.clients` を同じ登録キーで対応付ける。登録キーと `client-id` は別の値でもよい。
+
+`token_introspection_allowed` は `tolo-idp.clients.<登録キー>.token-introspection-allowed` で指定し、未指定時は false とする。Service Gateway の client だけを true にする（13.1 節）。
 
 ```yaml
 spring:
@@ -319,6 +415,7 @@ spring:
                 - authorization_code
                 - urn:ietf:params:oauth:grant-type:token-exchange
               redirect-uris: [https://app.example.com/callback]
+              post-logout-redirect-uris: [https://app.example.com/auth/logged-out]
               scopes: [openid, tenant.read, events.read]
             require-proof-key: true
 
@@ -331,7 +428,7 @@ tolo-idp:
       event-access-ttl: 10m
 ```
 
-両設定の登録キーは完全に一致させる。`tolo-idp` 配下の未知の設定キーはバインド時に拒否し、誤記を既定値で補わない。独自設定の欠落・登録設定のないキー・空の audience・不正な TTL・未知 scope・未知の交換遷移・public client の Token Exchange・JWT 以外の access token 形式を、DB 更新前に拒否する。TTL は正の整数秒とし、未指定時は tenant 15 分・event 10 分とする。tenant TTL は上記の独自構成を正とし、RegisteredClient の標準 access token TTL に反映する。
+両設定の登録キーは完全に一致させる。`tolo-idp` 配下の未知の設定キーはバインド時に拒否し、誤記を既定値で補わない。独自設定の欠落・登録設定のないキー・空の audience・不正な TTL・未知 scope・未知の交換遷移・public client の Token Exchange・public client の Introspection 許可・JWT 以外の access token 形式を、DB 更新前に拒否する。TTL は正の整数秒とし、未指定時は tenant 15 分・event 10 分とする。tenant TTL は上記の独自構成を正とし、RegisteredClient の標準 access token TTL に反映する。
 
 同期対象は完成した RegisteredClient 全体とし、標準項目と独自項目を同一トランザクションで保存する。構成管理外クライアントの設定は起動時に変更しない。
 
@@ -388,12 +485,12 @@ staff
 | `events.manage` | 設計・構成の書き込み | CreateEvent、AssignEventType、TransitionEventStatus、UpdateObservationSettings、SaveGraph、PublishRevision、QR 設置箇所の追加・更新・削除、RegisterEdgeDevice / UnregisterEdgeDevice など |
 | `events.operate` | 現場運用の書き込み（11 RPC） | OperateGate、ToggleDangerFlag、ReportCongestion、SendStaffMessage、DirectReassignment など |
 | `events.report` | 計測報告と稼働通知 | ReportMeasurements、Heartbeat |
-| `tenant.claim` | 仮テナントの所有権取得専用 | ClaimTenantOwnership のみ |
+| `tenant.join` | 所有権の取得と招待の受諾専用。registration token にだけ付ける | ClaimTenantOwnership、AcceptTenantInvitation |
 | `events.stream` | イベントの映像配信に必要な signaling への参加 | IssueFirestoreToken のみ（ESP カメラ） |
 
 `events.stream` はロール→scope の対応に含めない。ESP カメラの client と、承認済みのデバイス認可にだけ発行する。
 
-OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープと `allowed_scopes` に含まれていることを要求する。
+OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_access では role 判定から除外するが、client の登録スコープによる制限は受ける（11.1）。
 
 旧 `events.write` は廃止する。新しい発行要求では、登録設定に残っていても拒否する。新スコープへの暗黙の変換は行わない。
 
@@ -401,11 +498,11 @@ OIDC の `openid` / `profile` は業務スコープとは別に扱う。tenant_a
 
 | role | 許可 scope |
 |---|---|
-| `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
-| `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report`, `tenant.claim` |
-| `staff` | `tenant.read`, `events.read`, `events.operate`, `events.report`, `tenant.claim` |
+| `owner` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report` |
+| `admin` | `tenant.read`, `tenant.write`, `events.read`, `events.manage`, `events.operate`, `events.report` |
+| `staff` | `tenant.read`, `events.read`, `events.manage`, `events.operate`, `events.report` |
 
-`tenant.claim` の発行先と併用条件は 11.3 に従う。
+`tenant.join` は role から導かない。発行条件は 11.3 に従う。
 
 ### 9.4 role の扱い
 
@@ -431,7 +528,7 @@ Authorization Server は、resource から得た `tenantId` と subject user id 
 GET /tenants/{tenantId}/users/{userId}/memberships
 ```
 
-ログイン時は認証済み user の username を `userId` として渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで username を渡す。未知・無効・別 tenant の subject は拒否する。`sub` を Relation Service の userId として扱わない。
+`userId` には user の `sub`（サロゲートキー）を渡す。ログイン時は認証済み user の `sub` を渡す。認可リクエスト、Authorization Code / Refresh Token の発行、Token Exchange では principal / `sub` から IdP のユーザーを参照し、そのユーザーの tenantId が対象 tenant と一致することを確認したうえで `sub` を渡す。未知・無効・別 tenant の subject は拒否する。username を Relation Service の userId として扱わない。registration の認可要求（11.3）では、ログイン、サインアップ、認可リクエスト、Authorization Code の発行のいずれでも参照しない。
 
 ### 10.2 response
 
@@ -441,7 +538,7 @@ relation service は以下の JSON を返す。
 {
   "memberships": [
     {
-      "user_id": "user-123",
+      "user_id": "71c68dc1-2c72-45ac-a191-1c47c1551011",
       "tenant_id": "tenant-a",
       "tenant_role": "owner",
       "event_roles": [
@@ -509,6 +606,8 @@ tenant_id
 user_id
 ```
 
+`user_id` は 10.1 で Relation Service に渡す user の `sub` である。
+
 保存内容:
 
 ```text
@@ -528,6 +627,7 @@ user_id
 - miss または期限切れの場合は relation service に問い合わせる
 - relation service の成功レスポンスのみを保存する
 - 404、membership 不足、通信失敗、timeout、不正 response、未知 role はキャッシュしない
+- Token Exchange では、hit したキャッシュの event_roles に resource の eventId がない場合も miss とし、relation service に 1 回だけ問い合わせる。その結果で判定し、キャッシュを更新する。再取得後もない場合は 10.4 に従い拒否する
 - tenantId は ID 形式を検証し、検証失敗時は relation service へ問い合わせない
 - tenantId / userId は trim、大文字小文字変換、Unicode 正規化を行わず、そのままキャッシュキーに使う
 ```
@@ -546,7 +646,7 @@ DELETE /internal/relation-cache
 DELETE /internal/relation-cache/tenants/{tenantId}/users/{userId}
 ```
 
-指定した `(tenantId, userId)` の relation cache entry のみを削除し、`204 No Content` を返す。
+指定した `(tenantId, userId)` の relation cache entry のみを削除し、`204 No Content` を返す。`userId` は 10.1 と同じく user の `sub` である。
 
 `tenantId` は ID 形式を検証する。`userId` は trim、大文字小文字変換、Unicode 正規化を行わず、path value をそのまま削除キーに使う。
 
@@ -568,18 +668,36 @@ X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外�
 
 ## 11. scope 発行ルール
 
-Authorization Server は、要求された `scope` を暗黙に縮小して発行してはならない。
+Authorization Code フローの認可要求では、要求 scope のうち tenant role または client の登録 scope が許可しない scope を発行対象から外し、残りを発行する。client はユーザーの role を知る前に scope を要求する。また、client ごとの登録 scope は発行する scope の上限であり、要求を拒否する条件ではない。
 
-要求 scope に client / role / token 種別で許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
+それ以外では、要求された `scope` を暗黙に縮小して発行してはならない。対象は、未対応の scope、client の登録外の `openid`、`tenant.join` とほかの scope の併用、registration の認可要求、Refresh Token、Token Exchange である。
+
+これらに許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
 
 ### 11.1 tenant_access token 発行時
 
-`tenant_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
+`tenant_access` token の認可要求では、以下を満たすことを要求する。満たさない場合は `invalid_scope` とする。
 
 ```text
-requested_scope ⊆ client.allowed_scopes
-requested_scope ⊆ tenant_role.allowed_scopes
+requested_scope ⊆ supported_scopes
+openid ∈ requested_scope ならば openid ∈ client.allowed_scopes
 ```
+
+この 2 つと `tenant.join` の混在（11.3）は、ユーザーによらず判断できるので、login challenge を発行する前に検証する。満たさない要求は、ログイン画面へ送らずに client へ `invalid_scope` を返す。
+
+発行する scope は以下とする。
+
+```text
+granted_scope = requested_scope ∩ (identity_scopes ∪ tenant_role.allowed_scopes) ∩ client.allowed_scopes
+```
+
+`identity_scopes` は `openid` / `profile` である。`client.allowed_scopes` は client の登録 scope である。例えば `staff` が `openid` と業務 scope 6 種を要求すると、`tenant.write` を除いた `openid tenant.read events.read events.manage events.operate events.report` を発行する。登録 scope が `openid tenant.read events.read events.operate` の client に対して同じ要求をすると、`owner` でも `staff` でも `openid tenant.read events.read events.operate` を発行する。
+
+`openid` だけは登録外でも外さず `invalid_scope` とする。`openid` の有無は要求を OIDC 認証要求として検証するか（`nonce`、`prompt`、`max_age` など）と ID Token を発行するかを決めるため、外すと OIDC として検証した要求を OAuth 2.0 の認可として発行することになる。
+
+要求 scope が空でなく `granted_scope` が空になる場合は `invalid_scope` とする。業務 scope がすべて外れても `openid` / `profile` が残る場合は、それだけを発行する。
+
+認可コードには `granted_scope` を結び付け、token response の `scope` と JWT の `scope` claim は `granted_scope` と一致する。認可コードの交換と Refresh Token による更新では、その時点の tenant role と client の登録 scope で `granted_scope` を再検証し、許可外 scope があれば縮小せず `invalid_scope` とする。
 
 `tenant_role` は relation service の `memberships[0].tenant_role` から取得する。`memberships` が空配列の場合、tenant_access token は発行しない。
 
@@ -587,7 +705,7 @@ requested_scope ⊆ tenant_role.allowed_scopes
 
 ### 11.2 event_access token 発行時
 
-`tenant.claim` は発行しない。要求に含まれる場合は `invalid_scope` とする。
+`tenant.join` は発行しない。要求に含まれる場合は `invalid_scope` とする。
 
 既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` / `profile` は event role の許可 scope に含まれず、発行しない。
 
@@ -605,26 +723,34 @@ resource の `eventId` に一致する event が `event_roles` に存在しな�
 
 `admin` を使う場合は、IdP 内部設定または将来の本番 relation service の role mapping により `event_role` へ割り当てる。relation service の response から `admin` を推定してはならない。
 
-### 11.3 tenant.claim token 発行時
+### 11.3 registration token 発行時
 
-`tenant.claim` は所属済みの `owner` / `admin` / `staff` に対して、既存の Authorization Code フローで tenant_access token にのみ発行する。
+scope が `tenant.join` だけの認可要求には、tenant_access の代わりに registration token（5.3）を発行する。`tenant.join` と、`openid`、`profile`、業務 scope のいずれかとの併用は `invalid_scope` とする。このため registration の認可では ID Token を発行しない。
 
-要求 scope は以下のいずれかに限定する。
+認可要求には、tenant_access と同じく対象 tenant の `resource` を1つ指定する。IdP はその tenant のユーザーとしてログインまたはサインアップ（4.1.5）させる。所属はまだないので、relation service への問い合わせは行わない。
+
+以下を満たさない要求は、login challenge を発行する前に client へ `invalid_scope` を返す。
 
 ```text
-tenant.claim
-profile tenant.claim
-openid tenant.claim
-openid profile tenant.claim
+requested_scope = {tenant.join}
+tenant.join ∈ client.allowed_scopes
 ```
 
-他の業務 scope との混在は `invalid_scope` とする。認可リクエスト時と JWT 発行時の両方で検証する。
+`tenant.join` を登録 scope に持つ client だけが registration を受け取れる。開発用 client では、Web の BFF にあたる `client-123` に登録する。
 
-通常の tenant_access と同じく、認証、選択 tenant の membership、client の許可 scope を検証する。新しい token_use や claim は追加しない。
+認可コードの交換では、ユーザーが認可要求の tenant に存在し有効であることを確かめ、次の claim で発行する。TTL は 5 分とし、client ごとには変えない。
 
-仮テナントの状態、所有権取得資格、ClaimTenantOwnership の最終認可は Resource Server が確認する。未所属ユーザーへの発行と所有権取得 RPC の実装は本仕様の対象外とする。
+```text
+token_use=registration
+scope=tenant.join
+aud=client policy の audience（1つ）
+sub, client_id, iat, nbf, exp, jti
+tenant_id, event_id, resource は持たない
+```
 
-tenant.claim のみを持つ token からイベント系 scope への Token Exchange は、交換元 scope を超えるため `invalid_grant` とする。
+Refresh Token は発行しない。registration の認可を Refresh Token grant で更新する要求は `invalid_grant` とする。発行は監査ログ（19 節）に `requested_token_use=registration` で記録する。監査ログの `tenant_id` には認可要求の tenant を記録するが、token には載せない。
+
+tenant_access と event_access の要求に `tenant.join` が含まれる場合は `invalid_scope` とする。
 
 ---
 
@@ -694,12 +820,20 @@ Access Token はすべて JWT とする。
 ```text
 - Opaque Token は使用しない
 - Resource Server は JWT を自己検証できる
-- 認証済み client 向けに Token Introspection を提供する
+- Service Gateway 向けに Token Introspection を提供する
 ```
 
 Token Introspection は RFC 7662 の `POST /oauth2/introspect` とする。
 
-Introspection Request は登録済み client の認証を必須とする。confidential client と public client のどちらも Introspection を利用できる。
+Introspection を利用できるのは Service Gateway だけとする。Introspection Request は client 認証を必須とし、認証した client が confidential client で、`token_introspection_allowed` が true の場合だけ受け付ける。
+
+client 認証に失敗した場合は `401 Unauthorized` とする。認証に成功しても上記を満たさない client は、`400 Bad Request` と以下で拒否する。public client、許可のない confidential client、拡張設定が不足・不正な client がこれにあたる。Token Revocation の public client 拒否（17.1 節）と同じ error code を使う。
+
+```json
+{
+  "error": "invalid_client"
+}
+```
 
 存在しない token、失効済み token、期限切れ token、nbf より前の token は以下のように返す。
 
@@ -728,6 +862,8 @@ tenant_id または event_id
 edge_device_id（ESP カメラ、およびカメラを指定した観測ページ・接続用 client の event_access）
 ```
 
+registration token には `resource`、`tenant_id`、`event_id` がないので返さない。
+
 Introspection Response とログに以下を含めてはならない。
 
 ```text
@@ -753,6 +889,8 @@ nbf
 exp
 jti
 ```
+
+registration token は `resource` を持たない（5.3）。
 
 ### 13.3 tenant_access token 必須 claim
 
@@ -813,7 +951,7 @@ Authorization Server は以下を確認する。
 - requested audience が client に許可されている
 - requested resource が event resource 形式である
 - subject_token.tenant_id == resource の tenantId
-- subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の username) を問い合わせる
+- subject_token.sub から対象 tenant の user を参照し、relation service cache または relation service に (resource の tenantId, user の sub) を問い合わせる
 - relation service の memberships が空配列ではない
 - resource の eventId が relation service の memberships[0].event_roles[].event_id に存在する
 - requested_scope が subject_token.scope を超えていない
@@ -860,7 +998,7 @@ role は主に Authorization Server が scope 発行時に使う内部情報で�
 
 ### 16.1 write 系 API
 
-`tenant.write`、`events.manage`、`events.operate`、`events.report`、`tenant.claim` を必要とする API、および `tenant.read` による自デバイスへの書き込み API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
+`tenant.write`、`events.manage`、`events.operate`、`events.report` を必要とする API、および `tenant.read` による自デバイスへの書き込み API では、Resource Server は DB 上の現在の membership / permission を確認し、token 内の scope が現在も許可可能であることを確認する。
 
 ### 16.2 read 系 API
 
@@ -896,7 +1034,7 @@ token_type_hint=access_token
 `token_type_hint` は未指定、`access_token`、`refresh_token` を受け付ける。未知の値は RFC 7009 に従って無視する。
 hint は検索順の指定とし、指定種別で見つからない場合は、もう一方の対応済み種別も検索する。Authorization Code や ID Token は検索しない。
 
-Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。
+Revocation 対象は `tenant_access` / `event_access` の JWT access token、および保存済み Refresh Token とする。registration token は対象外とし、短い TTL で失効させる。現行実装では、保存済みの registration token の revocation 要求は `invalid_request` になる。
 
 Authorization Server は以下を確認する。
 
@@ -940,10 +1078,11 @@ Revocation endpoint は token 本体、client secret、authorization code、pass
 |---|---|
 | `tenant_access` | 15分 |
 | `event_access` | 10分 |
+| `registration` | 5分 |
 | ESP カメラの `event_access` | 10分。承認から7日を上限とする |
 | ESP カメラの Refresh Token | 24時間。交換ごとに延長し、承認から7日を上限とする |
 
-client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。デバイス認可の `event_access` と Refresh Token は、client の TTL と承認から7日の絶対期限の早い方で失効する。
+client policy の `tenant_access_ttl_seconds` / `event_access_ttl_seconds` により client ごとに設定する。`registration` は client によらず固定とする。デバイス認可の `event_access` と Refresh Token は、client の TTL と承認から7日の絶対期限の早い方で失効する。
 
 ---
 
@@ -987,6 +1126,8 @@ relation service の `404 tenant not found`、通信失敗、timeout、不正 re
   "error_description": "The requested scope is not allowed"
 }
 ```
+
+対象は 11 節で拒否すると定めた要求である。認可要求で tenant role または client の登録 scope を超える scope は発行対象から外すだけで、このエラーにしない。
 
 ### 18.3 audience / resource が許可されない場合
 
@@ -1037,6 +1178,8 @@ issued_jti
 
 現行実装では Token Exchange の監査ログを DB の `idp_audit_log` と logger `audit.token` に記録する。
 Token Revocation も同じ `idp_audit_log` と logger `audit.token` に記録する。
+registration token の発行（RegistrationTokenIssued）も同じ `idp_audit_log` と logger `audit.token` に記録する。`requested_token_use` は `registration`、`tenant_id` は認可要求の tenant、`issued_jti` は発行した token の `jti` とする。
+サインアップ（UserRegistered）は 4.1.5 の構造化ログ `user_registered` に記録し、`idp_audit_log` には記録しない。
 Revocation の場合、`requested_token_use` は `revocation`、`issued_jti` は失効対象の
 `jti` とする。Refresh Token の revocation では `source_token_use=refresh_token`、`issued_jti=null` とし、token 本体を含めない。
 
@@ -1147,7 +1290,7 @@ token_invalid_claims
 - event_id を scope に含める
 - x_tenant_id / x_event_id を使う
 - role / tenant_role / event_role を JWT claim に入れる
-- scope を暗黙に縮小して発行する
+- 認可要求の tenant role と client の登録 scope による絞り込み（11.1）以外で、scope を暗黙に縮小して発行する
 - 複数 audience の access token を発行する
 - Opaque Token を使う
 - Opaque Token Introspection に依存する
@@ -1167,7 +1310,6 @@ token_invalid_claims
 - 具体的な Resource Server 分割
 - 具体的な audience 名
 - API path の最終形
-- ユーザー認証後の tenant 選択フロー
 - Resource Server ごとの permission 再確認ポリシー
 - 本番 relation service で `admin` role を扱うか
 ```
@@ -1179,6 +1321,13 @@ token_invalid_claims
 ```text
 tolo-idp.issuer=http://localhost:8080
 tolo-idp.resource.allowed-hosts=api.example.com
+tolo-idp.login.page-url=（必須。dev-jvm / dev-native / test は http://localhost:3000/login）
+tolo-idp.login.error-page-url=（必須。dev-jvm / dev-native / test は http://localhost:3000/auth/error）
+server.servlet.session.cookie.name=__Host-tolo_idp_session（dev-jvm / dev-native は tolo_idp_session）
+server.servlet.session.cookie.secure=true（dev-jvm / dev-native は false）
+server.servlet.session.cookie.same-site=lax
+server.forward-headers-strategy=native
+server.tomcat.remoteip.internal-proxies=（Spring Boot の既定値。プライベートアドレス帯）
 tolo-idp.relation.base-url=http://localhost:8081
 tolo-idp.relation.connect-timeout=2s
 tolo-idp.relation.read-timeout=3s
@@ -1188,13 +1337,13 @@ tolo-idp.clients.client-123.tenant-access-ttl=15m
 tolo-idp.clients.client-123.event-access-ttl=10m
 ```
 
-RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev-jvm / dev-native / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
+RegisteredClient は `spring.security.oauth2.authorizationserver.client` から起動時に JDBC へ同期する。開発用 `client-123` は dev-jvm / dev-native / test のその構成で定義し、secret は `tolo-idp.seed.client-secret`（未設定時は `secret`）を使う。開発用 Service Gateway の `service-gateway` も dev-jvm / dev-native / test の構成で定義する。secret は環境変数 `TOLO_IDP_SERVICE_GATEWAY_CLIENT_SECRET`（未設定時は `gateway-secret`）を使う。`service-gateway` は Introspection だけを許可する。登録には grant が 1 つ以上必要なため、`refresh_token` だけを設定する。authorization code grant を持たないので、この client は Refresh Token を得られず、token を取得できない。本番では運用側が Service Gateway の client を構成する。構成から削除されたクライアントは、`configuration_managed` が真の行だけ削除する。
 
 `client_secret_basic` / `client_secret_post` / `client_secret_jwt` のいずれかを使う構成管理クライアントは、空白のみではない client secret を必須とする。未設定・空文字・空白のみの場合、DB 更新前に同期を拒否し、起動を失敗させる。既存の secret を暗黙に保持したり、空文字を開発用の既定値へ置き換えたりしない。`none` や `private_key_jwt` など secret を使わない認証方式のみの場合は、secret の未設定を許可する。
 
 同じ登録キーの `client-id` を変更した場合は、旧クライアントの削除と新クライアントの登録として扱う。削除予定の構成管理クライアントが使用する内部 ID は、旧データの削除後に再利用できる。構成管理外クライアント、または構成に残る別クライアントとの内部 ID 衝突は拒否する。
 
-構成管理クライアントの削除時は、その内部 ID に紐付く保存済み authorization と consent も同一トランザクションで削除する。他のクライアントのデータは変更しない。削除された authorization の token を、認証済みの別クライアントが Introspection した場合は `200 OK` と `{"active": false}` を返す。この削除による JWT の denylist 登録は行わず、Resource Server における自己検証時の失効方針は 17 節に従う。
+構成管理クライアントの削除時は、その内部 ID に紐付く保存済み authorization と consent も同一トランザクションで削除する。他のクライアントのデータは変更しない。削除された authorization の token を、Introspection を許可された別クライアントが Introspection した場合は `200 OK` と `{"active": false}` を返す。この削除による JWT の denylist 登録は行わず、Resource Server における自己検証時の失効方針は 17 節に従う。
 
 seed data が有効な場合の開発用デフォルト:
 
@@ -1204,7 +1353,9 @@ password=password
 client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
-allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.claim,events.read,events.manage,events.operate,events.report
+allowed_scopes=openid,profile,tenant.read,tenant.write,tenant.join,events.read,events.manage,events.operate,events.report
+gateway_client_id=service-gateway
+gateway_client_secret=gateway-secret
 ```
 
 ### 22.1 RegisteredClient 設定の集約
@@ -1218,7 +1369,7 @@ DB スキーマの V5 で `idp_client_policy` テーブルを削除する。旧�
 開発・本番ともに、構成管理外の既存 client に対するスコープの自動移行や、旧 scope の読み替えは行わない。運用側で以下を実施する。
 
 1. Resource Server と client の要求 scope を新しいスコープ用途に合わせて更新する。
-2. 対象 client の RegisteredClient の `scopes` を更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.claim` も利用する client にのみ登録する。
+2. 対象 client の RegisteredClient の `scopes` を更新し、`events.write` を削除する。`events.manage` / `events.operate` / `events.report` は必要なものを明示的に登録する。`tenant.join` は registration を受け取る client（Web の BFF）にのみ登録する。廃止した `tenant.claim` は未対応の scope として `invalid_scope` になるので、登録と要求から削除する。
 3. 新しい scope を要求して tenant_access token を再取得し、その scope の範囲内で event_access token を要求する。
 
 既発行 JWT と保存済み authorization は変更・一括失効しない。旧 scope を新しい scope として解釈しない。交換元が旧 `events.write` のみを持つ場合、新イベントスコープへの交換は `invalid_grant` とする。交換要求自体に `events.write` が含まれる場合は `invalid_scope` とする。

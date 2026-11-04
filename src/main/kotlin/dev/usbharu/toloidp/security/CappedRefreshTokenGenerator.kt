@@ -3,7 +3,6 @@ package dev.usbharu.toloidp.security
 import dev.usbharu.toloidp.devicegrant.DeviceGrantRepository
 import org.springframework.security.oauth2.core.OAuth2RefreshToken
 import org.springframework.security.oauth2.core.OAuth2Token
-import org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenContext
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 
@@ -14,7 +13,7 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Toke
  * absolute expiry that must apply to every rotated token as well.
  */
 class CappedRefreshTokenGenerator(
-    private val delegate: OAuth2RefreshTokenGenerator,
+    private val delegate: OAuth2TokenGenerator<OAuth2Token>,
     private val deviceGrants: DeviceGrantRepository,
 ) : OAuth2TokenGenerator<OAuth2Token> {
     override fun generate(context: OAuth2TokenContext): OAuth2Token? {
