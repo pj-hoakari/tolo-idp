@@ -61,6 +61,13 @@ class Bucket4jRedisRateLimitService(
     private fun checks(identity: RateLimitIdentity): List<BucketCheck> {
         val userId = identity.userId
         val checks = mutableListOf<BucketCheck>()
+        // Check the shared IP bucket first: a denied request must not materialize
+        // caller-selected user or IP_USER buckets in the shared Redis store.
+        checks += BucketCheck(
+            dimension = RateLimitDimension.IP,
+            key = key("ip", identity.ip),
+            configuration = ipConfiguration,
+        )
         if (userId != null) {
             checks += BucketCheck(
                 dimension = RateLimitDimension.IP_USER,
@@ -73,11 +80,6 @@ class Bucket4jRedisRateLimitService(
                 configuration = userConfiguration,
             )
         }
-        checks += BucketCheck(
-            dimension = RateLimitDimension.IP,
-            key = key("ip", identity.ip),
-            configuration = ipConfiguration,
-        )
         return checks
     }
 

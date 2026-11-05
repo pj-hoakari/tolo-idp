@@ -1,7 +1,6 @@
 package dev.usbharu.toloidp.ratelimit
 
 import jakarta.servlet.http.HttpServletRequest
-import org.springframework.http.MediaType
 import org.springframework.security.core.context.SecurityContextHolder
 import tools.jackson.databind.ObjectMapper
 
@@ -24,10 +23,10 @@ class RateLimitIdentityExtractor(
     }
 
     private fun loginUserId(request: HttpServletRequest): String? {
-        if (request.method != "POST" || request.requestURI !in CREDENTIAL_PATHS) {
+        if (request.method != "POST" || !isCredentialPath(request)) {
             return null
         }
-        if (!request.contentType.orEmpty().startsWith(MediaType.APPLICATION_JSON_VALUE)) {
+        if (!isJsonCredential(request.contentType)) {
             return null
         }
         val cached = request as? CachedBodyHttpServletRequest ?: return null
@@ -47,4 +46,3 @@ class RateLimitIdentityExtractor(
     }
 }
 
-val CREDENTIAL_PATHS = setOf("/api/login", "/api/signup")

@@ -5,6 +5,7 @@ import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.ratelimit.RateLimitIdentityExtractor
 import dev.usbharu.toloidp.ratelimit.RateLimitService
 import dev.usbharu.toloidp.security.LoginChallenges
+import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy
 import io.github.bucket4j.distributed.proxy.ProxyManager
 import io.github.bucket4j.redis.lettuce.Bucket4jLettuce
 import io.lettuce.core.RedisClient
@@ -13,6 +14,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import tools.jackson.databind.ObjectMapper
+import java.time.Duration
 
 @Configuration
 @ConditionalOnProperty(prefix = "tolo-idp.rate-limit", name = ["enabled"], havingValue = "true", matchIfMissing = true)
@@ -26,8 +28,18 @@ class RateLimitConfig {
     }
 
     @Bean
-    fun rateLimitProxyManager(redisClient: RedisClient): ProxyManager<ByteArray> =
-        Bucket4jLettuce.casBasedBuilder(redisClient).build()
+    fun rateLimitProxyManager(redisClient: RedisClient, properties: IdpProperties): ProxyManager<ByteArray> {
+        val keepAfterRefill = listOf(
+            properties.rateLimit.ip.refillPeriod,
+            properties.rateLimit.user.refillPeriod,
+            properties.rateLimit.ipUser.refillPeriod,
+        ).maxOrNull()!!.plus(Duration.ofMinutes(1))
+        return Bucket4jLettuce.casBasedBuilder(redisClient)
+            .expirationAfterWrite(
+                ExpirationAfterWriteStrategy.basedOnTimeForRefillingBucketUpToMax(keepAfterRefill),
+            )
+            .build()
+    }
 
     @Bean
     fun rateLimitService(

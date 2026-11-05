@@ -70,8 +70,8 @@ class RateLimitFilter(
             return request
         }
         if (request.method == "POST" &&
-            request.requestURI in CREDENTIAL_PATHS &&
-            request.contentType.orEmpty().startsWith(MediaType.APPLICATION_JSON_VALUE)
+            isCredentialPath(request) &&
+            isJsonCredential(request.contentType)
         ) {
             return CachedBodyHttpServletRequest(request)
         }

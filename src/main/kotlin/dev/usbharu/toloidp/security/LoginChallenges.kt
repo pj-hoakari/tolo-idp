@@ -2,10 +2,8 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
-import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.stereotype.Component
 import tools.jackson.core.type.TypeReference
 import tools.jackson.databind.ObjectMapper
@@ -23,7 +21,12 @@ class LoginChallenges(
     private val json: ObjectMapper,
     private val clock: Clock,
 ) {
-    fun issue(clientId: String, tenantId: String, parameters: Map<String, Array<String>>): String? {
+    fun issue(
+        clientId: String,
+        tenantId: String,
+        parameters: Map<String, Array<String>>,
+        registration: Boolean = false,
+    ): String? {
         val request = json.writeValueAsString(parameters.mapValues { it.value.toList() })
         if (request.length > MAX_AUTHORIZATION_REQUEST_LENGTH) {
             log.structuredWarn(
@@ -39,8 +42,10 @@ class LoginChallenges(
         val now = clock.instant()
         jdbc.update("DELETE FROM idp_login_challenge WHERE expires_at <= ?", Timestamp.from(now))
         jdbc.update(
-            "INSERT INTO idp_login_challenge (challenge_hash, tenant_id, authorization_request, expires_at) VALUES (?, ?, ?, ?)",
-            hash(challenge), tenantId, request, Timestamp.from(now.plus(TTL)),
+            "INSERT INTO idp_login_challenge " +
+                "(challenge_hash, tenant_id, authorization_request, client_id, registration, expires_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?)",
+            hash(challenge), tenantId, request, clientId, registration, Timestamp.from(now.plus(TTL)),
         )
         log.structuredInfo(
             "Login challenge issued",
@@ -60,12 +65,15 @@ class LoginChallenges(
 
     fun registration(challenge: String): Boolean =
         jdbc.queryForList(
-            "SELECT authorization_request FROM idp_login_challenge WHERE challenge_hash = ? AND login_id IS NULL AND expires_at > ?",
+            "SELECT registration FROM idp_login_challenge WHERE challenge_hash = ? AND login_id IS NULL AND expires_at > ?",
+            Boolean::class.java, hash(challenge), Timestamp.from(clock.instant()),
+        ).singleOrNull() == true
+
+    fun clientId(challenge: String): String? =
+        jdbc.queryForList(
+            "SELECT client_id FROM idp_login_challenge WHERE challenge_hash = ? AND login_id IS NULL AND expires_at > ?",
             String::class.java, hash(challenge), Timestamp.from(clock.instant()),
-        ).singleOrNull()?.let { request ->
-            json.readValue(request, PARAMETERS)[OAuth2ParameterNames.SCOPE]?.singleOrNull()
-                ?.split(' ')?.filter { it.isNotEmpty() }?.toSet() == ScopePolicy.REGISTRATION_SCOPES
-        } == true
+        ).singleOrNull()
 
     fun authenticate(challenge: String, loginId: String, subject: String): Boolean {
         val authenticated = jdbc.update(
