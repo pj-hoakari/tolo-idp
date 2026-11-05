@@ -37,6 +37,7 @@ import org.springframework.security.oauth2.server.authorization.context.Authoriz
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat
 import org.springframework.security.oauth2.server.authorization.token.DefaultOAuth2TokenContext
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
+import org.springframework.transaction.TransactionException
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
@@ -289,13 +290,9 @@ open class SpecTokenExchangeAuthenticationProvider(
             try {
                 auditService.record(audit.copy(result = "failure", failureReason = ex.failureReason))
             } catch (auditFailure: DataAccessException) {
-                log.structuredWarn(
-                    "Token Exchange audit persistence failed",
-                    auditFailure,
-                    "event" to "token_exchange_audit_persistence_failed",
-                    "client_id" to registeredClient.clientId,
-                    "failure_reason" to ex.failureReason,
-                )
+                logAuditFailure(registeredClient.clientId, ex.failureReason, auditFailure)
+            } catch (auditFailure: TransactionException) {
+                logAuditFailure(registeredClient.clientId, ex.failureReason, auditFailure)
             }
             log.structuredInfo(
                 "Token Exchange failed",
@@ -311,6 +308,16 @@ open class SpecTokenExchangeAuthenticationProvider(
             log.structuredTrace("Token Exchange authentication completed", "event" to "token_exchange_authentication_completed", "client_id" to registeredClient.clientId, "result" to "failure")
             throw OAuth2AuthenticationException(OAuth2Error(ex.errorCode))
         }
+    }
+
+    private fun logAuditFailure(clientId: String, failureReason: String, ex: RuntimeException) {
+        log.structuredWarn(
+            "Token Exchange audit persistence failed",
+            ex,
+            "event" to "token_exchange_audit_persistence_failed",
+            "client_id" to clientId,
+            "failure_reason" to failureReason,
+        )
     }
 
     override fun supports(authentication: Class<*>): Boolean =
