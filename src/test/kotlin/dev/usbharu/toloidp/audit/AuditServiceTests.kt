@@ -9,6 +9,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @SpringBootTest(properties = ["tolo-idp.seed.enabled=false"])
 class AuditServiceTests(
@@ -65,5 +66,37 @@ class AuditServiceTests(
         assertEquals("jti-1", row.issuedJti)
         assertContains(row.payload, """"timestamp":"2026-06-01T00:00:00Z"""")
         assertContains(row.payload, """"requestedScope":["events.read","events.manage"]""")
+    }
+
+    @Test
+    fun boundsLongRequestFieldsAndPreservesTheFullPayload() {
+        val audience = "a".repeat(300)
+        val resource = "https://api.example.com/tenants/tenant-a/events/" + "e".repeat(1200)
+        val scopes = (1..300).map { "scope-$it" }
+
+        service.record(
+            TokenAuditEvent(
+                clientId = "client-123",
+                requestedTokenUse = "event_access",
+                requestedAudience = audience,
+                requestedResource = resource,
+                requestedScope = scopes,
+                issuedScope = scopes,
+                result = "failure",
+                failureReason = "audience_not_allowed",
+            ),
+        )
+
+        val row = repository.findAll().single()
+        assertEquals(200, row.requestedAudience?.length)
+        assertTrue(row.requestedAudience.orEmpty().endsWith("...[truncated]"))
+        assertEquals(1000, row.requestedResource?.length)
+        assertTrue(row.requestedResource.orEmpty().endsWith("...[truncated]"))
+        assertEquals(1000, row.requestedScope.length)
+        assertTrue(row.requestedScope.endsWith("...[truncated]"))
+        assertEquals(1000, row.issuedScope.length)
+        assertTrue(row.issuedScope.endsWith("...[truncated]"))
+        assertContains(row.payload, audience)
+        assertContains(row.payload, resource)
     }
 }

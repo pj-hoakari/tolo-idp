@@ -36,26 +36,40 @@ class AuditService(
         repository.save(
             AuditLogRecord(
                 timestamp = timestamp,
-                requestId = event.requestId,
-                clientId = event.clientId,
-                subject = event.subject,
-                sourceTokenUse = event.sourceTokenUse,
-                requestedTokenUse = event.requestedTokenUse,
-                requestedAudience = event.requestedAudience,
-                requestedResource = event.requestedResource,
-                requestedScope = event.requestedScope.joinToString(" "),
-                issuedScope = event.issuedScope.joinToString(" "),
-                tenantId = event.tenantId,
-                eventId = event.eventId,
-                result = event.result,
-                failureReason = event.failureReason,
-                sourceIp = event.sourceIp,
-                userAgent = event.userAgent,
-                issuedJti = event.issuedJti,
+                requestId = bounded(event.requestId, REQUEST_ID_MAX),
+                clientId = bounded(event.clientId, CLIENT_ID_MAX),
+                subject = bounded(event.subject, SUBJECT_MAX),
+                sourceTokenUse = bounded(event.sourceTokenUse, SOURCE_TOKEN_USE_MAX),
+                requestedTokenUse = bounded(event.requestedTokenUse, REQUESTED_TOKEN_USE_MAX),
+                requestedAudience = bounded(event.requestedAudience, REQUESTED_AUDIENCE_MAX),
+                requestedResource = bounded(event.requestedResource, REQUESTED_RESOURCE_MAX),
+                requestedScope = boundedText(event.requestedScope.joinToString(" "), REQUESTED_SCOPE_MAX),
+                issuedScope = boundedText(event.issuedScope.joinToString(" "), ISSUED_SCOPE_MAX),
+                tenantId = bounded(event.tenantId, TENANT_ID_MAX),
+                eventId = bounded(event.eventId, EVENT_ID_MAX),
+                result = boundedText(event.result, RESULT_MAX),
+                failureReason = bounded(event.failureReason, FAILURE_REASON_MAX),
+                sourceIp = bounded(event.sourceIp, SOURCE_IP_MAX),
+                userAgent = bounded(event.userAgent, USER_AGENT_MAX),
+                issuedJti = bounded(event.issuedJti, ISSUED_JTI_MAX),
                 payload = payload,
             ),
         )
     }
+
+    private fun bounded(value: String?, maxLength: Int): String? =
+        if (value == null || value.length <= maxLength) {
+            value
+        } else {
+            value.take(maxLength - TRUNCATION_MARKER.length) + TRUNCATION_MARKER
+        }
+
+    private fun boundedText(value: String, maxLength: Int): String =
+        if (value.length <= maxLength) {
+            value
+        } else {
+            value.take(maxLength - TRUNCATION_MARKER.length) + TRUNCATION_MARKER
+        }
 
     private fun TokenAuditEvent.toPayload(timestamp: Instant): Map<String, Any?> =
         linkedMapOf(
@@ -77,6 +91,26 @@ class AuditService(
             "userAgent" to userAgent,
             "issuedJti" to issuedJti,
         )
+
+    private companion object {
+        private const val TRUNCATION_MARKER = "...[truncated]"
+        private const val REQUEST_ID_MAX = 200
+        private const val CLIENT_ID_MAX = 100
+        private const val SUBJECT_MAX = 200
+        private const val SOURCE_TOKEN_USE_MAX = 50
+        private const val REQUESTED_TOKEN_USE_MAX = 50
+        private const val REQUESTED_AUDIENCE_MAX = 200
+        private const val REQUESTED_RESOURCE_MAX = 1000
+        private const val REQUESTED_SCOPE_MAX = 1000
+        private const val ISSUED_SCOPE_MAX = 1000
+        private const val TENANT_ID_MAX = 100
+        private const val EVENT_ID_MAX = 100
+        private const val RESULT_MAX = 20
+        private const val FAILURE_REASON_MAX = 100
+        private const val SOURCE_IP_MAX = 100
+        private const val USER_AGENT_MAX = 500
+        private const val ISSUED_JTI_MAX = 100
+    }
 }
 
 @Table("idp_audit_log")

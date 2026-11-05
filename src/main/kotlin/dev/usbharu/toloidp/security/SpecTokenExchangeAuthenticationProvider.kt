@@ -15,6 +15,7 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataAccessException
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.AuthorizationGrantType
@@ -285,7 +286,17 @@ open class SpecTokenExchangeAuthenticationProvider(
                 mapOf(OAuth2ParameterNames.ISSUED_TOKEN_TYPE to ACCESS_TOKEN_TYPE),
             )
         } catch (ex: SpecOAuth2Failure) {
-            auditService.record(audit.copy(result = "failure", failureReason = ex.failureReason))
+            try {
+                auditService.record(audit.copy(result = "failure", failureReason = ex.failureReason))
+            } catch (auditFailure: DataAccessException) {
+                log.structuredWarn(
+                    "Token Exchange audit persistence failed",
+                    auditFailure,
+                    "event" to "token_exchange_audit_persistence_failed",
+                    "client_id" to registeredClient.clientId,
+                    "failure_reason" to ex.failureReason,
+                )
+            }
             log.structuredInfo(
                 "Token Exchange failed",
                 "event" to "token_exchange_failed",
