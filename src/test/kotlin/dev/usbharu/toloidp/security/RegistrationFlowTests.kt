@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -10,6 +11,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpSession
 import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
@@ -36,6 +39,7 @@ class RegistrationFlowTests(
     @Autowired private val json: JsonMapper,
     @Autowired private val decoder: JwtDecoder,
     @Autowired private val users: IdpUserDetailsManager,
+    @Autowired private val clients: RegisteredClientRepository,
 ) {
     @Test
     fun signupCreatesTheUserInTheChallengeTenantAndIssuesARegistrationToken() {
@@ -85,6 +89,35 @@ class RegistrationFlowTests(
             .andExpect(jsonPath("$.error").value("invalid_grant"))
 
         assertNull(tokens["refresh_token"])
+    }
+
+    @Test
+    fun registrationCodeIsRejectedWhenTenantJoinIsRemovedBeforeRedemption() {
+        val challenge = mvc.challengeFrom(authorize())
+        val signup = mvc.perform(signupRequest(challenge, uniqueUsername()))
+            .andExpect(status().isCreated)
+            .andReturn()
+        val session = signup.request.session as MockHttpSession
+        val code = codeFrom(mvc.perform(resumeAuthorization(challenge, session)))
+        val original = checkNotNull(clients.findByClientId("client-123"))
+        try {
+            clients.save(
+                RegisteredClient.from(original)
+                    .scopes { scopes -> scopes.remove(IdpScopes.TENANT_JOIN) }
+                    .build(),
+            )
+            mvc.perform(
+                post("/oauth2/token").with(httpBasic("client-123", "secret"))
+                    .param("grant_type", "authorization_code")
+                    .param("code", code)
+                    .param("redirect_uri", REDIRECT)
+                    .param("code_verifier", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            )
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_scope"))
+        } finally {
+            clients.save(original)
+        }
     }
 
     @Test
@@ -173,14 +206,18 @@ class RegistrationFlowTests(
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
 
     private fun exchange(result: ResultActions): JsonNode {
-        val location = result.andExpect(status().isFound).andReturn().response.redirectedUrl!!
-        assertTrue(location.startsWith("$REDIRECT?"))
-        val code = UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
+        val code = codeFrom(result)
         val response = mvc.perform(post("/oauth2/token").with(httpBasic("client-123", "secret"))
             .param("grant_type", "authorization_code").param("code", code).param("redirect_uri", REDIRECT)
             .param("code_verifier", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))
             .andExpect(status().isOk).andReturn().response.contentAsString
         return json.readTree(response)
+    }
+
+    private fun codeFrom(result: ResultActions): String {
+        val location = result.andExpect(status().isFound).andReturn().response.redirectedUrl!!
+        assertTrue(location.startsWith("$REDIRECT?"))
+        return UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("code")!!
     }
 
     companion object {

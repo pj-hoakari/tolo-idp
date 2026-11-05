@@ -123,7 +123,7 @@ class ToloJwtCustomizer(
             throw OAuth2AuthenticationException(OAuth2Error("invalid_target"))
         }
         if (scopePolicy.isRegistrationRequest(authorizationRequest.scopes)) {
-            return customizeRegistration(context, tenantResource.tenantId, audience)
+            return customizeRegistration(context, tenantResource.tenantId, audience, policy)
         }
 
         try {
@@ -186,9 +186,24 @@ class ToloJwtCustomizer(
         log.structuredTrace("Tenant access JWT customization completed", "event" to "tenant_access_jwt_customization_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
     }
 
-    private fun customizeRegistration(context: JwtEncodingContext, tenantId: String, audience: String) {
+    private fun customizeRegistration(
+        context: JwtEncodingContext,
+        tenantId: String,
+        audience: String,
+        policy: ClientPolicy,
+    ) {
         val clientId = context.registeredClient.clientId
         val subject = context.getPrincipal<org.springframework.security.core.Authentication>().name
+        if (IdpScopes.TENANT_JOIN !in policy.allowedScopes) {
+            log.structuredWarn(
+                "Registration JWT customization rejected",
+                "event" to "registration_jwt_customization_rejected",
+                "client_id" to clientId,
+                "tenant_id" to tenantId,
+                "failure_reason" to "scope_not_allowed_for_client",
+            )
+            throw OAuth2AuthenticationException(OAuth2Error("invalid_scope"))
+        }
         val rejection = when {
             context.authorizationGrantType != AuthorizationGrantType.AUTHORIZATION_CODE -> "registration_not_refreshable"
             context.authorizedScopes != ScopePolicy.REGISTRATION_SCOPES -> "scope_not_allowed_for_token_use"
