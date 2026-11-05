@@ -536,6 +536,15 @@ class SecurityComponentTests(
     }
 
     @Test
+    fun registrationIsRejectedWhenTenantJoinIsRemovedFromCurrentClientPolicy() {
+        replaceClientPolicy(allowedScopes = IdpScopes.SUPPORTED - IdpScopes.TENANT_JOIN)
+        val error = assertFailsWith<OAuth2AuthenticationException> {
+            jwtCustomizer.customize(tenantJwtContext(setOf("tenant.join")))
+        }
+        assertEquals("invalid_scope", error.error.errorCode)
+    }
+
+    @Test
     fun registrationIsNotRefreshed() {
         replaceClientPolicy(
             allowedGrantTypes = setOf(AuthorizationGrantType.AUTHORIZATION_CODE.value, AuthorizationGrantType.REFRESH_TOKEN.value),
