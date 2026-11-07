@@ -104,7 +104,14 @@ class SpecTokenRevocationAuthenticationProvider(
             } else {
                 builder.invalidate(accessToken.token)
             }
-            authorizationService.save(builder.build())
+            val savedAuthorization = builder.build()
+            when {
+                refreshToken != null && authorizationService is RefreshRevocationAware ->
+                    (authorizationService as RefreshRevocationAware).saveRefreshRevocation(savedAuthorization)
+                refreshToken == null && authorizationService is RefreshRevocationAware ->
+                    (authorizationService as RefreshRevocationAware).saveAccessRevocation(savedAuthorization)
+                else -> authorizationService.save(savedAuthorization)
+            }
 
             return success(
                 revocation,

@@ -15,6 +15,7 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataAccessException
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.AuthorizationGrantType
@@ -36,6 +37,7 @@ import org.springframework.security.oauth2.server.authorization.context.Authoriz
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat
 import org.springframework.security.oauth2.server.authorization.token.DefaultOAuth2TokenContext
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
+import org.springframework.transaction.TransactionException
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
@@ -299,7 +301,13 @@ open class SpecTokenExchangeAuthenticationProvider(
                 mapOf(OAuth2ParameterNames.ISSUED_TOKEN_TYPE to ACCESS_TOKEN_TYPE),
             )
         } catch (ex: SpecOAuth2Failure) {
-            auditService.record(audit.copy(result = "failure", failureReason = ex.failureReason))
+            try {
+                auditService.record(audit.copy(result = "failure", failureReason = ex.failureReason))
+            } catch (auditFailure: DataAccessException) {
+                logAuditFailure(registeredClient.clientId, ex.failureReason, auditFailure)
+            } catch (auditFailure: TransactionException) {
+                logAuditFailure(registeredClient.clientId, ex.failureReason, auditFailure)
+            }
             log.structuredInfo(
                 "Token Exchange failed",
                 "event" to "token_exchange_failed",
@@ -314,6 +322,16 @@ open class SpecTokenExchangeAuthenticationProvider(
             log.structuredTrace("Token Exchange authentication completed", "event" to "token_exchange_authentication_completed", "client_id" to registeredClient.clientId, "result" to "failure")
             throw OAuth2AuthenticationException(OAuth2Error(ex.errorCode))
         }
+    }
+
+    private fun logAuditFailure(clientId: String, failureReason: String, ex: RuntimeException) {
+        log.structuredWarn(
+            "Token Exchange audit persistence failed",
+            ex,
+            "event" to "token_exchange_audit_persistence_failed",
+            "client_id" to clientId,
+            "failure_reason" to failureReason,
+        )
     }
 
     override fun supports(authentication: Class<*>): Boolean =

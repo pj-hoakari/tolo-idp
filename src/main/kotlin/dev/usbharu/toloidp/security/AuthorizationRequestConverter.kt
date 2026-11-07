@@ -4,7 +4,10 @@ import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletRequestWrapper
 import org.springframework.security.core.Authentication
 import org.springframework.security.core.context.SecurityContextHolder
+import org.springframework.security.oauth2.core.OAuth2Error
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.web.authentication.AuthenticationConverter
@@ -18,6 +21,15 @@ class AuthorizationRequestConverter(
     private val delegate = OAuth2AuthorizationCodeRequestAuthenticationConverter()
 
     override fun convert(request: HttpServletRequest): Authentication? {
+        if (request.method == "POST" && !request.queryString.isNullOrBlank()) {
+            // The framework's POST view excludes query parameters. Mixing a query
+            // string into a form-post authorization request makes validation and
+            // challenge storage disagree on scope, resource, and audience.
+            throw OAuth2AuthorizationCodeRequestAuthenticationException(
+                OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST, "OAuth 2.0 Parameter: request", null),
+                null,
+            )
+        }
         val resumed = request.parameterMap.containsKey(LOGIN_CHALLENGE_PARAMETER)
         val authorizationRequest = if (resumed) resume(request) else request
         val converted = delegate.convert(authorizationRequest)

@@ -3,6 +3,7 @@ package dev.usbharu.toloidp.security
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.resource.ResourceParser
+import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
@@ -11,6 +12,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.bind.annotation.PostMapping
@@ -28,6 +30,7 @@ class SignupController(
     private val passwordEncoder: PasswordEncoder,
     private val resourceParser: ResourceParser,
     private val challenges: LoginChallenges,
+    private val registeredClientRepository: RegisteredClientRepository,
     private val clock: Clock,
     transactionManager: PlatformTransactionManager,
 ) {
@@ -41,6 +44,13 @@ class SignupController(
         val tenantId = challenges.tenant(request.challenge)
             ?.takeIf { challenges.registration(request.challenge) }
             ?: reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", null, "login_challenge_invalid")
+        val clientId = challenges.clientId(request.challenge)
+            ?: reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "login_challenge_invalid")
+        val client = registeredClientRepository.findByClientId(clientId)
+            ?: reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "login_challenge_invalid")
+        if (IdpScopes.TENANT_JOIN !in client.scopes) {
+            reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "client_not_allowed")
+        }
         if (!USERNAME.matches(request.username)) {
             reject(HttpStatus.BAD_REQUEST, "Invalid username", tenantId, "username_invalid")
         }

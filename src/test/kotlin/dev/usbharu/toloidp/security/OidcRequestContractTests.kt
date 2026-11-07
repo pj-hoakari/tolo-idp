@@ -219,6 +219,33 @@ class OidcRequestContractTests(
     }
 
     @Test
+    fun preValidationErrorsNeverRedirectToTheRequestedUri() {
+        assertLoginErrorPage(
+            mvc.perform(
+                get("/oauth2/authorize")
+                    .queryParam("response_type", "code")
+                    .queryParam("client_id", "service-gateway")
+                    .queryParam("redirect_uri", "https://attacker.invalid/callback")
+                    .queryParam("scope", "tenant.read")
+                    .queryParam("state", "request-state"),
+            ),
+            "unauthorized_client",
+        )
+        assertLoginErrorPage(
+            mvc.perform(
+                get("/oauth2/authorize")
+                    .queryParam("response_type", "code")
+                    .queryParam("client_id", "client-123")
+                    .queryParam("redirect_uri", "https://attacker.invalid/callback")
+                    .queryParam("scope", "tenant.read")
+                    .queryParam("state", "request-state")
+                    .queryParam("request_uri", "urn:ietf:params:oauth:request_uri:probe___0"),
+            ),
+            "invalid_request",
+        )
+    }
+
+    @Test
     fun unreturnableAuthorizationErrorsGoToTheWebErrorPage() {
         assertLoginErrorPage(mvc.perform(authorize(clientId = "unknown-client", redirectUri = "https://attacker.invalid/callback")), "invalid_request")
         assertLoginErrorPage(mvc.perform(authorize(redirectUri = "https://attacker.invalid/callback")), "invalid_request")
@@ -231,6 +258,19 @@ class OidcRequestContractTests(
     fun loggedInRequestWithoutTenantResourceIsRejected() {
         val session = login()
         assertError(mvc.perform(authorize(session, resource = null)), "invalid_request")
+    }
+
+    @Test
+    fun clientErrorRedirectAllowsLoopbackDynamicPorts() {
+        val session = login()
+        val redirect = "http://127.0.0.1:49152/login/oauth2/code/client-123"
+        val location = mvc.perform(authorize(session, redirectUri = redirect, resource = null))
+            .andExpect(status().isFound)
+            .andReturn().response.redirectedUrl!!
+        val parameters = UriComponentsBuilder.fromUriString(location).build().queryParams
+        assertTrue(location.startsWith("$redirect?"))
+        assertEquals("invalid_request", parameters.getFirst("error"))
+        assertEquals("request-state", parameters.getFirst("state"))
     }
 
     @Test

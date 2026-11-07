@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 class DeviceGrantTenantMigrationTests {
     @Test
     fun legacyRevocationsArePreservedForEveryPreviouslyAffectedTenant() {
-        val source = databaseAtV8()
+        val source = databaseAtV11()
         val jdbc = JdbcTemplate(source)
         for (tenant in listOf("tenant-a", "tenant-b")) {
             jdbc.update(
@@ -45,18 +45,18 @@ class DeviceGrantTenantMigrationTests {
 
     @Test
     fun unmappableRevocationStopsMigrationWithoutDiscardingTheMarker() {
-        val source = databaseAtV8()
+        val source = databaseAtV11()
         val jdbc = JdbcTemplate(source)
         jdbc.update("INSERT INTO idp_revoked_edge_device VALUES ('event-1', '0123456789abcdef', CURRENT_TIMESTAMP, TRUE)")
         assertFailsWith<FlywayException> { Flyway.configure().dataSource(source).load().migrate() }
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM idp_revoked_edge_device WHERE permanent = TRUE", Int::class.java))
     }
 
-    private fun databaseAtV8(): DriverManagerDataSource {
+    private fun databaseAtV11(): DriverManagerDataSource {
         val source = DriverManagerDataSource(
             "jdbc:h2:mem:device-migration-${UUID.randomUUID()};DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false", "sa", "",
         )
-        Flyway.configure().dataSource(source).target("8").load().migrate()
+        Flyway.configure().dataSource(source).target("11").load().migrate()
         return source
     }
 }

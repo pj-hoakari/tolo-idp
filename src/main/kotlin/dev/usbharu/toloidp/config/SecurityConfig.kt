@@ -19,10 +19,14 @@ import dev.usbharu.toloidp.scope.ScopePolicy
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.security.CameraDeviceAuthorizationRequestConverter
 import dev.usbharu.toloidp.security.CappedRefreshTokenGenerator
+import dev.usbharu.toloidp.security.CodeClaimStore
 import dev.usbharu.toloidp.security.DeviceFlowPublicClientAuthenticationConverter
 import dev.usbharu.toloidp.security.DeviceAuthorizationResponseHandler
 import dev.usbharu.toloidp.security.DeviceFlowPublicClientAuthenticationProvider
 import dev.usbharu.toloidp.security.JtiDenylistRepository
+import dev.usbharu.toloidp.security.RefreshAwareOAuth2AuthorizationService
+import dev.usbharu.toloidp.security.RefreshStateStore
+import dev.usbharu.toloidp.security.SingleUseAuthorizationCodeAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecDeviceCodeAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecRefreshTokenAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
@@ -81,6 +85,7 @@ import org.springframework.security.oauth2.server.authorization.JdbcOAuth2Author
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationServerMetadataClaimNames
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationProvider
@@ -109,6 +114,7 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken
 import org.springframework.security.web.context.SecurityContextHolderFilter
+import org.springframework.transaction.PlatformTransactionManager
 import jakarta.servlet.DispatcherType
 import tools.jackson.databind.JacksonModule
 import tools.jackson.databind.json.JsonMapper
@@ -201,6 +207,8 @@ class SecurityConfig {
         specTokenRevocationAuthenticationProvider: AuthenticationProvider,
         settings: AuthorizationServerSettings,
         loginChallenges: LoginChallenges,
+        codeClaimStore: CodeClaimStore,
+        clock: Clock,
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
@@ -291,6 +299,7 @@ class SecurityConfig {
                 authorizationEndpoint.errorResponseHandler(
                     AuthorizationErrorResponseHandler(
                         loginChallenges,
+                        registeredClientRepository,
                         properties.login.pageUri(),
                         properties.login.errorPageUri(),
                     ),
@@ -317,6 +326,19 @@ class SecurityConfig {
                     providers.removeIf { it is OAuth2DeviceCodeAuthenticationProvider }
                     providers.removeIf { it is OAuth2RefreshTokenAuthenticationProvider }
                     providers.add(specTokenExchangeAuthenticationProvider)
+                    providers.filterIsInstance<OAuth2AuthorizationCodeAuthenticationProvider>()
+                        .singleOrNull()
+                        ?.let { codeProvider ->
+                            providers.remove(codeProvider)
+                            providers.add(
+                                SingleUseAuthorizationCodeAuthenticationProvider(
+                                    codeProvider,
+                                    codeClaimStore,
+                                    authorizationService,
+                                    clock,
+                                ),
+                            )
+                        }
                     providers.add(
                         SpecDeviceCodeAuthenticationProvider(
                             OAuth2DeviceCodeAuthenticationProvider(authorizationService, tokenGenerator),
@@ -598,8 +620,15 @@ class SecurityConfig {
     fun authorizationService(
         jdbcTemplate: JdbcTemplate,
         registeredClientRepository: RegisteredClientRepository,
+        refreshStateStore: RefreshStateStore,
+        transactionManager: PlatformTransactionManager,
     ): OAuth2AuthorizationService =
-        JdbcOAuth2AuthorizationService(jdbcTemplate, registeredClientRepository)
+        RefreshAwareOAuth2AuthorizationService(
+            jdbcTemplate,
+            registeredClientRepository,
+            refreshStateStore,
+            transactionManager,
+        )
 
     /**
      * registered client の Authorization Code consent を永続化する。

@@ -52,9 +52,11 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -214,6 +216,23 @@ class TokenExchangeEndpointTests(
             .andExpect(jsonPath("$.error").value("invalid_target"))
 
         assertEquals("audience_not_allowed", latestAudit()["failure_reason"])
+    }
+
+    @Test
+    fun boundsOverlongAudienceInAuditAndStillReturnsInvalidTarget() {
+        val subjectToken = saveTenantAuthorization()
+        val audience = "a".repeat(300)
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, audience = audience))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_target"))
+
+        assertEquals("audience_not_allowed", latestAudit()["failure_reason"])
+        val row = auditLogRepository.findAll().maxBy { it.id ?: 0 }
+        val storedAudience = assertNotNull(row.requestedAudience)
+        assertEquals(200, storedAudience.length)
+        assertTrue(storedAudience.endsWith("...[truncated]"))
+        assertContains(row.payload, audience)
     }
 
     @Test

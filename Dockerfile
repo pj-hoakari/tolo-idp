@@ -9,6 +9,8 @@ COPY src src
 RUN chmod +x gradlew && ./gradlew bootJar -PimageRuntime=jvm -PreleaseVersion=${RELEASE_VERSION} -x test --no-daemon
 
 FROM eclipse-temurin:24-jre
+ENV TZ=UTC
+ENV JAVA_TOOL_OPTIONS="-Duser.timezone=UTC"
 WORKDIR /app
 
 COPY --from=build /workspace/build/libs/tolo-idp-*.jar /app/app.jar
