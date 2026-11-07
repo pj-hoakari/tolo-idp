@@ -17,6 +17,8 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import tools.jackson.core.type.TypeReference
 import tools.jackson.databind.ObjectMapper
 import java.net.CookieManager
@@ -78,6 +80,26 @@ class ConfiguredClientTokenFlowTests(
     @Autowired private val mapper: ObjectMapper,
     @Autowired private val jdbc: JdbcTemplate,
 ) {
+    @Autowired private lateinit var clients: RegisteredClientRepository
+
+    @Test
+    fun refreshRejectsScopeRemovedFromCurrentClient() {
+        seedMembership(RelationRole.OWNER)
+        HttpClient.newBuilder().cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL)).build().use { http ->
+            val tokens = issueTokens(http, "openid tenant.read")
+            val original = clients.findByClientId("configured-web-client")!!
+            try {
+                clients.save(RegisteredClient.from(original)
+                    .scopes { it.remove("tenant.read") }.build())
+                val response = refresh(http, tokens.getValue("refresh_token") as String)
+                assertEquals(400, response.statusCode())
+                assertEquals("invalid_scope", json(response)["error"])
+            } finally {
+                clients.save(original)
+            }
+        }
+    }
+
     @Test
     fun configurationAloneEnablesAuthorizationCodeAndTokenExchangeWithConfiguredAudienceAndTtls() {
         memberships.deleteAll()

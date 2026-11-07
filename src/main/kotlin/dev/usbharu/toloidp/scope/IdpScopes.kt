@@ -11,6 +11,7 @@ object IdpScopes {
     const val EVENTS_MANAGE = "events.manage"
     const val EVENTS_OPERATE = "events.operate"
     const val EVENTS_REPORT = "events.report"
+    const val EVENTS_STREAM = "events.stream"
 
     val IDENTITY: Set<String> = setOf(OPENID, PROFILE)
     val SUPPORTED: Set<String> = linkedSetOf(
@@ -23,5 +24,6 @@ object IdpScopes {
         EVENTS_MANAGE,
         EVENTS_OPERATE,
         EVENTS_REPORT,
+        EVENTS_STREAM,
     )
 }

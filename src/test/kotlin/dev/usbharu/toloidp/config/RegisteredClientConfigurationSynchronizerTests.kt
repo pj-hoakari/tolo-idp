@@ -59,7 +59,7 @@ class RegisteredClientConfigurationSynchronizerTests(
             ),
             client.redirectUris,
         )
-        assertEquals(IdpScopes.SUPPORTED, client.scopes)
+        assertEquals(IdpScopes.SUPPORTED - IdpScopes.EVENTS_STREAM, client.scopes)
         assertEquals(
             setOf(ClientAuthenticationMethod.CLIENT_SECRET_BASIC, ClientAuthenticationMethod.CLIENT_SECRET_POST),
             client.clientAuthenticationMethods,

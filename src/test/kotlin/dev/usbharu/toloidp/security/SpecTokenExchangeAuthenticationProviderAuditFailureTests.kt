@@ -94,5 +94,7 @@ class SpecTokenExchangeAuthenticationProviderAuditFailureTests {
             mock(JtiDenylistRepository::class.java),
             auditService,
             Clock.systemUTC(),
+            "observation-page",
+            "observation-connection",
         )
 }

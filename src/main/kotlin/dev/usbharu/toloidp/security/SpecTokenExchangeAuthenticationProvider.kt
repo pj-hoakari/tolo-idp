@@ -60,6 +60,8 @@ open class SpecTokenExchangeAuthenticationProvider(
     private val jtiDenylistRepository: JtiDenylistRepository,
     private val auditService: AuditService,
     private val clock: Clock,
+    private val observationPageClientId: String,
+    private val connectionClientId: String,
 ) : AuthenticationProvider {
     /**
      * Token Exchange リクエストを認証し、すべての仕様チェックに成功した場合だけ単一の
@@ -123,6 +125,17 @@ open class SpecTokenExchangeAuthenticationProvider(
             if (audience !in policy.allowedAudiences) {
                 fail("invalid_target", "audience_not_allowed")
             }
+            val edgeDeviceId = tokenExchange.additionalParameters[EDGE_DEVICE_ID_PARAMETER]
+            if (edgeDeviceId != null) {
+                if (registeredClient.clientId != observationPageClientId &&
+                    registeredClient.clientId != connectionClientId
+                ) {
+                    fail("invalid_request", "edge_device_id_not_allowed")
+                }
+                if (edgeDeviceId !is String || !EDGE_DEVICE_ID_PATTERN.matches(edgeDeviceId)) {
+                    fail("invalid_request", "edge_device_id_invalid")
+                }
+            }
             val eventResource = try {
                 resourceParser.parseEvent(tokenExchange.resources.singleOrNull() ?: fail("invalid_target", "resource_invalid_format"))
             } catch (ex: RuntimeException) {
@@ -171,6 +184,7 @@ open class SpecTokenExchangeAuthenticationProvider(
                 sourceTokenUse = claims["token_use"] as? String,
                 tenantId = eventResource.tenantId,
                 eventId = eventResource.eventId,
+                edgeDeviceId = edgeDeviceId as? String,
             )
             if (claims["token_use"] != TOKEN_USE_TENANT_ACCESS) {
                 fail("invalid_grant", "invalid_token_use_transition")
@@ -371,6 +385,7 @@ open class SpecTokenExchangeAuthenticationProvider(
 
     companion object {
         private val log = LoggerFactory.getLogger(SpecTokenExchangeAuthenticationProvider::class.java)
+        private val EDGE_DEVICE_ID_PATTERN = Regex("^[0-9a-f]{16}$")
     }
 }
 

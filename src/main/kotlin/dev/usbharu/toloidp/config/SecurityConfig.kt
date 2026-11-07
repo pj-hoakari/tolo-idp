@@ -6,6 +6,8 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet
 import com.nimbusds.jose.jwk.source.JWKSource
 import com.nimbusds.jose.proc.SecurityContext
 import dev.usbharu.toloidp.audit.AuditService
+import dev.usbharu.toloidp.devicegrant.DeviceGrantRepository
+import dev.usbharu.toloidp.devicegrant.DeviceGrantService
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredInfo
@@ -15,11 +17,18 @@ import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
 import dev.usbharu.toloidp.scope.ScopePolicy
 import dev.usbharu.toloidp.scope.IdpScopes
+import dev.usbharu.toloidp.security.CameraDeviceAuthorizationRequestConverter
+import dev.usbharu.toloidp.security.CappedRefreshTokenGenerator
 import dev.usbharu.toloidp.security.CodeClaimStore
+import dev.usbharu.toloidp.security.DeviceFlowPublicClientAuthenticationConverter
+import dev.usbharu.toloidp.security.DeviceAuthorizationResponseHandler
+import dev.usbharu.toloidp.security.DeviceFlowPublicClientAuthenticationProvider
 import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.RefreshAwareOAuth2AuthorizationService
 import dev.usbharu.toloidp.security.RefreshStateStore
 import dev.usbharu.toloidp.security.SingleUseAuthorizationCodeAuthenticationProvider
+import dev.usbharu.toloidp.security.SpecDeviceCodeAuthenticationProvider
+import dev.usbharu.toloidp.security.SpecRefreshTokenAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenRevocationAuthenticationProvider
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.security.TenantAuthorizationValidator
@@ -81,6 +90,8 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2RefreshTokenAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationProvider
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository
@@ -188,6 +199,8 @@ class SecurityConfig {
         resourceParser: ResourceParser,
         relationService: RelationService,
         scopePolicy: ScopePolicy,
+        properties: IdpProperties,
+        deviceGrantService: DeviceGrantService,
         @Qualifier("specTokenExchangeAuthenticationProvider")
         specTokenExchangeAuthenticationProvider: AuthenticationProvider,
         @Qualifier("specTokenRevocationAuthenticationProvider")
@@ -196,12 +209,32 @@ class SecurityConfig {
         loginChallenges: LoginChallenges,
         codeClaimStore: CodeClaimStore,
         clock: Clock,
-        properties: IdpProperties,
         rateLimitFilter: ObjectProvider<RateLimitFilter>,
     ): SecurityFilterChain {
         val authorizationServerConfigurer = OAuth2AuthorizationServerConfigurer()
         http.with(authorizationServerConfigurer) { authorizationServer ->
             authorizationServer
+                .clientAuthentication { clientAuthentication ->
+                    clientAuthentication.authenticationConverter(
+                        DeviceFlowPublicClientAuthenticationConverter(
+                            settings.deviceAuthorizationEndpoint,
+                            settings.tokenEndpoint,
+                        ),
+                    )
+                    clientAuthentication.authenticationProvider(
+                        DeviceFlowPublicClientAuthenticationProvider(registeredClientRepository),
+                    )
+                }
+                .deviceAuthorizationEndpoint { deviceAuthorizationEndpoint ->
+                    deviceAuthorizationEndpoint.deviceAuthorizationRequestConverter(
+                        CameraDeviceAuthorizationRequestConverter(),
+                    )
+                    deviceAuthorizationEndpoint.deviceAuthorizationResponseHandler(
+                        DeviceAuthorizationResponseHandler(
+                            settings.issuer.trimEnd('/') + settings.deviceVerificationEndpoint,
+                        ),
+                    )
+                }
                 .oidc { oidc ->
                     oidc.userInfoEndpoint { endpoint ->
                         endpoint.errorResponseHandler { _, response, exception ->
@@ -290,6 +323,8 @@ class SecurityConfig {
                 tokenEndpoint.errorResponseHandler(tokenEndpointErrorResponseHandler())
                 tokenEndpoint.authenticationProviders { providers ->
                     providers.removeIf { it is OAuth2TokenExchangeAuthenticationProvider }
+                    providers.removeIf { it is OAuth2DeviceCodeAuthenticationProvider }
+                    providers.removeIf { it is OAuth2RefreshTokenAuthenticationProvider }
                     providers.add(specTokenExchangeAuthenticationProvider)
                     providers.filterIsInstance<OAuth2AuthorizationCodeAuthenticationProvider>()
                         .singleOrNull()
@@ -304,6 +339,20 @@ class SecurityConfig {
                                 ),
                             )
                         }
+                    providers.add(
+                        SpecDeviceCodeAuthenticationProvider(
+                            OAuth2DeviceCodeAuthenticationProvider(authorizationService, tokenGenerator),
+                            deviceGrantService,
+                            properties.deviceAuthorization.cameraClientId,
+                        ),
+                    )
+                    providers.add(
+                        SpecRefreshTokenAuthenticationProvider(
+                            OAuth2RefreshTokenAuthenticationProvider(authorizationService, tokenGenerator),
+                            deviceGrantService,
+                            properties.deviceAuthorization.cameraClientId,
+                        ),
+                    )
                 }
             }
                 .tokenIntrospectionEndpoint { introspectionEndpoint ->
@@ -343,6 +392,7 @@ class SecurityConfig {
             claims[OAuth2AuthorizationServerMetadataClaimNames.GRANT_TYPES_SUPPORTED] = listOf(
                 AuthorizationGrantType.AUTHORIZATION_CODE.value,
                 AuthorizationGrantType.REFRESH_TOKEN.value,
+                AuthorizationGrantType.DEVICE_CODE.value,
                 AuthorizationGrantType.TOKEN_EXCHANGE.value,
             )
             claims[OAuth2AuthorizationServerMetadataClaimNames.SCOPES_SUPPORTED] = IdpScopes.SUPPORTED.toList()
@@ -350,6 +400,7 @@ class SecurityConfig {
                 listOf(
                     ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
                     ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                    ClientAuthenticationMethod.NONE.value,
                 )
             claims[OAuth2AuthorizationServerMetadataClaimNames.INTROSPECTION_ENDPOINT_AUTH_METHODS_SUPPORTED] =
                 listOf(
@@ -375,8 +426,13 @@ class SecurityConfig {
         http.authorizeHttpRequests {
             it.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health").permitAll()
-                .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/signup").permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/api/login", "/api/logout", "/api/signup").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/login", "/api/signup").permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/api/device-authorization/approve",
+                    "/api/device-authorization/revoke",
+                ).permitAll()
                 .anyRequest().authenticated()
         }
             .cors { }
@@ -599,6 +655,7 @@ class SecurityConfig {
         jtiDenylistRepository: JtiDenylistRepository,
         auditService: AuditService,
         clock: Clock,
+        properties: IdpProperties,
     ): SpecTokenExchangeAuthenticationProvider =
         SpecTokenExchangeAuthenticationProvider(
             users,
@@ -610,6 +667,8 @@ class SecurityConfig {
             jtiDenylistRepository,
             auditService,
             clock,
+            properties.deviceAuthorization.observationPageClientId,
+            properties.deviceAuthorization.connectionClientId,
         )
 
     /**
@@ -759,15 +818,21 @@ class SecurityConfig {
     fun tokenGenerator(
         jwtEncoder: JwtEncoder,
         jwtCustomizer: ToloJwtCustomizer,
+        deviceGrantRepository: DeviceGrantRepository,
     ): OAuth2TokenGenerator<OAuth2Token> {
         val jwtGenerator = JwtGenerator(jwtEncoder)
         jwtGenerator.setJwtCustomizer(jwtCustomizer)
         val refreshTokenGenerator = OAuth2RefreshTokenGenerator()
+        val refreshTokenDelegate = OAuth2TokenGenerator<OAuth2Token> { context ->
+            if (context.authorizedScopes == ScopePolicy.REGISTRATION_SCOPES) {
+                null
+            } else {
+                refreshTokenGenerator.generate(context)
+            }
+        }
         return DelegatingOAuth2TokenGenerator(
             jwtGenerator,
-            OAuth2TokenGenerator { context ->
-                if (context.authorizedScopes == ScopePolicy.REGISTRATION_SCOPES) null else refreshTokenGenerator.generate(context)
-            },
+            CappedRefreshTokenGenerator(refreshTokenDelegate, deviceGrantRepository),
         )
     }
 
@@ -797,6 +862,7 @@ class SecurityConfig {
             "resource",
             "tenant_id",
             "event_id",
+            "edge_device_id",
         )
     }
 }

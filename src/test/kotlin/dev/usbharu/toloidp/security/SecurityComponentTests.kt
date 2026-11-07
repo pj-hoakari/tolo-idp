@@ -4,6 +4,7 @@ import dev.usbharu.toloidp.audit.AuditLogRepository
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.client.savePolicy
 import dev.usbharu.toloidp.client.clearPolicy
+import dev.usbharu.toloidp.devicegrant.DeviceGrantService
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.relation.EventMembership
@@ -30,17 +31,26 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
+import org.springframework.security.oauth2.core.OAuth2DeviceCode
+import org.springframework.security.oauth2.core.OAuth2UserCode
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm
 import org.springframework.security.oauth2.jwt.JwtClaimsSet
 import org.springframework.security.oauth2.jwt.JwsHeader
+import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationContext
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationProvider
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2DeviceCodeAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationToken
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
@@ -48,12 +58,16 @@ import org.springframework.security.oauth2.server.authorization.context.Authoriz
 import org.springframework.security.oauth2.server.authorization.context.AuthorizationServerContextHolder
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
+import java.security.Principal
 import java.time.Duration
 import java.time.Instant
 import kotlin.test.AfterTest
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @SpringBootTest
@@ -66,6 +80,7 @@ class SecurityComponentTests(
     @Autowired private val users: dev.usbharu.toloidp.user.IdpUserDetailsManager,
     @Autowired private val jwtCustomizer: ToloJwtCustomizer,
     @Autowired private val oidcRequests: OidcAuthenticationRequestValidator,
+    @Autowired private val deviceGrantService: DeviceGrantService,
     @Autowired private val auditService: AuditService,
     @Autowired private val auditLogs: AuditLogRepository,
 ) {
@@ -104,6 +119,52 @@ class SecurityComponentTests(
     fun tearDown() {
         SecurityContextHolder.clearContext()
         AuthorizationServerContextHolder.resetContext()
+    }
+
+    @Test
+    fun nonCameraDeviceCodeUsesStandardProviderWithoutDeviceGrant() {
+        val client = RegisteredClient.withId("other-device-client")
+            .clientId("other-device-client")
+            .clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
+            .authorizationGrantType(AuthorizationGrantType.DEVICE_CODE)
+            .scope("device.read")
+            .build()
+        val now = Instant.now()
+        val deviceCode = OAuth2DeviceCode("other-device-code", now, now.plusSeconds(300))
+        val userCode = OAuth2UserCode("OTHER-CODE", now, now.plusSeconds(300))
+        val authorization = OAuth2Authorization.withRegisteredClient(client)
+            .principalName(principal.name)
+            .authorizationGrantType(AuthorizationGrantType.DEVICE_CODE)
+            .authorizedScopes(setOf("device.read"))
+            .attribute(Principal::class.java.name, principal)
+            .token(deviceCode)
+            .token(userCode)
+            .invalidate(userCode)
+            .build()
+        val authorizations = InMemoryOAuth2AuthorizationService(authorization)
+        // Exercise the real standard provider with its own JWT generator; camera claims
+        // and DeviceGrant persistence are outside this client's device flow.
+        val jwt = Jwt.withTokenValue("other-device-access-token")
+            .header("alg", "RS256")
+            .subject(principal.name)
+            .issuedAt(now)
+            .expiresAt(now.plusSeconds(300))
+            .claim("scope", "device.read")
+            .build()
+        val delegate = OAuth2DeviceCodeAuthenticationProvider(authorizations, OAuth2TokenGenerator { jwt })
+        val provider = SpecDeviceCodeAuthenticationProvider(delegate, deviceGrantService, "esp-camera")
+        val clientPrincipal = OAuth2ClientAuthenticationToken(client, ClientAuthenticationMethod.NONE, null)
+        val request = OAuth2DeviceCodeAuthenticationToken(deviceCode.tokenValue, clientPrincipal, emptyMap())
+        assertNull(deviceGrantService.findByAuthorizationId(authorization.id))
+
+        val result = provider.authenticate(request) as OAuth2AccessTokenAuthenticationToken
+
+        assertEquals(client, result.registeredClient)
+        assertEquals(jwt.tokenValue, result.accessToken.tokenValue)
+        assertEquals(setOf("device.read"), result.accessToken.scopes)
+        val saved = assertNotNull(authorizations.findById(authorization.id))
+        assertEquals(result.accessToken.tokenValue, saved.accessToken!!.token.tokenValue)
+        assertTrue(saved.getToken(OAuth2DeviceCode::class.java)!!.isInvalidated)
     }
 
     @Test
@@ -486,7 +547,14 @@ class SecurityComponentTests(
         assertEquals("access_denied", authorizationError.error.errorCode)
         assertFalse(authorizationError.error.description.orEmpty().contains(reason))
 
-        val customizer = ToloJwtCustomizer(users, resourceParser, failingRelation, scopePolicy, auditService)
+        val customizer = ToloJwtCustomizer(
+            users,
+            resourceParser,
+            failingRelation,
+            scopePolicy,
+            deviceGrantService,
+            auditService,
+        )
         val issuanceError = assertFailsWith<OAuth2AuthenticationException> {
             customizer.customize(tenantJwtContext(scopes))
         }
@@ -507,7 +575,8 @@ class SecurityComponentTests(
         assertEquals(scopes, authorization.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>().scopes)
 
         val context = tenantJwtContext(scopes)
-        ToloJwtCustomizer(users, resourceParser, noMembership, scopePolicy, auditService).customize(context)
+        ToloJwtCustomizer(users, resourceParser, noMembership, scopePolicy, deviceGrantService, auditService)
+            .customize(context)
         val claims = context.claims.build()
         assertEquals(TOKEN_USE_REGISTRATION, claims.claims["token_use"])
         assertEquals("tenant.join", claims.claims["scope"])

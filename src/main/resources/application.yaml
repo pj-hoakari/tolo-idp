@@ -113,6 +113,135 @@ spring:
               authorization-code-time-to-live: 5m
               access-token-time-to-live: 15m
               access-token-format: self-contained
+          console-ui:
+            registration:
+              client-id: console-ui
+              client-secret: "${tolo-idp.seed.client-secret:secret}"
+              client-name: Development BFF client
+              client-authentication-methods:
+                - client_secret_basic
+                - client_secret_post
+              authorization-grant-types:
+                - authorization_code
+                - refresh_token
+                - urn:ietf:params:oauth:grant-type:token-exchange
+              redirect-uris:
+                - http://localhost:3000/api/auth/callback/console-ui
+                - http://127.0.0.1:3000/api/auth/callback/console-ui
+                - http://localhost:3000/api/auth/callback/tolo-idp
+                - http://127.0.0.1:3000/api/auth/callback/tolo-idp
+                - http://localhost:13000/api/auth/callback/console-ui
+                - http://127.0.0.1:13000/api/auth/callback/console-ui
+                - http://localhost:13001/api/auth/callback/console-ui
+                - http://127.0.0.1:13001/api/auth/callback/console-ui
+                - http://localhost:13001/api/auth/callback/tolo-idp
+                - http://127.0.0.1:13001/api/auth/callback/tolo-idp
+              scopes:
+                - openid
+                - profile
+                - tenant.read
+                - tenant.write
+                - tenant.join
+                - events.read
+                - events.manage
+                - events.operate
+                - events.report
+            require-proof-key: true
+            require-authorization-consent: false
+            token:
+              reuse-refresh-tokens: false
+              refresh-token-time-to-live: 1h
+              authorization-code-time-to-live: 5m
+              access-token-time-to-live: 15m
+              access-token-format: self-contained
+          edge-page:
+            registration:
+              client-id: edge-page
+              client-secret: "${tolo-idp.seed.client-secret:secret}"
+              client-name: Observation page BFF client
+              client-authentication-methods:
+                - client_secret_basic
+                - client_secret_post
+              authorization-grant-types:
+                - authorization_code
+                - refresh_token
+                - urn:ietf:params:oauth:grant-type:token-exchange
+              redirect-uris:
+                - http://localhost:3000/api/auth/machine/callback
+                - http://127.0.0.1:3000/api/auth/machine/callback
+                - http://localhost:13001/api/auth/machine/callback
+                - http://127.0.0.1:13001/api/auth/machine/callback
+              post-logout-redirect-uris:
+                - http://localhost:3000/auth/logged-out
+                - http://127.0.0.1:3000/auth/logged-out
+                - http://localhost:13000/auth/logged-out
+                - http://127.0.0.1:13000/auth/logged-out
+                - http://localhost:13001/auth/logged-out
+                - http://127.0.0.1:13001/auth/logged-out
+              scopes:
+                - openid
+                - profile
+                - events.report
+            require-proof-key: true
+            require-authorization-consent: false
+            token:
+              reuse-refresh-tokens: false
+              refresh-token-time-to-live: 24h
+              authorization-code-time-to-live: 5m
+              access-token-time-to-live: 15m
+              access-token-format: self-contained
+          observation-connection:
+            registration:
+              client-id: observation-connection
+              client-secret: "${tolo-idp.seed.client-secret:secret}"
+              client-name: Observation connection client
+              client-authentication-methods:
+                - client_secret_basic
+                - client_secret_post
+              authorization-grant-types:
+                - authorization_code
+                - refresh_token
+                - urn:ietf:params:oauth:grant-type:token-exchange
+              redirect-uris:
+                - http://localhost:3000/api/auth/callback/observation-connection
+                - http://127.0.0.1:3000/api/auth/callback/observation-connection
+                - http://localhost:3000/api/auth/connection/callback
+                - http://127.0.0.1:3000/api/auth/connection/callback
+                - http://localhost:13000/api/auth/connection/callback
+                - http://127.0.0.1:13000/api/auth/connection/callback
+                - http://localhost:13001/api/auth/connection/callback
+                - http://127.0.0.1:13001/api/auth/connection/callback
+              scopes:
+                - openid
+                - profile
+                - events.read
+            require-proof-key: true
+            require-authorization-consent: false
+            token:
+              reuse-refresh-tokens: false
+              refresh-token-time-to-live: 24h
+              authorization-code-time-to-live: 5m
+              access-token-time-to-live: 15m
+              access-token-format: self-contained
+          esp-camera:
+            registration:
+              client-id: esp-camera
+              client-name: ESP camera
+              client-authentication-methods:
+                - none
+              authorization-grant-types:
+                - urn:ietf:params:oauth:grant-type:device_code
+                - refresh_token
+              scopes:
+                - events.stream
+            require-proof-key: false
+            require-authorization-consent: false
+            token:
+              reuse-refresh-tokens: false
+              refresh-token-time-to-live: 24h
+              device-code-time-to-live: 10m
+              access-token-time-to-live: 10m
+              access-token-format: self-contained
           service-gateway:
             registration:
               client-id: service-gateway
@@ -143,6 +272,32 @@ tolo-idp:
         - backend-api
       allowed-token-exchange-transitions:
         - tenant_access:event_access
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
+    console-ui:
+      allowed-audiences:
+        - backend-api
+      allowed-token-exchange-transitions:
+        - tenant_access:event_access
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
+    observation-connection:
+      allowed-audiences:
+        - backend-api
+      allowed-token-exchange-transitions:
+        - tenant_access:event_access
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
+    edge-page:
+      allowed-audiences:
+        - backend-api
+      allowed-token-exchange-transitions:
+        - tenant_access:event_access
+      tenant-access-ttl: 15m
+      event-access-ttl: 10m
+    esp-camera:
+      allowed-audiences:
+        - backend-api
       tenant-access-ttl: 15m
       event-access-ttl: 10m
     service-gateway:

@@ -39,6 +39,7 @@ class AuthorizationServerSurfaceTests(
                     containsInAnyOrder(
                         AuthorizationGrantType.AUTHORIZATION_CODE.value,
                         AuthorizationGrantType.REFRESH_TOKEN.value,
+                        AuthorizationGrantType.DEVICE_CODE.value,
                         AuthorizationGrantType.TOKEN_EXCHANGE.value,
                     ),
                 ),
@@ -49,6 +50,7 @@ class AuthorizationServerSurfaceTests(
                     containsInAnyOrder(
                         "openid", "profile", "tenant.read", "tenant.write", "tenant.join",
                         "events.read", "events.manage", "events.operate", "events.report",
+                        "events.stream",
                     ),
                 ),
             )
@@ -58,6 +60,7 @@ class AuthorizationServerSurfaceTests(
                     containsInAnyOrder(
                         ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
                         ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                        ClientAuthenticationMethod.NONE.value,
                     ),
                 ),
             )
@@ -101,6 +104,7 @@ class AuthorizationServerSurfaceTests(
                     containsInAnyOrder(
                         AuthorizationGrantType.AUTHORIZATION_CODE.value,
                         AuthorizationGrantType.REFRESH_TOKEN.value,
+                        AuthorizationGrantType.DEVICE_CODE.value,
                         AuthorizationGrantType.TOKEN_EXCHANGE.value,
                     ),
                 ),
@@ -112,6 +116,7 @@ class AuthorizationServerSurfaceTests(
                     containsInAnyOrder(
                         "openid", "profile", "tenant.read", "tenant.write", "tenant.join",
                         "events.read", "events.manage", "events.operate", "events.report",
+                        "events.stream",
                     ),
                 ),
             )
@@ -121,6 +126,7 @@ class AuthorizationServerSurfaceTests(
                     containsInAnyOrder(
                         ClientAuthenticationMethod.CLIENT_SECRET_BASIC.value,
                         ClientAuthenticationMethod.CLIENT_SECRET_POST.value,
+                        ClientAuthenticationMethod.NONE.value,
                     ),
                 ),
             )

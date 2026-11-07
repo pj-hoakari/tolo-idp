@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.NullSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -82,6 +83,7 @@ class TokenExchangeEndpointTests(
         replaceClient123Policy()
         ensurePublicPolicyClient()
         ensureOtherConfidentialClient()
+        ensureEdgePageClient()
         cacheRepository.save(
             RelationMembershipCache(
                 cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
@@ -737,6 +739,99 @@ class TokenExchangeEndpointTests(
         assertEquals("subject_token_type", latestAudit()["failure_reason"])
     }
 
+    @Test
+    fun observationPageTokenExchangeAddsEdgeDeviceIdClaim() {
+        val subjectToken = saveTenantAuthorization(clientId = EDGE_PAGE_CLIENT_ID)
+
+        val result = mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken = subjectToken,
+                clientId = EDGE_PAGE_CLIENT_ID,
+                clientSecret = EDGE_PAGE_CLIENT_SECRET,
+                scope = IdpScopes.EVENTS_REPORT,
+                edgeDeviceId = "0123456789abcdef",
+            ),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").value("events.report"))
+            .andReturn()
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        assertEquals("0123456789abcdef", jwt.claims["edge_device_id"])
+        assertEquals("edge-page", jwt.claims["client_id"])
+        assertEquals("events.report", jwt.claims["scope"])
+        assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = ["0123456789abcdef"])
+    fun connectionClientExchangesItsOwnTenantAccessForEventsReadEventAccess(edgeDeviceId: String?) {
+        val subjectToken = saveTenantAuthorization(
+            clientId = CONNECTION_CLIENT_ID,
+            scopes = setOf("openid", "events.read"),
+        )
+
+        val result = mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken = subjectToken,
+                clientId = CONNECTION_CLIENT_ID,
+                clientSecret = CONNECTION_CLIENT_SECRET,
+                edgeDeviceId = edgeDeviceId,
+            ),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").value("events.read"))
+            .andReturn()
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        assertEquals("observation-connection", jwt.claims["client_id"])
+        assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
+        assertEquals("tenant-a", jwt.claims["tenant_id"])
+        assertEquals("event-1", jwt.claims["event_id"])
+        assertEquals("events.read", jwt.claims["scope"])
+        if (edgeDeviceId == null) {
+            assertFalse(jwt.claims.containsKey("edge_device_id"))
+        } else {
+            assertEquals(edgeDeviceId, jwt.claims["edge_device_id"])
+        }
+        assertEquals("success", latestAudit()["result"])
+    }
+
+    @Test
+    fun edgeDeviceIdIsRejectedForOtherClients() {
+        val subjectToken = saveTenantAuthorization()
+        mockMvc.perform(tokenExchangeRequest(subjectToken, edgeDeviceId = "0123456789abcdef"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_request"))
+        assertEquals("edge_device_id_not_allowed", latestAudit()["failure_reason"])
+        assertEquals("failure", latestAudit()["result"])
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["", "0123456789ABCDEF", "0123456789abcdeg", "0123456789abcde", "0123456789abcdef0", " 0123456789abcdef", "0123456789abcdef ", "０１２３４５６７８９abcdef"])
+    fun edgeDeviceIdIsRejectedForInvalidValues(edgeDeviceId: String) {
+        for ((clientId, clientSecret) in listOf(
+            EDGE_PAGE_CLIENT_ID to EDGE_PAGE_CLIENT_SECRET,
+            CONNECTION_CLIENT_ID to CONNECTION_CLIENT_SECRET,
+        )) {
+            val subjectToken = saveTenantAuthorization(clientId = clientId)
+            mockMvc.perform(
+                tokenExchangeRequest(
+                    subjectToken = subjectToken,
+                    clientId = clientId,
+                    clientSecret = clientSecret,
+                    edgeDeviceId = edgeDeviceId,
+                ),
+            )
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.error").value("invalid_request"))
+                .andExpect(jsonPath("$.error_description").doesNotExist())
+            assertEquals("edge_device_id_invalid", latestAudit()["failure_reason"])
+            assertEquals("failure", latestAudit()["result"])
+        }
+    }
+
     private fun tokenExchangeRequest(
         subjectToken: String?,
         clientId: String = "client-123",
@@ -746,6 +841,7 @@ class TokenExchangeEndpointTests(
         resource: String? = "https://api.example.com/tenants/tenant-a/events/event-1",
         scope: String? = "events.read",
         useClientSecretPost: Boolean = false,
+        edgeDeviceId: String? = null,
     ) =
         post("/oauth2/token")
             .apply {
@@ -773,6 +869,9 @@ class TokenExchangeEndpointTests(
                 if (scope != null) {
                     param("scope", scope)
                 }
+                if (edgeDeviceId != null) {
+                    param("edge_device_id", edgeDeviceId)
+                }
             }
 
     private fun saveTenantAuthorization(
@@ -783,10 +882,11 @@ class TokenExchangeEndpointTests(
         subjectResource: String? = "https://api.example.com/tenants/$tenantId",
         scopes: Set<String> = IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_JOIN,
         jti: String? = "jti-${UUID.randomUUID()}",
+        clientId: String = "client-123",
     ): String {
         val tokenValue = "subject-token-${UUID.randomUUID()}"
-        val registeredClient = registeredClientRepository.findByClientId("client-123")
-            ?: error("seed client-123 is required")
+        val registeredClient = registeredClientRepository.findByClientId(clientId)
+            ?: error("$clientId is required")
         val authentication = UsernamePasswordAuthenticationToken.authenticated(
             dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
             null,
@@ -808,7 +908,7 @@ class TokenExchangeEndpointTests(
             .token(token) { metadata ->
                 val claims = linkedMapOf<String, Any>(
                     "iss" to "http://localhost:8080",
-                    "client_id" to "client-123",
+                    "client_id" to clientId,
                     "scope" to scopes.joinToString(" "),
                     "token_use" to tokenUse,
                     "tenant_id" to tenantId,
@@ -934,11 +1034,43 @@ class TokenExchangeEndpointTests(
         )
     }
 
+    private fun ensureEdgePageClient() {
+        if (registeredClientRepository.findByClientId(EDGE_PAGE_CLIENT_ID) == null) {
+            registeredClientRepository.save(
+                RegisteredClient.withId(UUID.randomUUID().toString())
+                    .clientId(EDGE_PAGE_CLIENT_ID)
+                    .clientSecret(passwordEncoder.encode(EDGE_PAGE_CLIENT_SECRET))
+                    .clientName("Observation page token exchange test client")
+                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                    .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
+                    .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                    .build(),
+            )
+        }
+        registeredClientRepository.clearPolicy(EDGE_PAGE_CLIENT_ID)
+        registeredClientRepository.savePolicy(
+            ClientPolicy(
+                clientId = EDGE_PAGE_CLIENT_ID,
+                clientType = ClientType.CONFIDENTIAL,
+                allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value),
+                allowedTransitions = setOf(TOKEN_EXCHANGE_TRANSITION_TENANT_TO_EVENT),
+                allowedAudiences = setOf("backend-api"),
+                allowedScopes = IdpScopes.SUPPORTED,
+                tenantAccessTtl = java.time.Duration.ofSeconds(900),
+                eventAccessTtl = java.time.Duration.ofSeconds(600),
+            ),
+        )
+    }
+
     private companion object {
         const val PUBLIC_POLICY_CLIENT_ID = "public-token-exchange-client"
         const val PUBLIC_POLICY_CLIENT_SECRET = "public-secret"
         const val OTHER_CONFIDENTIAL_CLIENT_ID = "other-token-exchange-client"
         const val OTHER_CONFIDENTIAL_CLIENT_SECRET = "other-secret"
+        const val EDGE_PAGE_CLIENT_ID = "edge-page"
+        const val EDGE_PAGE_CLIENT_SECRET = "edge-page-secret"
+        const val CONNECTION_CLIENT_ID = "observation-connection"
+        const val CONNECTION_CLIENT_SECRET = "secret"
 
         private val relationPaths = CopyOnWriteArrayList<String>()
 

@@ -2,6 +2,8 @@ package dev.usbharu.toloidp.config
 
 import dev.usbharu.toloidp.audit.AuditService
 import dev.usbharu.toloidp.audit.TokenAuditEvent
+import dev.usbharu.toloidp.devicegrant.DeviceGrant
+import dev.usbharu.toloidp.devicegrant.DeviceGrantService
 import dev.usbharu.toloidp.relation.CachedRelationService
 import dev.usbharu.toloidp.relation.RelationCacheController
 import dev.usbharu.toloidp.relation.RelationMembershipCache
@@ -61,6 +63,49 @@ class TransactionMetadataTests {
             "CachedRelationService.getMembership should keep the remote call outside a transaction",
         )
         assertReadWrite(SpecTokenExchangeAuthenticationProvider::class.java, "authenticate", Authentication::class.java)
+        assertReadWrite(
+            DeviceGrantService::class.java,
+            "approve",
+            String::class.java,
+            String::class.java,
+            String::class.java,
+            String::class.java,
+            org.springframework.security.oauth2.server.authorization.client.RegisteredClient::class.java,
+            Boolean::class.javaPrimitiveType!!,
+        )
+        assertReadWrite(
+            DeviceGrantService::class.java,
+            "revoke",
+            String::class.java,
+            String::class.java,
+            String::class.java,
+            org.springframework.security.oauth2.server.authorization.client.RegisteredClient::class.java,
+            Boolean::class.javaPrimitiveType!!,
+            String::class.java,
+        )
+        assertReadWrite(
+            DeviceGrantService::class.java,
+            "refresh",
+            String::class.java,
+            String::class.java,
+            kotlin.jvm.functions.Function0::class.java,
+        )
+        assertReadWrite(
+            DeviceGrantService::class.java,
+            "revokeAfterFailedRefresh",
+            DeviceGrant::class.java,
+        )
+        assertReadWrite(
+            DeviceGrantService::class.java,
+            "exchangeDeviceCode",
+            String::class.java,
+            kotlin.jvm.functions.Function0::class.java,
+        )
+        assertReadOnly(
+            DeviceGrantService::class.java,
+            "findGrantByRefreshToken",
+            String::class.java,
+        )
         assertReadWrite(SeedDataRunner::class.java, "run", ApplicationArguments::class.java)
         assertReadWrite(
             RegisteredClientConfigurationSynchronizer::class.java,
