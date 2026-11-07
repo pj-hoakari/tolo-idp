@@ -1481,6 +1481,7 @@ Content-Type: application/json
 ```text
 - BFF の client 認証
 - スタッフの tenant_access の署名、issuer、期限、audience、token_use、tenant_id、空でない jti、および jti denylist に登録されていないこと（スタッフ操作の失効でも同様）
+- スタッフの tenant_access に `events.manage` が含まれ、対象イベントの現在のイベントロールにも `events.manage` が許可されること（スタッフ操作の失効でも同様）。不足時は `403` とする
 - スタッフの tenant 内の user と対象イベントのイベントロール
 - user_code が pending で未使用・未期限切れであること
 - client が esp-camera、要求 scope が events.stream だけであること

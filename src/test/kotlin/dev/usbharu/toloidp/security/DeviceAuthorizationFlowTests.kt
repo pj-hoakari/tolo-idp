@@ -590,12 +590,28 @@ open class DeviceAuthorizationFlowTests(
     }
 
     @Test
+    fun staffTokenRequiresEventsManageForApprovalAndRevocation() {
+        val code = startDeviceAuthorization()
+        val edge = "abababababababab"
+        val insufficient = staffToken(scope = "openid tenant.read events.read")
+        approve(userCodeFor(code), "event-1", edge, token = insufficient).andExpect(status().isForbidden)
+        revoke("event-1", edge, staffToken = insufficient).andExpect(status().isForbidden)
+        approve(userCodeFor(code), "event-1", edge, token = staffToken(scope = null)).andExpect(status().isForbidden)
+        poll(code).andExpect(status().isBadRequest).andExpect(jsonPath("$.error").value("authorization_pending"))
+        assertNull(revocation(edge))
+        approve(userCodeFor(code), "event-1", edge, token = staffToken(scope = "events.manage"))
+            .andExpect(status().isOk)
+        revoke("event-1", edge, staffToken = staffToken(scope = "events.manage"))
+            .andExpect(status().isNoContent)
+    }
+
+    @Test
     fun revokedIssuedStaffAccessTokenCannotApproveOrRevoke() {
         val redirect = "http://127.0.0.1:8080/login/oauth2/code/client-123"
         val challenge = mockMvc.challengeFrom(
             get("/oauth2/authorize")
                 .queryParam("client_id", "client-123").queryParam("response_type", "code").queryParam("redirect_uri", redirect)
-                .queryParam("scope", "tenant.read").queryParam("resource", "https://api.example.com/tenants/tenant-a").queryParam("audience", "backend-api")
+                .queryParam("scope", "events.manage").queryParam("resource", "https://api.example.com/tenants/tenant-a").queryParam("audience", "backend-api")
                 .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
         )
         val session = mockMvc.loginWithChallengeSession(challenge)
@@ -843,6 +859,7 @@ open class DeviceAuthorizationFlowTests(
         tenantId: String = "tenant-a",
         subject: String = IdpUserDetailsManager.DEVELOPMENT_USER_ID,
         jti: String? = UUID.randomUUID().toString(),
+        scope: String? = "events.manage",
     ): String {
         val now = Instant.now()
         val claims = JwtClaimsSet.builder()
@@ -855,6 +872,7 @@ open class DeviceAuthorizationFlowTests(
             .apply { if (jti != null) id(jti) }
             .claim("client_id", "console-ui")
             .claim("tenant_id", tenantId)
+            .apply { if (scope != null) claim("scope", scope) }
             .claim("token_use", TOKEN_USE_TENANT_ACCESS)
             .build()
         return jwtEncoder.encode(

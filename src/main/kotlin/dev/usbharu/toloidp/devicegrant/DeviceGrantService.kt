@@ -15,6 +15,7 @@ import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.TOKEN_USE_TENANT_ACCESS
 import dev.usbharu.toloidp.security.TOKEN_USE_EVENT_ACCESS
 import dev.usbharu.toloidp.scope.IdpScopes
+import dev.usbharu.toloidp.scope.ScopePolicy
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.slf4j.LoggerFactory
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
@@ -50,6 +51,7 @@ class DeviceGrantService(
     private val registeredClientRepository: RegisteredClientRepository,
     private val users: IdpUserDetailsManager,
     private val relationService: RelationService,
+    private val scopePolicy: ScopePolicy,
     private val resourceParser: ResourceParser,
     private val jwtDecoder: JwtDecoder,
     private val jtiDenylistRepository: JtiDenylistRepository,
@@ -489,6 +491,8 @@ class DeviceGrantService(
         if (audiences.isEmpty() || audiences.any { it !in allowedAudiences }) {
             throw StaffTokenInvalidException()
         }
+        val scope = jwt.claims["scope"] as? String ?: throw StaffNotAuthorizedException()
+        if (IdpScopes.EVENTS_MANAGE !in scope.split(' ')) throw StaffNotAuthorizedException()
         try {
             users.requireTenantUser(tenantId, subject)
         } catch (_: RelationLookupException) {
@@ -508,7 +512,8 @@ class DeviceGrantService(
         } catch (_: RelationLookupException) {
             throw StaffNotAuthorizedException()
         }
-        if (membership.events.none { it.eventId == eventId }) {
+        val event = membership.events.find { it.eventId == eventId }
+        if (event == null || IdpScopes.EVENTS_MANAGE !in scopePolicy.allowedScopes(event.role)) {
             throw StaffNotAuthorizedException()
         }
     }
