@@ -670,7 +670,7 @@ X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外�
 
 Authorization Code フローの認可要求では、要求 scope のうち tenant role または client の登録 scope が許可しない scope を発行対象から外し、残りを発行する。client はユーザーの role を知る前に scope を要求する。また、client ごとの登録 scope は発行する scope の上限であり、要求を拒否する条件ではない。
 
-それ以外では、要求された `scope` を暗黙に縮小して発行してはならない。対象は、未対応の scope、client の登録外の `openid`、`tenant.join` とほかの scope の併用、registration の認可要求、Refresh Token、Token Exchange である。
+それ以外では、要求された `scope` を暗黙に縮小して発行してはならない。対象は、未対応の scope、client の登録外の `openid`、`tenant.join` とほかの scope の併用、registration の認可要求、Refresh Token、Token Exchange である。Token Exchange で `scope` を省略した場合の既定値は 11.2 に従う。
 
 これらに許可されない scope が含まれる場合、Authorization Server は `invalid_scope` を返す。ただし、Token Exchange の要求 scope が交換元 token の scope を超える場合は、既存の扱いに従い `invalid_grant` を返す。
 
@@ -705,11 +705,13 @@ granted_scope = requested_scope ∩ (identity_scopes ∪ tenant_role.allowed_sco
 
 ### 11.2 event_access token 発行時
 
-`tenant.join` は発行しない。要求に含まれる場合は `invalid_scope` とする。
+`tenant.join` は発行しない。明示的な要求に含まれる場合は `invalid_scope` とする。
 
 既存の共通 role / scope 判定を維持し、`tenant.read` / `tenant.write` も以下の条件を満たせば発行できる。`openid` / `profile` は event role の許可 scope に含まれず、発行しない。
 
-`event_access` token 発行時、Authorization Server は以下を満たす scope のみ発行する。
+Token Exchange の要求に `scope` がない場合、または空で指定した場合は、`event_role` から導いた許可 scope、`subject_token.scope`、`client.allowed_scopes` の積を発行する。これは要求がないときの既定値であり、要求した scope の暗黙の縮小ではない。積が空の場合は `invalid_scope` とする。
+
+明示的に `scope` を要求した場合、Authorization Server は以下を満たす scope のみ発行する。
 
 ```text
 requested_scope ⊆ client.allowed_scopes
@@ -943,6 +945,7 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 Authorization Server は以下を確認する。
 
 ```text
+- scope が空または省略された場合は、event role の許可 scope、subject_token.scope、client の登録 scope の積を発行し、積が空なら invalid_scope とする
 - client が認証済みである
 - client が Token Exchange を許可されている
 - subject_token が有効である
@@ -1222,6 +1225,7 @@ scope_not_allowed_for_client
 scope_not_allowed_for_role
 scope_not_allowed_for_token_use
 scope_exceeds_subject_token
+scope_default_empty
 token_revoked
 unsupported_token_type
 token_invalid_claims
@@ -1250,6 +1254,8 @@ token_invalid_claims
   "issued_jti": "jti-event-001"
 }
 ```
+
+`scope` を省略した Token Exchange の成功ログでは、`requested_scope` は空配列、`issued_scope` は event role の許可 scope、subject_token.scope、client の登録 scope の積になる。
 
 ### 19.6 失敗ログ例
 

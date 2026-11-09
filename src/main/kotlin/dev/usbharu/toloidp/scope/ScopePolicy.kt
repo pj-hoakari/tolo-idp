@@ -96,11 +96,28 @@ class ScopePolicy(
         requireAllowed(requested, IdpScopes.SUPPORTED, "scope_not_allowed_for_role")
     }
 
+    /**
+     * scope を省略した Token Exchange で発行する event_access の既定 scope。
+     *
+     * event role の許可 scope、subject token の scope、client の登録 scope の積を返す。
+     * event_access に載せない scope（openid / profile / tenant.join / events.stream）は除く。
+     */
+    fun defaultEventAccessScopes(
+        subjectScopes: Set<String>,
+        role: RelationRole,
+        clientScopes: Set<String>,
+    ): Set<String> {
+        val allowed = allowedScopes(role) intersect clientScopes intersect EVENT_ACCESS_SCOPE_VOCABULARY
+        return subjectScopes.filterTo(linkedSetOf()) { it in allowed }
+    }
+
     companion object {
         const val SCOPE_AUTHORITY_PREFIX = "SCOPE_"
 
         val IDENTITY_SCOPES: Set<String> = IdpScopes.IDENTITY
         val REGISTRATION_SCOPES: Set<String> = setOf(IdpScopes.TENANT_JOIN)
+        private val EVENT_ACCESS_SCOPE_VOCABULARY: Set<String> =
+            IdpScopes.SUPPORTED - IdpScopes.IDENTITY - IdpScopes.TENANT_JOIN - IdpScopes.EVENTS_STREAM
 
         fun defaultRoleHierarchy(): RoleHierarchy =
             RoleHierarchyImpl.fromHierarchy(

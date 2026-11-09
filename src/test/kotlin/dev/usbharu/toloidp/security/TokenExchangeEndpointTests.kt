@@ -455,6 +455,116 @@ class TokenExchangeEndpointTests(
         assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
     }
 
+    @Test
+    fun exchangesWithoutScopeUsingRoleSubjectAndClientIntersection() {
+        val subjectToken = saveTenantAuthorization(
+            scopes = setOf("openid", "tenant.read", "tenant.write", "events.read", "events.manage"),
+        )
+
+        val result = mockMvc.perform(tokenExchangeRequest(subjectToken, scope = null))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").exists())
+            .andReturn()
+
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        val expectedScopes = setOf("tenant.read", "tenant.write", "events.read", "events.manage")
+        assertEquals(expectedScopes, response["scope"].asText().split(' ').toSet())
+        assertEquals(expectedScopes, (jwt.claims["scope"] as String).split(' ').toSet())
+        assertEquals(TOKEN_USE_EVENT_ACCESS, jwt.claims["token_use"])
+        assertEquals("", latestAudit()["requested_scope"])
+        assertEquals(expectedScopes, (latestAudit()["issued_scope"] as String).split(' ').toSet())
+        assertEquals("success", latestAudit()["result"])
+    }
+
+    @Test
+    fun exchangesWithoutScopeDropsScopesNotAllowedForEventRole() {
+        val subjectToken = saveTenantAuthorization(
+            scopes = setOf("tenant.read", "tenant.write", "events.read", "events.report"),
+        )
+
+        val result = mockMvc.perform(
+            tokenExchangeRequest(
+                subjectToken,
+                resource = "https://api.example.com/tenants/tenant-a/events/event-staff",
+                scope = null,
+            ),
+        )
+            .andExpect(status().isOk)
+            .andReturn()
+
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        assertEquals(
+            setOf("tenant.read", "events.read", "events.report"),
+            (jwt.claims["scope"] as String).split(' ').toSet(),
+        )
+        assertEquals("success", latestAudit()["result"])
+    }
+
+    @Test
+    fun exchangesWithoutScopeUsesClientScopeCeiling() {
+        replaceClient123Policy(allowedScopes = setOf("events.read", "events.operate"))
+        val subjectToken = saveTenantAuthorization(
+            scopes = setOf("tenant.read", "events.read", "events.operate", "events.report"),
+        )
+
+        val result = mockMvc.perform(tokenExchangeRequest(subjectToken, scope = null))
+            .andExpect(status().isOk)
+            .andReturn()
+
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        assertEquals(
+            setOf("events.read", "events.operate"),
+            (jwt.claims["scope"] as String).split(' ').toSet(),
+        )
+        assertEquals("success", latestAudit()["result"])
+    }
+
+    @Test
+    fun exchangesWithoutScopeDropsTenantJoinAndLegacyScopes() {
+        val subjectToken = saveTenantAuthorization(
+            scopes = setOf("tenant.join", "events.write", "events.read"),
+        )
+
+        val result = mockMvc.perform(tokenExchangeRequest(subjectToken, scope = null))
+            .andExpect(status().isOk)
+            .andReturn()
+
+        val response = tools.jackson.databind.json.JsonMapper.builder().build().readTree(result.response.contentAsString)
+        val jwt = jwtDecoder.decode(response["access_token"].asText())
+        assertEquals("events.read", jwt.claims["scope"])
+        assertEquals("success", latestAudit()["result"])
+    }
+
+    @Test
+    fun treatsEmptyScopeParameterAsOmittedScope() {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("events.read"))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken, scope = ""))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.scope").value("events.read"))
+
+        assertEquals("", latestAudit()["requested_scope"])
+        assertEquals("events.read", latestAudit()["issued_scope"])
+    }
+
+    @Test
+    fun rejectsWithoutScopeWhenIntersectionIsEmpty() {
+        val subjectToken = saveTenantAuthorization(scopes = setOf("openid"))
+
+        mockMvc.perform(tokenExchangeRequest(subjectToken, scope = null))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_scope"))
+            .andExpect(jsonPath("$.error_description").doesNotExist())
+
+        assertEquals("scope_default_empty", latestAudit()["failure_reason"])
+        assertEquals("failure", latestAudit()["result"])
+        assertEquals("", latestAudit()["requested_scope"])
+        assertEquals("", latestAudit()["issued_scope"])
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["events.manage", "events.operate", "events.report"])
     fun rejectsNewScopeOutsideClientPolicy(scope: String) {
