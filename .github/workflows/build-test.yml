@@ -153,7 +153,7 @@ jobs:
 
       - name: Upload tested application image
         if: inputs.export-images
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.runtime }}-${{ matrix.platform.arch }}
           path: build/ci-image/image.tar
