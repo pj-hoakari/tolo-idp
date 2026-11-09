@@ -60,6 +60,7 @@ Native Image 関連:
 - `settings.gradle.kts`: root project name
 - `src/main/kotlin/dev/usbharu/toloidp/ToloIdpApplication.kt`: Spring Boot entry point
 - `src/main/resources/application.yaml`: アプリケーション設定
+- `src/main/resources/seed/users.json`: 開発用 seed ユーザー定義
 - `src/test/kotlin/dev/usbharu/toloidp/ToloIdpApplicationTests.kt`: context load test
 
 Kotlin の package root は `dev.usbharu.toloidp` です。新規コードはこの package 配下に配置してください。

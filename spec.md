@@ -92,8 +92,8 @@ tenant は challenge だけから決め、本文の `tenantId` などからは�
 {
   "sub": "71c68dc1-2c72-45ac-a191-1c47c1551011",
   "username": "user-123",
-  "tenantId": "tenant-a",
-  "resource": "https://api.example.com/tenants/tenant-a",
+  "tenantId": "0123456789abcdef",
+  "resource": "https://api.example.com/tenants/0123456789abcdef",
   "authorities": ["ROLE_USER"]
 }
 ```
@@ -110,7 +110,7 @@ challenge が未知・期限切れ・認証済みの場合と本文が不正な�
 
 ログイン時のユーザー検索・存在確認・作成・更新・削除には tenantId を必須とする。ログインでは challenge から決めた tenant を使う。tenantId のない username 単独の検索は拒否する。パスワードは同じ username でもテナントごとに独立し、無効なユーザーはログインできない。ログインのユーザー別レート制限も challenge から決めた tenantId と username の組ごとに分離する。challenge が未知・期限切れ・認証済みの要求には、IP 単位の制限だけを適用する。
 
-開発用 seed は `(tenant-a, user-123)` とし、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId もこの内部主キーとする。
+開発用 seed は `tolo-idp.seed.users-file` が指す JSON で定義する。既定の `classpath:seed/users.json` は `(0123456789abcdef, user-123)` を作り、その内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` とする。Relation Service 側の seed userId もこの内部主キーとする。seed のユーザーは `/api/signup` と同じ検証・パスワードハッシュ化・権限付与で作成し、JSON の `id` は必須の canonical UUID とする。
 
 V6 は未リリースの開発用スキーマ変更としてユーザーテーブルを作り直す。旧テーブルには tenantId がないため所属を推測せず、旧ユーザー・権限・対応する authorization / consent・relation cache を削除する。開発用ユーザーは seed で再作成する。DB 以外の移行・旧識別方式との互換性対応は行わない。
 
@@ -1333,6 +1333,8 @@ tolo-idp.relation.connect-timeout=2s
 tolo-idp.relation.read-timeout=3s
 tolo-idp.relation.cache.ttl=5m
 tolo-idp.relation.cache.admin-subjects=[]
+tolo-idp.seed.enabled=false
+tolo-idp.seed.users-file=classpath:seed/users.json
 tolo-idp.clients.client-123.tenant-access-ttl=15m
 tolo-idp.clients.client-123.event-access-ttl=10m
 ```
@@ -1350,6 +1352,7 @@ seed data が有効な場合の開発用デフォルト:
 ```text
 user=user-123
 password=password
+seed_users_file=classpath:seed/users.json
 client_id=client-123
 client_secret=secret
 allowed_audience=backend-api
@@ -1364,7 +1367,7 @@ DB スキーマの V5 で `idp_client_policy` テーブルを削除する。旧�
 
 ### 22.2 スコープ再設計に伴う運用
 
-`configuration_managed` が真の RegisteredClient は、起動時に標準の登録設定と `tolo-idp.clients` の独自設定へ合わせる。seed は開発用 user のみを作成し、RegisteredClient と ClientPolicy ビューを作成・更新しない。構成に無く、`configuration_managed` が偽の client は変更しない。
+`configuration_managed` が真の RegisteredClient は、起動時に標準の登録設定と `tolo-idp.clients` の独自設定へ合わせる。seed は `tolo-idp.seed.users-file` の開発用 user のみを作成し、RegisteredClient と ClientPolicy ビューを作成・更新しない。構成に無く、`configuration_managed` が偽の client は変更しない。
 
 開発・本番ともに、構成管理外の既存 client に対するスコープの自動移行や、旧 scope の読み替えは行わない。運用側で以下を実施する。
 
@@ -1373,6 +1376,32 @@ DB スキーマの V5 で `idp_client_policy` テーブルを削除する。旧�
 3. 新しい scope を要求して tenant_access token を再取得し、その scope の範囲内で event_access token を要求する。
 
 既発行 JWT と保存済み authorization は変更・一括失効しない。旧 scope を新しい scope として解釈しない。交換元が旧 `events.write` のみを持つ場合、新イベントスコープへの交換は `invalid_grant` とする。交換要求自体に `events.write` が含まれる場合は `invalid_scope` とする。
+
+### 22.3 seed ユーザー
+
+seed data が有効な場合、IdP は `tolo-idp.seed.users-file` が指す JSON を起動時に読み、ユーザーを作成する。既定は `classpath:seed/users.json` とする。`seed.enabled=false` の場合はファイルを読まない。
+
+```json
+{
+  "users": [
+    {
+      "id": "71c68dc1-2c72-45ac-a191-1c47c1551011",
+      "tenantId": "0123456789abcdef",
+      "username": "user-123",
+      "password": "password"
+    }
+  ]
+}
+```
+
+- `users` は必須で、空配列を許可する。各要素の `id`、`tenantId`、`username`、`password` は必須とする。
+- `id` は canonical UUID とする。`/api/signup` が発行する id は UUID v4 だが、seed は Relation Service の seed userId と対応させるため v4 以外の canonical UUID も受け付ける。
+- `tenantId` は `^[A-Za-z0-9_-]{1,64}$`、`username` は空白と制御文字を含まない 1〜50 文字、`password` は 8 文字以上かつ UTF-8 で 72 バイト以下とする。
+- ユーザーは `/api/signup` と同じ経路で作成し、パスワードは同じ PasswordEncoder でハッシュ化し、`ROLE_USER` と `enabled=true` を設定する。
+- JSON の未知フィールド、`id` または `(tenantId, username)` の重複、不正な値は起動失敗にする。ファイルが存在しない、読めない、JSON が不正な場合も起動失敗にする。
+- 既存ユーザーが `id`、パスワード、`enabled`、権限のすべてで JSON と一致する場合はスキップする。一致しない場合と、`id` が別ユーザーに使われている場合は起動失敗にする。
+- JSON から削除されたユーザーは削除しない。
+- seed の作成・スキップ・拒否は `seed_user_created`、`seed_user_skipped`、`seed_user_rejected` の構造化ログに記録し、パスワードは出力しない。ファイル全体の不正や重複は `seed_users_rejected` に理由を付けて記録する。
 
 ---
 

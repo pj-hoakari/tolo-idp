@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpSession
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
@@ -40,6 +41,7 @@ class RegistrationFlowTests(
     @Autowired private val decoder: JwtDecoder,
     @Autowired private val users: IdpUserDetailsManager,
     @Autowired private val clients: RegisteredClientRepository,
+    @Autowired private val passwordEncoder: PasswordEncoder,
 ) {
     @Test
     fun signupCreatesTheUserInTheChallengeTenantAndIssuesARegistrationToken() {
@@ -57,6 +59,10 @@ class RegistrationFlowTests(
         assertNotEquals(originalSessionId, session.id)
         val subject = json.readTree(signup.response.contentAsString)["sub"].stringValue()
         assertEquals(subject, users.loadUserByUsername(NEW_TENANT, username).id)
+        val created = users.loadUserById(subject)
+        assertTrue(created.isEnabled)
+        assertEquals(listOf("ROLE_USER"), created.authorities.map { it.authority })
+        assertTrue(passwordEncoder.matches("correct horse", created.password))
         assertFalse(users.userExists("tenant-a", username))
 
         val tokens = exchange(mvc.perform(resumeAuthorization(challenge, session)))

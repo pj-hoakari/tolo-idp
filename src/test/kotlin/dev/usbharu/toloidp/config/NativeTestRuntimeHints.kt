@@ -5,6 +5,7 @@ import dev.usbharu.toloidp.relation.CachedRelationService
 import dev.usbharu.toloidp.relation.RelationCacheController
 import dev.usbharu.toloidp.relation.RelationMembershipCacheStore
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
+import dev.usbharu.toloidp.user.UserRegistrationService
 import org.springframework.aot.hint.MemberCategory
 import org.springframework.aot.hint.RuntimeHints
 import org.springframework.aot.hint.RuntimeHintsRegistrar
@@ -19,6 +20,7 @@ class NativeTestRuntimeHints : RuntimeHintsRegistrar {
             RelationMembershipCacheStore::class.java,
             SpecTokenExchangeAuthenticationProvider::class.java,
             SeedDataRunner::class.java,
+            UserRegistrationService::class.java,
             RegisteredClientConfigurationSynchronizer::class.java,
         ).forEach { hints.reflection().registerType(it, MemberCategory.INVOKE_PUBLIC_METHODS) }
     }

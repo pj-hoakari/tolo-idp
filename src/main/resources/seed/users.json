@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "id": "71c68dc1-2c72-45ac-a191-1c47c1551011",
+      "tenantId": "0123456789abcdef",
+      "username": "user-123",
+      "password": "password"
+    }
+  ]
+}

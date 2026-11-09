@@ -96,6 +96,32 @@ docker compose -f docker-compose.dev-jvm.yaml down
 
 `down` に `--volumes` を付けなければ DB と Redis のデータは保持されます。本番は `docker compose -f docker-compose.production.yaml down` で停止します。旧 local 環境の volume は自動移行・削除しません。
 
+## Seed ユーザー
+
+開発環境では、起動時に `src/main/resources/seed/users.json` のユーザーを作成します。`tolo-idp.seed.enabled=true` のときだけ読み込み、`seed.enabled=false` の本番環境ではファイルを読みません。
+
+```json
+{
+  "users": [
+    {
+      "id": "71c68dc1-2c72-45ac-a191-1c47c1551011",
+      "tenantId": "0123456789abcdef",
+      "username": "user-123",
+      "password": "password"
+    }
+  ]
+}
+```
+
+- `id`、`tenantId`、`username`、`password` は必須です。`id` は canonical UUID で、JWT の `sub` と Relation Service の `userId` に使います。
+- ユーザーは `/api/signup` と同じ検証・パスワードハッシュ化・権限付与で作成します。`authorities` は常に `ROLE_USER`、`enabled` は常に `true` です。
+- 既存ユーザーが `id`、パスワード、`enabled`、権限のすべてで JSON と一致する場合はスキップします。一致しない場合は起動に失敗します。
+- JSON の未知フィールド、`id` または `(tenantId, username)` の重複、不正な値、ファイルの不存在は起動失敗になります。
+- JSON から削除したユーザーは削除しません。
+- seed の作成・スキップ・拒否は構造化ログに記録し、パスワードは出力しません。
+
+`TOLO_IDP_SEED_USERS_FILE` で外部ファイルに差し替えられます。dev-jvm / dev-native の Compose は `src/main/resources/seed` を `/data/seed` に読み取り専用でマウントし、`file:/data/seed/users.json` を使います。Relation Service（relation-stub）の `userId` にはこの JSON の `id` をそのまま使います。seed ユーザーの `id` やパスワードを変更した場合は、既存 DB のユーザーと一致しなくなるため、DB volume を削除して作り直してください。
+
 ## ビルドとテスト
 
 ```bash
@@ -107,8 +133,8 @@ docker compose -f docker-compose.dev-jvm.yaml down
 
 CI と公開手順は [CI.md](CI.md) を参照してください。
 
-ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service にも `(tenantId, sub)` を渡します。開発用 seed は `(tenant-a, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
+ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service にも `(tenantId, sub)` を渡します。開発用 seed は `src/main/resources/seed/users.json` で定義し、既定では `(0123456789abcdef, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
 
-認可要求には `resource` に tenant resource（例: `https://api.example.com/tenants/tenant-a`）を指定します。ログイン状態がない要求と `prompt=login` の要求は、Web のログイン画面（開発環境では `http://localhost:3000/login`）へ `challenge` を付けてリダイレクトします。ログイン画面は `POST /api/login` に `username`、`password`、`challenge` を送り、成功したら `/oauth2/authorize?challenge=...` を開いて元の認可要求を再開します。詳しくは [spec.md](spec.md) の 4.1 節と 4.1.3 節を参照してください。
+認可要求には `resource` に tenant resource（例: `https://api.example.com/tenants/0123456789abcdef`）を指定します。ログイン状態がない要求と `prompt=login` の要求は、Web のログイン画面（開発環境では `http://localhost:3000/login`）へ `challenge` を付けてリダイレクトします。ログイン画面は `POST /api/login` に `username`、`password`、`challenge` を送り、成功したら `/oauth2/authorize?challenge=...` を開いて元の認可要求を再開します。詳しくは [spec.md](spec.md) の 4.1 節と 4.1.3 節を参照してください。
 
 ログイン名の取得には、認可時に `openid profile` scope を要求し、その access token で `GET /userinfo` を呼び出してください。`preferred_username` に現在のログイン名、`sub` に UUID の user ID を返します。

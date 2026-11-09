@@ -1,17 +1,17 @@
 {
   "tenants": [
-    { "id": "tenant-a", "name": "Tenant A (seed user is owner)" },
+    { "id": "0123456789abcdef", "name": "Tolo dev tenant (seed user is owner)" },
     { "id": "tenant-b", "name": "Tenant B (seed user is not a member)" }
   ],
   "events": [
-    { "id": "event-1", "tenantId": "tenant-a", "name": "Event 1 (seed user is owner)" },
-    { "id": "event-2", "tenantId": "tenant-a", "name": "Event 2 (seed user is staff)" },
-    { "id": "event-3", "tenantId": "tenant-a", "name": "Event 3 (seed user has no role)" },
+    { "id": "event-1", "tenantId": "0123456789abcdef", "name": "Event 1 (seed user is owner)" },
+    { "id": "event-2", "tenantId": "0123456789abcdef", "name": "Event 2 (seed user is staff)" },
+    { "id": "event-3", "tenantId": "0123456789abcdef", "name": "Event 3 (seed user has no role)" },
     { "id": "event-b1", "tenantId": "tenant-b", "name": "Event B1" }
   ],
   "tenantMembers": [
-    { "tenantId": "tenant-a", "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011", "role": "owner" },
-    { "tenantId": "tenant-a", "userId": "user-456", "role": "staff" },
+    { "tenantId": "0123456789abcdef", "userId": "71c68dc1-2c72-45ac-a191-1c47c1551011", "role": "owner" },
+    { "tenantId": "0123456789abcdef", "userId": "user-456", "role": "staff" },
     { "tenantId": "tenant-b", "userId": "user-789", "role": "owner" }
   ],
   "eventMembers": [

@@ -25,7 +25,7 @@ const authOptions: BetterAuthOptions = {
           overrideUserInfo: true,
           authorizationUrlParams: {
             audience: "backend-api",
-            resource: "https://api.example.com/tenants/tenant-a",
+            resource: "https://api.example.com/tenants/0123456789abcdef",
           },
           mapProfileToUser: (profile) => {
             if (typeof profile.sub !== "string" || !profile.sub) {
