@@ -37,6 +37,8 @@ import dev.usbharu.toloidp.security.OidcAuthenticationRequestValidator
 import dev.usbharu.toloidp.security.AuthorizationRequestConverter
 import dev.usbharu.toloidp.security.AuthorizationErrorResponseHandler
 import dev.usbharu.toloidp.security.LoginChallenges
+import dev.usbharu.toloidp.user.IdpUserDetailsManager
+import dev.usbharu.toloidp.user.UserRegistrationService
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
@@ -107,7 +109,6 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Refr
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter
 import org.springframework.security.authentication.AuthenticationProvider
-import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.AuthenticationFailureHandler
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler
@@ -715,6 +716,16 @@ class SecurityConfig {
     @Bean
     fun userDetailsService(dataSource: DataSource, passwordEncoder: PasswordEncoder): IdpUserDetailsManager =
         IdpUserDetailsManager(dataSource, passwordEncoder)
+
+    /**
+     * signup API と開発用 seed が共有するユーザー作成処理。
+     */
+    @Bean
+    fun userRegistrationService(
+        users: IdpUserDetailsManager,
+        passwordEncoder: PasswordEncoder,
+    ): UserRegistrationService =
+        UserRegistrationService(users, passwordEncoder)
 
     /**
      * 保存済み user password に `{bcrypt}` などの encoder id を含められる delegating password encoder。

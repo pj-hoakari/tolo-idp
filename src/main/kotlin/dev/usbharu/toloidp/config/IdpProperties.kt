@@ -2,6 +2,7 @@ package dev.usbharu.toloidp.config
 
 import dev.usbharu.toloidp.client.ClientPolicyConfig
 import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.core.io.ClassPathResource
 import org.springframework.core.io.Resource as SpringResource
 import java.net.URI
 import java.time.Duration
@@ -65,7 +66,7 @@ data class IdpProperties(
     data class Seed(
         val enabled: Boolean = false,
         val clientSecret: String = "secret",
-        val userPassword: String = "password",
+        val usersFile: SpringResource = ClassPathResource("seed/users.json"),
     )
 
     data class Jwk(

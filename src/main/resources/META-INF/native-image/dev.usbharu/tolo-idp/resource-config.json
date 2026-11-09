@@ -6,6 +6,9 @@
       },
       {
         "pattern": "db/postgresql/.*\\.sql"
+      },
+      {
+        "pattern": "seed/.*\\.json"
       }
     ]
   }

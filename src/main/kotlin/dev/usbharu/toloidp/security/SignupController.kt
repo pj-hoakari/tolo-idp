@@ -4,14 +4,13 @@ import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.IdpScopes
-import dev.usbharu.toloidp.user.IdpUserDetailsManager
+import dev.usbharu.toloidp.user.UserAccountRules
+import dev.usbharu.toloidp.user.UserAlreadyExistsException
+import dev.usbharu.toloidp.user.UserRegistrationService
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
-import org.springframework.dao.DuplicateKeyException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.userdetails.User
-import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -26,8 +25,7 @@ import java.util.UUID
 @RestController
 @RequestMapping("/api")
 class SignupController(
-    private val users: IdpUserDetailsManager,
-    private val passwordEncoder: PasswordEncoder,
+    private val registration: UserRegistrationService,
     private val resourceParser: ResourceParser,
     private val challenges: LoginChallenges,
     private val registeredClientRepository: RegisteredClientRepository,
@@ -51,48 +49,41 @@ class SignupController(
         if (IdpScopes.TENANT_JOIN !in client.scopes) {
             reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "client_not_allowed")
         }
-        if (!USERNAME.matches(request.username)) {
+        if (!UserAccountRules.isValidUsername(request.username)) {
             reject(HttpStatus.BAD_REQUEST, "Invalid username", tenantId, "username_invalid")
         }
-        if (request.password.length < MIN_PASSWORD_LENGTH || request.password.toByteArray().size > MAX_PASSWORD_BYTES) {
+        if (!UserAccountRules.isValidPassword(request.password)) {
             reject(HttpStatus.BAD_REQUEST, "Invalid password", tenantId, "password_invalid")
         }
-        val id = UUID.randomUUID().toString()
         val loginId = UUID.randomUUID().toString()
-        val password = passwordEncoder.encode(request.password)
         val user = try {
             registrationTransaction.execute {
-                if (users.userExists(tenantId, request.username)) throw DuplicateKeyException(request.username)
-                users.createUser(
-                    tenantId,
-                    User.withUsername(request.username).password(password).roles("USER").build(),
-                    id,
-                )
-                if (!challenges.authenticate(request.challenge, loginId, id)) {
+                val created = registration.create(tenantId, request.username, request.password)
+                if (!challenges.authenticate(request.challenge, loginId, created.id)) {
                     reject(HttpStatus.BAD_REQUEST, "Invalid login challenge", tenantId, "login_challenge_invalid")
                 }
-                users.loadUserById(id)
+                created
             }!!
-        } catch (_: DuplicateKeyException) {
+        } catch (_: UserAlreadyExistsException) {
             reject(HttpStatus.CONFLICT, "Username is already registered", tenantId, "username_taken")
         }
         log.structuredInfo(
             "User registered",
             "event" to "user_registered",
-            "subject" to id,
+            "subject" to user.id,
             "tenant_id" to tenantId,
         )
         establishLoginSession(httpRequest, user, loginId, clock)
         log.structuredInfo(
             "Signup completed",
             "event" to "signup_completed",
-            "subject" to id,
+            "subject" to user.id,
             "tenant_id" to tenantId,
             "result" to "success",
         )
         return ResponseEntity.status(HttpStatus.CREATED).body(
             LoginResponse(
-                sub = id,
+                sub = user.id,
                 username = user.username,
                 tenantId = tenantId,
                 resource = resourceParser.tenantResource(tenantId),
@@ -113,9 +104,6 @@ class SignupController(
 
     companion object {
         private val log = LoggerFactory.getLogger(SignupController::class.java)
-        private val USERNAME = Regex("^[^\\s\\p{Cntrl}]{1,50}$")
-        private const val MIN_PASSWORD_LENGTH = 8
-        private const val MAX_PASSWORD_BYTES = 72
     }
 }
 

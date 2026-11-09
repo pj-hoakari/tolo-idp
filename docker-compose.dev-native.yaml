@@ -10,6 +10,9 @@ services:
       - "18080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: dev-native
+      TOLO_IDP_SEED_USERS_FILE: file:/data/seed/users.json
+    volumes:
+      - ./src/main/resources/seed:/data/seed:ro
     depends_on:
       db:
         condition: service_healthy

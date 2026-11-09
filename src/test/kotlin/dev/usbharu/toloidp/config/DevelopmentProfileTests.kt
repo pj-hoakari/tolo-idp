@@ -151,6 +151,7 @@ class DevelopmentProfileTests {
         assertEquals("classpath:db/postgresql", environment.getProperty("spring.flyway.locations"))
         assertEquals("http://localhost:3000/login", environment.getProperty("tolo-idp.login.page-url"))
         assertEquals("http://localhost:3000/auth/error", environment.getProperty("tolo-idp.login.error-page-url"))
+        assertEquals("classpath:seed/users.json", environment.getProperty("tolo-idp.seed.users-file"))
         assertEquals("tolo_idp_session", environment.getProperty("server.servlet.session.cookie.name"))
         assertEquals("false", environment.getProperty("server.servlet.session.cookie.secure"))
         assertEquals("true", environment.getProperty("server.servlet.session.cookie.http-only"))

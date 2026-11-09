@@ -307,6 +307,7 @@ tolo-idp:
   issuer: http://localhost:18080
   seed:
     enabled: true
+    users-file: classpath:seed/users.json
   jwk:
     allow-ephemeral: true
   login:

@@ -48,7 +48,7 @@ Open http://localhost:3000 and sign in with:
 - username: `user-123`
 - password: `password`
 
-The harness selects tenant `tenant-a` with the `resource` authorization parameter in `src/lib/auth.ts`.
+The harness selects tenant `0123456789abcdef` with the `resource` authorization parameter in `src/lib/auth.ts`.
 
 The example credentials are for local development only. `.env.local` and `sqlite.db` are excluded from Git.
 

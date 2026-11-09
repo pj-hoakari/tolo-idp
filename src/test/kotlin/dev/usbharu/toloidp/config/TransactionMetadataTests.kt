@@ -11,6 +11,7 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.RelationMembershipCacheStore
 import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
+import dev.usbharu.toloidp.user.UserRegistrationService
 import org.junit.jupiter.api.Test
 import org.springframework.boot.ApplicationArguments
 import org.springframework.security.core.Authentication
@@ -107,6 +108,14 @@ class TransactionMetadataTests {
             String::class.java,
         )
         assertReadWrite(SeedDataRunner::class.java, "run", ApplicationArguments::class.java)
+        assertReadWrite(
+            UserRegistrationService::class.java,
+            "create",
+            String::class.java,
+            String::class.java,
+            String::class.java,
+            String::class.java,
+        )
         assertReadWrite(
             RegisteredClientConfigurationSynchronizer::class.java,
             "run",

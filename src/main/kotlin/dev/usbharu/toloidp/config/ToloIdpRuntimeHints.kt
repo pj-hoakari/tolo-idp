@@ -49,6 +49,8 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
         BindingReflectionHintsRegistrar().registerReflectionHints(
             reflection,
             HttpRelationService.MembershipsResponse::class.java,
+            SeedUsersFile::class.java,
+            SeedUser::class.java,
             UsernamePasswordAuthenticationToken::class.java,
             SimpleGrantedAuthority::class.java,
             FactorGrantedAuthority::class.java,
@@ -95,5 +97,6 @@ class ToloIdpRuntimeHints : RuntimeHintsRegistrar {
         resources.registerPattern("db/migration/**")
         resources.registerPattern("db/postgresql")
         resources.registerPattern("db/postgresql/**")
+        resources.registerPattern("seed/**")
     }
 }

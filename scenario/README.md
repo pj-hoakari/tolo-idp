@@ -59,7 +59,7 @@ issuer は `http://localhost:18080` です。コンテナ内では `localhost` �
 
 ログイン API は Web のログイン画面（`http://localhost:3000/login`）から呼ぶ形で、`Origin` と `Referer` を付けます。RP の callback は seed client に登録済みの `http://127.0.0.1:8080/login/oauth2/code/client-123` を使用します。302 は追従しないため、callback サーバーは不要です。
 
-seed user `user-123`、client `client-123`、Introspection 用の client `service-gateway` と `relation-stub/sample.json` を使用します。seed の認証情報や client policy を変更した既存 DB では、シナリオの前提と一致させてください。テストのために既存 volume を削除する必要はありません。
+seed user `user-123`（`src/main/resources/seed/users.json`）、client `client-123`、Introspection 用の client `service-gateway` と `relation-stub/sample.json` を使用します。seed の認証情報や client policy を変更した既存 DB では、シナリオの前提と一致させてください。テストのために既存 volume を削除する必要はありません。
 
 ホストに同じバージョンの runn がある場合は、起動済みアプリに直接実行できます。
 
@@ -72,8 +72,8 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 `oidc-login.yml` は次のフローを検証します。
 
 1. Health と Discovery の issuer、endpoint、対応フローを確認する。
-2. tenant-a の resource、PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定した認可要求が、Web のログイン画面へ `challenge` だけを付けた302を返すことを確認する。
-3. `challenge` と資格情報で `/api/login` を呼び、tenant-a のログインと HttpOnly のセッション cookie を確認する。
+2. `0123456789abcdef` の resource、PKCE S256、nonce、state と `openid tenant.read events.read events.manage events.operate events.report` を指定した認可要求が、Web のログイン画面へ `challenge` だけを付けた302を返すことを確認する。
+3. `challenge` と資格情報で `/api/login` を呼び、`0123456789abcdef` のログインと HttpOnly のセッション cookie を確認する。
 4. `challenge` だけを付けた認可要求で元の要求を再開し、認可コード付きの302を確認する。
 5. client の Basic 認証と code verifier でコードを交換し、JWT access token と ID Token の発行を確認する。
 6. `service-gateway` の認証付き Introspection で tenant_access の claim を確認する。`client-123` の Introspection は `invalid_client` になることを確認する。

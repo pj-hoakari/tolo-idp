@@ -27,4 +27,16 @@ class ToloIdpRuntimeHintsTest {
             ).describedAs("reflection hint for %s", type.name).accepts(hints)
         }
     }
+
+    @Test
+    fun `registers reflection and resource hints for the seed users file`() {
+        listOf(SeedUsersFile::class.java, SeedUser::class.java).forEach { type ->
+            assertThat(
+                RuntimeHintsPredicates.reflection()
+                    .onType(type)
+                    .withMemberCategory(MemberCategory.INVOKE_DECLARED_CONSTRUCTORS),
+            ).describedAs("reflection hint for %s", type.name).accepts(hints)
+        }
+        assertThat(RuntimeHintsPredicates.resource().forResource("seed/users.json")).accepts(hints)
+    }
 }
