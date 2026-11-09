@@ -18,7 +18,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Resolve release version
         id: version
         uses: pj-hoakari/actions/resolve-version@d619552a3e89628f83a45f57ac80e9e9c9590859
@@ -47,7 +47,7 @@ jobs:
       REPOSITORY: ${{ github.repository }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Revalidate release version before publishing
         uses: pj-hoakari/actions/resolve-version@d619552a3e89628f83a45f57ac80e9e9c9590859

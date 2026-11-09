@@ -39,7 +39,7 @@ jobs:
       CI_PRODUCTION_KEY_DIRECTORY: ${{ github.workspace }}/build/ci-key
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Java
         uses: actions/setup-java@v4
