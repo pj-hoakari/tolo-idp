@@ -203,10 +203,13 @@ open class SpecTokenExchangeAuthenticationProvider(
                 fail("invalid_grant", "event_not_in_tenant")
             }
             val subjectScopes = splitScope(claims["scope"])
+            var issuedScopes = requestedScopes
             try {
-                scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
-                scopePolicy.requireEventAccessScopes(requestedScopes)
-                scopePolicy.requireAllowed(requestedScopes, subjectScopes, "scope_exceeds_subject_token")
+                if (requestedScopes.isNotEmpty()) {
+                    scopePolicy.requireAllowed(requestedScopes, policy.allowedScopes, "scope_not_allowed_for_client")
+                    scopePolicy.requireEventAccessScopes(requestedScopes)
+                    scopePolicy.requireAllowed(requestedScopes, subjectScopes, "scope_exceeds_subject_token")
+                }
                 val membership = relationService.getMembership(eventResource.tenantId, users.requireTenantUser(eventResource.tenantId, subject).id, eventResource.eventId)
                 log.structuredDebug(
                     "Relation membership lookup completed",
@@ -218,7 +221,29 @@ open class SpecTokenExchangeAuthenticationProvider(
                 )
                 val eventMembership = membership.events.find { it.eventId == eventResource.eventId }
                     ?: fail("invalid_grant", "user_not_event_member")
-                scopePolicy.requireAllowed(requestedScopes, scopePolicy.allowedScopes(eventMembership.role), "scope_not_allowed_for_role")
+                // scope 省略時は event role・subject token・client 上限の積を既定 scope とする（spec.md 11.2）。
+                if (requestedScopes.isEmpty()) {
+                    val defaultScopes = scopePolicy.defaultEventAccessScopes(
+                        subjectScopes,
+                        eventMembership.role,
+                        policy.allowedScopes,
+                    )
+                    if (defaultScopes.isEmpty()) {
+                        throw ScopeNotAllowedException("scope_default_empty")
+                    }
+                    issuedScopes = defaultScopes
+                    log.structuredDebug(
+                        "Token Exchange scope defaulted to the role, subject token, and client intersection",
+                        "event" to "token_exchange_scope_defaulted",
+                        "client_id" to registeredClient.clientId,
+                        "tenant_id" to eventResource.tenantId,
+                        "event_id" to eventResource.eventId,
+                        "subject_scope_count" to subjectScopes.size,
+                        "scope_count" to issuedScopes.size,
+                    )
+                } else {
+                    scopePolicy.requireAllowed(requestedScopes, scopePolicy.allowedScopes(eventMembership.role), "scope_not_allowed_for_role")
+                }
             } catch (ex: ScopeNotAllowedException) {
                 log.structuredWarn(
                     "Token Exchange scope validation failed",
@@ -228,6 +253,7 @@ open class SpecTokenExchangeAuthenticationProvider(
                     "tenant_id" to eventResource.tenantId,
                     "event_id" to eventResource.eventId,
                     "scope_count" to requestedScopes.size,
+                    "subject_scope_count" to subjectScopes.size,
                     "failure_reason" to ex.reason,
                 )
                 val code = if (ex.reason == "scope_exceeds_subject_token") "invalid_grant" else "invalid_scope"
@@ -253,19 +279,19 @@ open class SpecTokenExchangeAuthenticationProvider(
                 .authorization(subjectAuthorization)
                 .principal(principal)
                 .authorizationServerContext(AuthorizationServerContextHolder.getContext())
-                .authorizedScopes(requestedScopes)
+                .authorizedScopes(issuedScopes)
                 .tokenType(OAuth2TokenType.ACCESS_TOKEN)
                 .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
                 .authorizationGrant(tokenExchange)
                 .build()
             val generatedAccessToken = tokenGenerator.generate(tokenContext)
                 ?: fail("server_error", "token_generation_failed")
-            val accessToken = toAccessToken(registeredClient, generatedAccessToken, requestedScopes)
+            val accessToken = toAccessToken(registeredClient, generatedAccessToken, issuedScopes)
 
             val authorizationBuilder = OAuth2Authorization.withRegisteredClient(registeredClient)
                 .principalName(subjectAuthorization.principalName)
                 .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
-                .authorizedScopes(requestedScopes)
+                .authorizedScopes(issuedScopes)
                 .attribute(java.security.Principal::class.java.name, principal)
             authorizationBuilder.token(accessToken) {
                 if (generatedAccessToken is Jwt) {
@@ -277,7 +303,7 @@ open class SpecTokenExchangeAuthenticationProvider(
             authorizationService.save(authorizationBuilder.build())
             auditService.record(
                 audit.copy(
-                    issuedScope = requestedScopes.toList(),
+                    issuedScope = issuedScopes.toList(),
                     result = "success",
                     failureReason = null,
                     issuedJti = (generatedAccessToken as? Jwt)?.id,
@@ -289,7 +315,7 @@ open class SpecTokenExchangeAuthenticationProvider(
                 "client_id" to registeredClient.clientId,
                 "tenant_id" to audit.tenantId,
                 "event_id" to audit.eventId,
-                "scope_count" to requestedScopes.size,
+                "scope_count" to issuedScopes.size,
                 "result" to "success",
             )
             log.structuredTrace("Token Exchange authentication completed", "event" to "token_exchange_authentication_completed", "client_id" to registeredClient.clientId, "result" to "success")

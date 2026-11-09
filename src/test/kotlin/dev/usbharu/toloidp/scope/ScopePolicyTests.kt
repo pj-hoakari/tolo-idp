@@ -155,6 +155,38 @@ class ScopePolicyTests {
     }
 
     @Test
+    fun defaultEventAccessScopesIsTheIntersectionOfRoleSubjectAndClient() {
+        assertEquals(
+            setOf("tenant.read", "events.read"),
+            policy.defaultEventAccessScopes(
+                setOf("openid", "tenant.read", "tenant.write", "events.read", "events.stream"),
+                RelationRole.STAFF,
+                setOf("tenant.read", "tenant.write", "events.read", "events.report"),
+            ),
+        )
+    }
+
+    @Test
+    fun defaultEventAccessScopesExcludesScopesEventAccessDoesNotCarry() {
+        assertEquals(
+            setOf("events.read"),
+            policy.defaultEventAccessScopes(
+                setOf("openid", "profile", "tenant.join", "events.stream", "events.read"),
+                RelationRole.OWNER,
+                IdpScopes.SUPPORTED,
+            ),
+        )
+    }
+
+    @Test
+    fun defaultEventAccessScopesIsEmptyWhenSubjectHasNoEventScope() {
+        assertEquals(
+            emptySet(),
+            policy.defaultEventAccessScopes(setOf("openid"), RelationRole.OWNER, IdpScopes.SUPPORTED),
+        )
+    }
+
+    @Test
     fun identityScopeIsNotSubjectToRoleCheck() {
         policy.requireTenantAccessScopes(setOf("openid", "tenant.read"), RelationRole.STAFF, "scope_not_allowed_for_role")
         policy.requireTenantAccessScopes(setOf("openid", "profile"), RelationRole.STAFF, "scope_not_allowed_for_role")
