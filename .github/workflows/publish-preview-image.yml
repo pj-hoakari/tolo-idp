@@ -28,7 +28,7 @@ jobs:
     steps:
       - name: Resolve pull request head
         id: pr
-        uses: pj-hoakari/actions/pull-request-head@a753f5b7b0efae839bd92d283fca39401471a4b2 # v20261020.0.0
+        uses: pj-hoakari/actions/pull-request-head@92b346752a66ad19a36fbc929191603f72e00fe9 # v20261020.0.2
         with:
           number: ${{ inputs.pull-request }}
 
