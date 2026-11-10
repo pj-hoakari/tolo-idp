@@ -42,7 +42,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("com.google.cloud:spring-cloud-gcp-starter-logging")
-    implementation("com.bucket4j:bucket4j_jdk17-core:8.19.0")
+    implementation("com.bucket4j:bucket4j_jdk17-core:8.22.0")
     implementation("com.bucket4j:bucket4j_jdk17-lettuce:8.19.0")
     implementation("io.lettuce:lettuce-core")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
