@@ -31,7 +31,7 @@ repositories {
 }
 
 dependencies {
-    implementation(platform("com.google.cloud:spring-cloud-gcp-dependencies:8.0.4"))
+    implementation(platform("com.google.cloud:spring-cloud-gcp-dependencies:8.3.1"))
     developmentOnly("org.springframework.boot:spring-boot-h2console")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
