@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
 
   runn:
-    image: ghcr.io/k1low/runn:v1.10.0-slim
+    image: ghcr.io/k1low/runn:v1.10.0-slim@sha256:834cfff7353bf0395faca45c9baa42a3f93920421553ea41f9ea47c3c5952778
     profiles:
       - scenario
     # Bypass the image's shell entrypoint so the host rule remains one argument.
@@ -42,7 +42,7 @@ services:
 
   relation-stub:
     # Use the /users/{userId}/memberships API contract.
-    image: ghcr.io/pj-hoakari/tolo-relation-stub:0.2
+    image: ghcr.io/pj-hoakari/tolo-relation-stub:0.2@sha256:3f3809c45568f8a61c97ac516820c42ca1663f7a705c615d5b13879beadec1e8
     ports:
       - "18081:8080"
     environment:
@@ -53,7 +53,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
     ports:
       - "15432:5432"
     environment:
@@ -71,7 +71,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "16379:6379"
