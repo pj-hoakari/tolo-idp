@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
     environment:
       POSTGRES_DB: tolo_idp
       POSTGRES_USER: ${TOLO_IDP_POSTGRES_USER:-tolo_idp}
@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-prod-data:/data
@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
 
   runn:
-    image: ghcr.io/k1low/runn:v1.10.0-slim
+    image: ghcr.io/k1low/runn:v1.10.0-slim@sha256:834cfff7353bf0395faca45c9baa42a3f93920421553ea41f9ea47c3c5952778
     profiles:
       - scenario
     entrypoint: ["runn"]
