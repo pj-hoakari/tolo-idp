@@ -324,7 +324,7 @@ open class RegisteredClientConfigurationSynchronizer(
         jdbcTemplate.queryForList(
             "SELECT client_id FROM oauth2_registered_client WHERE configuration_managed = true",
             String::class.java,
-        )
+        ).map { requireNotNull(it) { "Stored client_id must not be null" } }
 
     private data class DesiredClient(
         val registrationId: String,
