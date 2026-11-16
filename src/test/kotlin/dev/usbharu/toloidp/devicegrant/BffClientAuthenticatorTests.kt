@@ -3,6 +3,7 @@ package dev.usbharu.toloidp.devicegrant
 import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.config.IdpProperties
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -19,6 +20,7 @@ import java.util.Base64
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
+@Tag("unit")
 class BffClientAuthenticatorTests {
     private val now = Instant.parse("2026-11-04T00:00:00Z")
     private val header = "Basic " + Base64.getEncoder().encodeToString("console-ui:secret".toByteArray())

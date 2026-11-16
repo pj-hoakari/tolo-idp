@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import org.junit.jupiter.api.Tag
 import com.nimbusds.jose.jwk.JWKMatcher
 import com.nimbusds.jose.jwk.JWKSelector
 import kotlin.io.path.writeText
@@ -14,6 +15,7 @@ import java.util.Base64
 import kotlin.io.path.createTempFile
 import kotlin.io.path.createTempDirectory
 
+@Tag("unit")
 class SecurityConfigJwkTests {
     private val securityConfig = SecurityConfig()
 

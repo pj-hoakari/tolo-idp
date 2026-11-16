@@ -2,11 +2,13 @@ package dev.usbharu.toloidp.config
 
 import dev.usbharu.toloidp.relation.HttpRelationService
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.aot.hint.MemberCategory
 import org.springframework.aot.hint.RuntimeHints
 import org.springframework.aot.hint.predicate.RuntimeHintsPredicates
 
+@Tag("unit")
 class ToloIdpRuntimeHintsTest {
 
     private val hints = RuntimeHints().also { ToloIdpRuntimeHints().registerHints(it, null) }
