@@ -156,8 +156,9 @@ class TokenExchangeEndpointTests(
         assertEquals("tenant-a", jwt.claims["tenant_id"])
         assertEquals("event-1", jwt.claims["event_id"])
         assertEquals("https://api.example.com/tenants/tenant-a/events/event-1", jwt.claims["resource"])
-        assertEquals(1, jwt.audience.size)
-        assertEquals(listOf("backend-api"), jwt.audience)
+        val audience = requireNotNull(jwt.audience)
+        assertEquals(1, audience.size)
+        assertEquals(listOf("backend-api"), audience)
         assertEquals("events.read", jwt.claims["scope"])
         assertFalse(jwt.claims.containsKey("role"))
         assertFalse(jwt.claims.containsKey("tenant_role"))
@@ -1085,7 +1086,7 @@ class TokenExchangeEndpointTests(
             registeredClientRepository.save(
                 RegisteredClient.withId(UUID.randomUUID().toString())
                     .clientId(PUBLIC_POLICY_CLIENT_ID)
-                    .clientSecret(passwordEncoder.encode(PUBLIC_POLICY_CLIENT_SECRET))
+                    .clientSecret(passwordEncoder.encode(PUBLIC_POLICY_CLIENT_SECRET)!!)
                     .clientName("Public token exchange test client")
                     .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                     .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
@@ -1113,7 +1114,7 @@ class TokenExchangeEndpointTests(
             registeredClientRepository.save(
                 RegisteredClient.withId(UUID.randomUUID().toString())
                     .clientId(OTHER_CONFIDENTIAL_CLIENT_ID)
-                    .clientSecret(passwordEncoder.encode(OTHER_CONFIDENTIAL_CLIENT_SECRET))
+                    .clientSecret(passwordEncoder.encode(OTHER_CONFIDENTIAL_CLIENT_SECRET)!!)
                     .clientName("Other confidential token exchange test client")
                     .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                     .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)
@@ -1141,7 +1142,7 @@ class TokenExchangeEndpointTests(
             registeredClientRepository.save(
                 RegisteredClient.withId(UUID.randomUUID().toString())
                     .clientId(EDGE_PAGE_CLIENT_ID)
-                    .clientSecret(passwordEncoder.encode(EDGE_PAGE_CLIENT_SECRET))
+                    .clientSecret(passwordEncoder.encode(EDGE_PAGE_CLIENT_SECRET)!!)
                     .clientName("Observation page token exchange test client")
                     .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                     .authorizationGrantType(AuthorizationGrantType.TOKEN_EXCHANGE)

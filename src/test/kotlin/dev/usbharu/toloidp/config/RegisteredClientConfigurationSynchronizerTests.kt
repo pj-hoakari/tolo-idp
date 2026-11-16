@@ -79,7 +79,7 @@ class RegisteredClientConfigurationSynchronizerTests(
     @Test
     fun keepsExistingIdAndReplacesRedirectUrisAndScopes() {
         val existingId = UUID.randomUUID().toString()
-        val existingSecret = passwordEncoder.encode("legacy-secret")
+        val existingSecret = passwordEncoder.encode("legacy-secret")!!
         registeredClientRepository.save(
             RegisteredClient.withId(existingId)
                 .clientId("legacy-client")
@@ -233,7 +233,7 @@ class RegisteredClientConfigurationSynchronizerTests(
         registeredClientRepository.save(
             RegisteredClient.withId(UUID.randomUUID().toString())
                 .clientId("runtime-client")
-                .clientSecret(passwordEncoder.encode("runtime-secret"))
+                .clientSecret(passwordEncoder.encode("runtime-secret")!!)
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
                 .scope("openid")
@@ -302,7 +302,7 @@ class RegisteredClientConfigurationSynchronizerTests(
         registeredClientRepository.save(
             RegisteredClient.withId("taken-id")
                 .clientId("existing-client")
-                .clientSecret(passwordEncoder.encode("existing-secret"))
+                .clientSecret(passwordEncoder.encode("existing-secret")!!)
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
                 .scope("openid")

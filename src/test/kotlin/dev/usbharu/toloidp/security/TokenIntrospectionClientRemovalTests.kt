@@ -198,7 +198,7 @@ class TokenIntrospectionClientRemovalTests(
     private fun registeredClient(clientId: String): RegisteredClient =
         RegisteredClient.withId(UUID.randomUUID().toString())
             .clientId(clientId)
-            .clientSecret(passwordEncoder.encode("dummy-secret"))
+            .clientSecret(passwordEncoder.encode("dummy-secret")!!)
             .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
             .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
             .scope("tenant.read")

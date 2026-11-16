@@ -32,9 +32,20 @@ fun loginWithChallenge(
 ): MockHttpServletRequestBuilder {
     val request = post("/api/login").contentType(MediaType.APPLICATION_JSON)
         .content("""{"username":"$username","password":"$password","challenge":"$challenge"}""")
-    if (session != null) request.session(session)
+    if (session != null) request.withExistingSession(session)
     return request
 }
+
+/**
+ * MockHttpServletRequest no longer treats a programmatically attached session as a
+ * session supplied by the client (Spring Framework 7.0.8+). Mark the requested session
+ * ID so the container-equivalent session fixation check sees a browser cookie.
+ */
+fun MockHttpServletRequestBuilder.withExistingSession(session: MockHttpSession): MockHttpServletRequestBuilder =
+    session(session).with { request ->
+        request.setRequestedSessionId(session.id)
+        request
+    }
 
 fun MockMvc.loginWithChallengeSession(
     challenge: String,

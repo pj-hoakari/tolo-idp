@@ -49,7 +49,7 @@ class RegistrationFlowTests(
         val challenge = mvc.challengeFrom(authorize())
         val preSignup = MockHttpSession()
         val originalSessionId = preSignup.id
-        val signup = mvc.perform(signupRequest(challenge, username, extra = ""","tenantId":"tenant-a"""").session(preSignup))
+        val signup = mvc.perform(signupRequest(challenge, username, extra = ""","tenantId":"tenant-a"""").withExistingSession(preSignup))
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.username").value(username))
             .andExpect(jsonPath("$.tenantId").value(NEW_TENANT))

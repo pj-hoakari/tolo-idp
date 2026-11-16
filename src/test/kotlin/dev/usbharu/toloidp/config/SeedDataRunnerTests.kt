@@ -308,7 +308,7 @@ class SeedDataRunnerTests(
     fun doesNotModifyRegisteredClients() {
         val client = RegisteredClient.withId(UUID.randomUUID().toString())
             .clientId("client-123")
-            .clientSecret(passwordEncoder.encode("secret"))
+            .clientSecret(passwordEncoder.encode("secret")!!)
             .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
             .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .redirectUri("https://custom.example.com/callback")

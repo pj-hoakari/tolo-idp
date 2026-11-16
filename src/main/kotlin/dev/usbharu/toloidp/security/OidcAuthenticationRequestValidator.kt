@@ -64,7 +64,7 @@ class OidcAuthenticationRequestValidator(private val hintDecoder: JwtDecoder, pr
     private fun decodeHint(value: String, client: RegisteredClient): Jwt {
         val hint = try { hintDecoder.decode(value) } catch (_: JwtException) { reject("invalid_request", "id_token_hint") }
         if (hint.subject.isNullOrBlank() || hint.issuedAt == null || hint.expiresAt == null ||
-            client.clientId !in hint.audience || hint.hasClaim("token_use")
+            hint.audience?.contains(client.clientId) != true || hint.hasClaim("token_use")
         ) reject("invalid_request", "id_token_hint")
         return hint
     }

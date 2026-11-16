@@ -16,6 +16,7 @@ import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
 import dev.usbharu.toloidp.scope.ScopePolicy
 import org.slf4j.LoggerFactory
+import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
@@ -50,23 +51,24 @@ class ToloJwtCustomizer(
      * access token だけを対象にし、grant type ごとの claim 付与処理へ委譲する。
      */
     override fun customize(context: JwtEncodingContext) {
+        val grantType = context.requireAuthorizationGrantType()
         if (context.tokenType != OAuth2TokenType.ACCESS_TOKEN) {
             if (context.tokenType.value == "id_token") {
-                if (context.authorizationGrantType == AuthorizationGrantType.AUTHORIZATION_CODE) {
+                if (grantType == AuthorizationGrantType.AUTHORIZATION_CODE) {
                     val request = context.authorization
                         ?.getAttribute<OAuth2AuthorizationRequest>(OAuth2AuthorizationRequest::class.java.name)
                     val nonce = request?.additionalParameters?.get("nonce") as? String
                     // Nonce is opaque: the framework's hasText check drops whitespace values.
                     if (!nonce.isNullOrEmpty()) context.claims.claim("nonce", nonce)
                 }
-                val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
+                val principal = context.requirePrincipal()
                 OidcAuthenticationRequestValidator.authenticationTime(principal)?.let {
                     context.claims.claim("auth_time", java.util.Date.from(Instant.ofEpochSecond(it)))
                 }
             }
             return
         }
-        when (context.authorizationGrantType) {
+        when (grantType) {
             AuthorizationGrantType.AUTHORIZATION_CODE -> customizeTenantAccess(context)
             AuthorizationGrantType.REFRESH_TOKEN -> {
                 if (deviceGrantService.findByAuthorizationId(context.authorization?.id) != null) {
@@ -133,10 +135,11 @@ class ToloJwtCustomizer(
         )
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throw OAuth2AuthenticationException("invalid_request")
-        if (context.authorizationGrantType.value !in policy.allowedGrantTypes) {
+        val grantType = context.requireAuthorizationGrantType()
+        if (grantType.value !in policy.allowedGrantTypes) {
             throw OAuth2AuthenticationException(OAuth2Error("unauthorized_client"))
         }
-        if (context.authorizationGrantType == AuthorizationGrantType.REFRESH_TOKEN &&
+        if (grantType == AuthorizationGrantType.REFRESH_TOKEN &&
             policy.clientType != ClientType.CONFIDENTIAL
         ) {
             throw OAuth2AuthenticationException(OAuth2Error("unauthorized_client"))
@@ -180,7 +183,7 @@ class ToloJwtCustomizer(
         }
 
         try {
-            val principal = context.getPrincipal<org.springframework.security.core.Authentication>()
+            val principal = context.requirePrincipal()
             val membership = relationService.getMembership(tenantResource.tenantId, users.requireTenantUser(tenantResource.tenantId, principal.name).id)
             log.structuredDebug(
                 "Tenant access membership loaded",
@@ -246,7 +249,7 @@ class ToloJwtCustomizer(
         policy: ClientPolicy,
     ) {
         val clientId = context.registeredClient.clientId
-        val subject = context.getPrincipal<org.springframework.security.core.Authentication>().name
+        val subject = context.requirePrincipal().name
         if (IdpScopes.TENANT_JOIN !in policy.allowedScopes) {
             log.structuredWarn(
                 "Registration JWT customization rejected",
@@ -311,6 +314,7 @@ class ToloJwtCustomizer(
             "scope_count" to context.authorizedScopes.size,
         )
         val tokenExchange = context.getAuthorizationGrant<OAuth2TokenExchangeAuthenticationToken>()
+            ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_request"))
         val policy = ClientPolicy.from(context.registeredClient)
             ?: throw OAuth2AuthenticationException("invalid_request")
         val resource = tokenExchange.resources.singleOrNull()
@@ -367,6 +371,12 @@ class ToloJwtCustomizer(
             "event_id" to eventResource.eventId,
         )
     }
+
+    private fun JwtEncodingContext.requirePrincipal(): Authentication =
+        getPrincipal<Authentication>() ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_request"))
+
+    private fun JwtEncodingContext.requireAuthorizationGrantType(): AuthorizationGrantType =
+        authorizationGrantType ?: throw OAuth2AuthenticationException(OAuth2Error("invalid_request"))
 
     companion object {
         private val log = LoggerFactory.getLogger(ToloJwtCustomizer::class.java)

@@ -433,7 +433,7 @@ class TokenRevocationEndpointTests(
             registeredClientRepository.save(
                 RegisteredClient.withId(UUID.randomUUID().toString())
                     .clientId(clientId)
-                    .clientSecret(passwordEncoder.encode(clientSecret))
+                    .clientSecret(passwordEncoder.encode(clientSecret)!!)
                     .clientName("$clientId revocation test client")
                     .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)

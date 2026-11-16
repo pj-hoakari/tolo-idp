@@ -354,7 +354,7 @@ class TokenIntrospectionEndpointTests(
             registeredClientRepository.save(
                 RegisteredClient.withId(UUID.randomUUID().toString())
                     .clientId(PUBLIC_POLICY_CLIENT_ID)
-                    .clientSecret(passwordEncoder.encode(PUBLIC_POLICY_CLIENT_SECRET))
+                    .clientSecret(passwordEncoder.encode(PUBLIC_POLICY_CLIENT_SECRET)!!)
                     .clientName("Public policy test client")
                     .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
