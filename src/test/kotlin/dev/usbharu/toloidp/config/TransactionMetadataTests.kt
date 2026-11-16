@@ -12,6 +12,7 @@ import dev.usbharu.toloidp.relation.RelationMembershipCacheStore
 import dev.usbharu.toloidp.security.JtiDenylistRepository
 import dev.usbharu.toloidp.security.SpecTokenExchangeAuthenticationProvider
 import dev.usbharu.toloidp.user.UserRegistrationService
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.boot.ApplicationArguments
 import org.springframework.security.core.Authentication
@@ -21,6 +22,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class TransactionMetadataTests {
     private val transactionAttributes = AnnotationTransactionAttributeSource()
 

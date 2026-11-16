@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
@@ -16,6 +17,7 @@ import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class DeviceAuthorizationResponseHandlerTests {
     private val now = Instant.parse("2026-11-13T00:00:00Z")
     private val client = RegisteredClient.withId("client-id")

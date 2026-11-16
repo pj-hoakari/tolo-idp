@@ -77,7 +77,11 @@ kotlin {
 }
 
 tasks.withType<Test> {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (providers.gradleProperty("unitOnly").isPresent) {
+            includeTags("unit")
+        }
+    }
 }
 
 tasks.withType<ProcessAot>().configureEach {

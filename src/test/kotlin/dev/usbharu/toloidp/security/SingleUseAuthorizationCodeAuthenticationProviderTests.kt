@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
@@ -23,6 +24,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class SingleUseAuthorizationCodeAuthenticationProviderTests {
     private val clock = Clock.fixed(Instant.parse("2026-11-04T00:00:00Z"), ZoneOffset.UTC)
     private val principal = UsernamePasswordAuthenticationToken.authenticated("client-123", "n/a", emptyList())

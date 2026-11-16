@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.oauth2.core.AuthorizationGrantType
@@ -10,6 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
+@Tag("unit")
 class DeviceFlowPublicClientAuthenticationConverterTests {
     private val converter = DeviceFlowPublicClientAuthenticationConverter(
         deviceAuthorizationEndpoint = DEVICE_AUTHORIZATION_ENDPOINT,

@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
@@ -15,6 +16,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class DeviceFlowPublicClientAuthenticationProviderTests {
     private val publicClient = RegisteredClient.withId("public-id")
         .clientId("public-client")
