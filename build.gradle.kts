@@ -2,8 +2,8 @@ import org.springframework.boot.gradle.tasks.aot.ProcessAot
 import org.springframework.boot.gradle.tasks.bundling.BootBuildImage
 
 plugins {
-    kotlin("jvm") version "2.2.21"
-    kotlin("plugin.spring") version "2.2.21"
+    kotlin("jvm") version "2.4.21"
+    kotlin("plugin.spring") version "2.4.21"
     id("org.springframework.boot") version "4.0.6"
     id("io.spring.dependency-management") version "1.1.7"
     id("org.graalvm.buildtools.native") version "1.1.18" apply false
