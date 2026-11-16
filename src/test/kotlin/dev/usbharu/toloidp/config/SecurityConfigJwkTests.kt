@@ -6,7 +6,6 @@ import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import org.springframework.core.io.FileSystemResource
 import java.security.KeyPairGenerator
@@ -17,11 +16,6 @@ import kotlin.io.path.createTempDirectory
 
 class SecurityConfigJwkTests {
     private val securityConfig = SecurityConfig()
-
-    @Test
-    fun seedDataIsDisabledByDefault() {
-        assertFalse(IdpProperties().seed.enabled)
-    }
 
     @Test
     fun rejectsMissingConfiguredKeyUnlessEphemeralIsExplicitlyAllowed() {

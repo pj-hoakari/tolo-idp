@@ -21,6 +21,49 @@ jobs:
       - name: Lint GitHub Actions workflows
         uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
 
+  unit-test:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: "24"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+      - name: Run unit tests and coverage gate
+        run: ./gradlew test koverVerify --no-daemon
+      - name: Verify PostgreSQL device authorization tests
+        run: |
+          result=build/test-results/test/TEST-dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests.xml
+          test -f "$result"
+          if grep -q '<skipped' "$result"; then
+            echo "PostgreSQL device authorization tests were skipped" >&2
+            exit 1
+          fi
+          grep -Eq 'tests="[1-9][0-9]*"' "$result"
+
   scenario:
-    needs: lint
+    needs: [lint, unit-test]
     uses: ./.github/workflows/build-test.yml
+
+  ci-status:
+    name: ci status
+    if: always()
+    needs: [lint, unit-test, scenario]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify required jobs succeeded
+        if: needs.lint.result != 'success' || needs.unit-test.result != 'success' || needs.scenario.result != 'success'
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          UNIT_TEST_RESULT: ${{ needs.unit-test.result }}
+          SCENARIO_RESULT: ${{ needs.scenario.result }}
+        run: |
+          echo "lint=$LINT_RESULT"
+          echo "unit-test=$UNIT_TEST_RESULT"
+          echo "scenario=$SCENARIO_RESULT"
+          exit 1

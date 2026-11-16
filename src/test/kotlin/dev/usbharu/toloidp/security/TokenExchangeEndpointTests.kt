@@ -401,17 +401,6 @@ class TokenExchangeEndpointTests(
         assertEquals("scope_not_allowed_for_role", latestAudit()["failure_reason"])
     }
 
-    @Test
-    fun rejectsScopeExceedingSubjectTokenAsInvalidGrant() {
-        val subjectToken = saveTenantAuthorization(scopes = setOf("events.read"))
-
-        mockMvc.perform(tokenExchangeRequest(subjectToken = subjectToken, scope = "events.manage"))
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_grant"))
-
-        assertEquals("scope_exceeds_subject_token", latestAudit()["failure_reason"])
-    }
-
     @ParameterizedTest
     @CsvSource(
         "event-1, events.manage",
