@@ -50,6 +50,8 @@ import java.security.Principal
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import kotlin.test.assertContains
@@ -1185,10 +1187,25 @@ class TokenExchangeEndpointTests(
                 exchange.sendResponseHeaders(200, body.size.toLong())
                 exchange.responseBody.use { it.write(body) }
             }
-            Thread(this::start).apply {
+            // Start on a daemon thread so test and AOT JVMs can exit. Do not use a
+            // lambda hosted by this class: Kotlin 2.4 hidden classes require the host
+            // class to be initialized, and joining such a thread from the class
+            // initializer deadlocks.
+            val ready = CountDownLatch(1)
+            Thread(RelationServerStarter(this, ready)).apply {
                 isDaemon = true
                 start()
-                join()
+            }
+            check(ready.await(30, TimeUnit.SECONDS)) { "Relation stub did not start" }
+        }
+
+        private class RelationServerStarter(
+            private val server: HttpServer,
+            private val ready: CountDownLatch,
+        ) : Runnable {
+            override fun run() {
+                server.start()
+                ready.countDown()
             }
         }
 
