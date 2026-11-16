@@ -76,8 +76,56 @@ kotlin {
     }
 }
 
+// Classes annotated with @SpringBootTest. Keep this list in sync when adding a new
+// Spring-context test. `-PunitOnly` excludes them so the fast CI unit-test job does not
+// start a context or run database-backed integration tests.
+val springContextTests = setOf(
+    "dev.usbharu.toloidp.ToloIdpApplicationTests",
+    "dev.usbharu.toloidp.audit.AuditServiceTests",
+    "dev.usbharu.toloidp.client.ClientPolicySettingsTests",
+    "dev.usbharu.toloidp.config.ClientPolicyConfigurationTests",
+    "dev.usbharu.toloidp.config.CorsConfigTests",
+    "dev.usbharu.toloidp.config.RegisteredClientConfigurationSynchronizerTests",
+    "dev.usbharu.toloidp.config.SeedDataRunnerTests",
+    "dev.usbharu.toloidp.ratelimit.ForwardedHeadersFromInternalProxyTests",
+    "dev.usbharu.toloidp.ratelimit.ForwardedHeadersFromUntrustedPeerTests",
+    "dev.usbharu.toloidp.ratelimit.RateLimitFilterTests",
+    "dev.usbharu.toloidp.ratelimit.RateLimitIdentityExtractorTests",
+    "dev.usbharu.toloidp.relation.CachedRelationServiceTests",
+    "dev.usbharu.toloidp.relation.RelationCacheControllerSecurityTests",
+    "dev.usbharu.toloidp.relation.RelationLookupTimeoutTests",
+    "dev.usbharu.toloidp.security.AuthorizationRequestParameterSplitTests",
+    "dev.usbharu.toloidp.security.AuthorizationServerSurfaceTests",
+    "dev.usbharu.toloidp.security.ConfiguredClientTokenFlowTests",
+    "dev.usbharu.toloidp.security.DeviceAuthorizationFlowTests",
+    "dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests",
+    "dev.usbharu.toloidp.security.JdbcCodeClaimStoreTests",
+    "dev.usbharu.toloidp.security.LoginChallengeFlowTests",
+    "dev.usbharu.toloidp.security.LoginChallengesTests",
+    "dev.usbharu.toloidp.security.LoginControllerTests",
+    "dev.usbharu.toloidp.security.OidcRequestContractTests",
+    "dev.usbharu.toloidp.security.RefreshAwareAuthorizationServiceTests",
+    "dev.usbharu.toloidp.security.RegistrationFlowTests",
+    "dev.usbharu.toloidp.security.RpInitiatedLogoutTests",
+    "dev.usbharu.toloidp.security.SecurityComponentTests",
+    "dev.usbharu.toloidp.security.SessionCookieTests",
+    "dev.usbharu.toloidp.security.SignupConcurrencyTests",
+    "dev.usbharu.toloidp.security.TenantScopedUserFlowTests",
+    "dev.usbharu.toloidp.security.TokenExchangeEndpointTests",
+    "dev.usbharu.toloidp.security.TokenIntrospectionClientRemovalTests",
+    "dev.usbharu.toloidp.security.TokenIntrospectionEndpointTests",
+    "dev.usbharu.toloidp.security.TokenRevocationEndpointTests",
+    "dev.usbharu.toloidp.user.IdpUserDetailsManagerTests",
+    "dev.usbharu.toloidp.user.UserRegistrationServiceTests",
+)
+
 tasks.withType<Test> {
     useJUnitPlatform()
+    if (providers.gradleProperty("unitOnly").isPresent) {
+        filter {
+            springContextTests.forEach { excludeTestsMatching(it) }
+        }
+    }
 }
 
 tasks.withType<ProcessAot>().configureEach {
