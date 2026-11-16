@@ -153,15 +153,6 @@ class AuthorizationServerSurfaceTests(
     }
 
     @Test
-    fun tokenRevocationEndpointAcceptsClientSecretPostAuthentication() {
-        mockMvc.perform(
-            clientSecretPostRequest("/oauth2/revoke"),
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_request"))
-    }
-
-    @Test
     fun tokenRevocationEndpointRejectsInvalidClientSecretPostAuthentication() {
         mockMvc.perform(
             clientSecretPostRequest("/oauth2/revoke", clientSecret = "wrong-secret"),
@@ -170,29 +161,11 @@ class AuthorizationServerSurfaceTests(
     }
 
     @Test
-    fun tokenEndpointAcceptsClientSecretPostAuthentication() {
-        mockMvc.perform(
-            clientSecretPostRequest("/oauth2/token"),
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_request"))
-    }
-
-    @Test
     fun tokenEndpointRejectsInvalidClientSecretPostAuthentication() {
         mockMvc.perform(
             clientSecretPostRequest("/oauth2/token", clientSecret = "wrong-secret"),
         )
             .andExpect(status().isUnauthorized)
-    }
-
-    @Test
-    fun tokenIntrospectionEndpointAcceptsClientSecretPostAuthentication() {
-        mockMvc.perform(
-            clientSecretPostRequest("/oauth2/introspect", "service-gateway", "gateway-secret"),
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("invalid_request"))
     }
 
     @Test

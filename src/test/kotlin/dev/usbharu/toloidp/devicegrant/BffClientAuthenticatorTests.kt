@@ -4,6 +4,8 @@ import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.config.IdpProperties
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
@@ -39,6 +41,47 @@ class BffClientAuthenticatorTests {
     @Test
     fun unsetExpiryIsAccepted() {
         assertEquals("console-ui", authenticator(null).authenticate(header).clientId)
+    }
+
+    @Test
+    fun missingAuthorizationHeaderIsRejected() {
+        assertFailsWith<BffAuthenticationException> { authenticator(null).authenticate(null) }
+    }
+
+    @Test
+    fun nonBasicAuthorizationSchemeIsRejected() {
+        assertFailsWith<BffAuthenticationException> {
+            authenticator(null).authenticate("Bearer console-ui:secret")
+        }
+    }
+
+    @Test
+    fun malformedBase64CredentialsAreRejected() {
+        assertFailsWith<BffAuthenticationException> {
+            authenticator(null).authenticate("Basic not-base64!")
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["", ":", "console-ui:", ":secret"])
+    fun credentialsWithoutANonEmptyClientIdAndSecretAreRejected(credentials: String) {
+        val malformed = "Basic " + Base64.getEncoder().encodeToString(credentials.toByteArray())
+
+        assertFailsWith<BffAuthenticationException> { authenticator(null).authenticate(malformed) }
+    }
+
+    @Test
+    fun wrongClientSecretIsRejected() {
+        val wrongSecret = "Basic " + Base64.getEncoder().encodeToString("console-ui:wrong".toByteArray())
+
+        assertFailsWith<BffAuthenticationException> { authenticator(null).authenticate(wrongSecret) }
+    }
+
+    @Test
+    fun unknownClientIsRejected() {
+        val unknownClient = "Basic " + Base64.getEncoder().encodeToString("unknown-client:secret".toByteArray())
+
+        assertFailsWith<BffAuthenticationException> { authenticator(null).authenticate(unknownClient) }
     }
 
     private fun authenticator(expiresAt: Instant?): BffClientAuthenticator {

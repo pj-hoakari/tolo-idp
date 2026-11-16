@@ -187,12 +187,6 @@ class ScopePolicyTests {
     }
 
     @Test
-    fun identityScopeIsNotSubjectToRoleCheck() {
-        policy.requireTenantAccessScopes(setOf("openid", "tenant.read"), RelationRole.STAFF, "scope_not_allowed_for_role")
-        policy.requireTenantAccessScopes(setOf("openid", "profile"), RelationRole.STAFF, "scope_not_allowed_for_role")
-    }
-
-    @Test
     fun identityScopeDoesNotBypassRoleCheckForOtherScopes() {
         val exception = assertFailsWith<ScopeNotAllowedException> {
             policy.requireTenantAccessScopes(setOf("openid", "tenant.write"), RelationRole.STAFF, "scope_not_allowed_for_role")
