@@ -14,6 +14,7 @@ import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.scope.RelationRole
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
+import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -1207,6 +1208,12 @@ class TokenExchangeEndpointTests(
                 server.start()
                 ready.countDown()
             }
+        }
+
+        @AfterAll
+        @JvmStatic
+        fun stopRelationServer() {
+            relationServer.stop(0)
         }
 
         @DynamicPropertySource
