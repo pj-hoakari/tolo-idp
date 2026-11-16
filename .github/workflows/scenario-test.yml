@@ -49,3 +49,21 @@ jobs:
   scenario:
     needs: [lint, unit-test]
     uses: ./.github/workflows/build-test.yml
+
+  ci-status:
+    name: ci status
+    if: always()
+    needs: [lint, unit-test, scenario]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify required jobs succeeded
+        if: needs.lint.result != 'success' || needs.unit-test.result != 'success' || needs.scenario.result != 'success'
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          UNIT_TEST_RESULT: ${{ needs.unit-test.result }}
+          SCENARIO_RESULT: ${{ needs.scenario.result }}
+        run: |
+          echo "lint=$LINT_RESULT"
+          echo "unit-test=$UNIT_TEST_RESULT"
+          echo "scenario=$SCENARIO_RESULT"
+          exit 1
