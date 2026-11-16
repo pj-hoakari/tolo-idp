@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Lint GitHub Actions workflows
@@ -23,7 +23,7 @@ jobs:
 
   unit-test:
     name: Unit tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,7 +45,7 @@ jobs:
     name: ci status
     if: always()
     needs: [lint, unit-test, scenario]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Verify required jobs succeeded
         if: needs.lint.result != 'success' || needs.unit-test.result != 'success' || needs.scenario.result != 'success'
