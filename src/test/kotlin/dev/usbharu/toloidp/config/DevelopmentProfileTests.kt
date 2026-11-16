@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor
 import org.springframework.core.env.ConfigurableEnvironment
@@ -9,6 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class DevelopmentProfileTests {
     @Test
     fun nativeProfileLoadsSharedDevelopmentSettingsAndContainerEndpoints() {

@@ -6,6 +6,7 @@ import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopePolicy
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.doThrow
@@ -26,6 +27,7 @@ import java.time.Clock
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
+@Tag("unit")
 class SpecTokenExchangeAuthenticationProviderAuditFailureTests {
     private val registeredClient = RegisteredClient.withId("client-id")
         .clientId("client-123")

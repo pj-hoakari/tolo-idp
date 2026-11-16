@@ -1,10 +1,12 @@
 package dev.usbharu.toloidp.ratelimit
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class CredentialRequestTests {
     @Test
     fun jsonMediaTypesAreMatchedCaseInsensitivelyIncludingVendorJson() {

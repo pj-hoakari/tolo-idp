@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.config
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.boot.context.properties.bind.BindException
 import org.springframework.boot.context.properties.bind.BindHandler
@@ -13,6 +14,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class ClientPolicyBindingTests {
     @Test
     fun bindsPolicyUsingTheRegistrationKeyAndDurationSyntax() {

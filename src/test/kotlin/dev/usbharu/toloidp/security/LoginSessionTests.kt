@@ -1,6 +1,7 @@
 package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.user.IdpUserDetails
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
@@ -18,6 +19,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class LoginSessionTests {
     private val clock = Clock.fixed(Instant.parse("2026-11-13T00:00:00Z"), ZoneOffset.UTC)
     private val user = IdpUserDetails(

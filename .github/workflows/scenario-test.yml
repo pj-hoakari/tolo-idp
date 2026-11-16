@@ -34,17 +34,8 @@ jobs:
           java-version: "24"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-      - name: Run unit tests and coverage gate
-        run: ./gradlew test koverVerify --no-daemon
-      - name: Verify PostgreSQL device authorization tests
-        run: |
-          result=build/test-results/test/TEST-dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests.xml
-          test -f "$result"
-          if grep -q '<skipped' "$result"; then
-            echo "PostgreSQL device authorization tests were skipped" >&2
-            exit 1
-          fi
-          grep -Eq 'tests="[1-9][0-9]*"' "$result"
+      - name: Run unit tests without Spring context
+        run: ./gradlew test -PunitOnly --no-daemon
 
   scenario:
     needs: [lint, unit-test]

@@ -1,10 +1,12 @@
 package dev.usbharu.toloidp.resource
 
+import org.junit.jupiter.api.Tag
 import dev.usbharu.toloidp.config.IdpProperties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
+@Tag("unit")
 class ResourceParserTests {
     private val parser = ResourceParser(
         IdpProperties(resource = IdpProperties.Resource(allowedHosts = setOf("api.example.com"))),

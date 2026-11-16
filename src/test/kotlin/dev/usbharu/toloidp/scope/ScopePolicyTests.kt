@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.scope
 
+import org.junit.jupiter.api.Tag
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -10,6 +11,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.ValueSource
 
+@Tag("unit")
 class ScopePolicyTests {
     private val policy = ScopePolicy()
 

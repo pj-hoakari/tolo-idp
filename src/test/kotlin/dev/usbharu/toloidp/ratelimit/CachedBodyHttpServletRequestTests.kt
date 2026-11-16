@@ -2,12 +2,14 @@ package dev.usbharu.toloidp.ratelimit
 
 import jakarta.servlet.ReadListener
 import jakarta.servlet.ServletInputStream
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpServletRequest
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
+@Tag("unit")
 class CachedBodyHttpServletRequestTests {
     @Test
     fun declaredLengthOverLimitDoesNotReadTheBody() {

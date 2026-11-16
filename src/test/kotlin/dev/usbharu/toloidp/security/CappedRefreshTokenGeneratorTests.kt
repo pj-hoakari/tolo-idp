@@ -2,6 +2,7 @@ package dev.usbharu.toloidp.security
 
 import dev.usbharu.toloidp.devicegrant.DeviceGrant
 import dev.usbharu.toloidp.devicegrant.DeviceGrantRepository
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
@@ -18,6 +19,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 
+@Tag("unit")
 class CappedRefreshTokenGeneratorTests {
     private val now = Instant.parse("2026-11-13T00:00:00Z")
     private val client = RegisteredClient.withId("client-id")

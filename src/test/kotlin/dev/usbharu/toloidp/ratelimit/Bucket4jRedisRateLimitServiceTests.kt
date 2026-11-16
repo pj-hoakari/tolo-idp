@@ -12,6 +12,7 @@ import io.github.bucket4j.distributed.OptimizationController
 import io.github.bucket4j.distributed.proxy.AsyncProxyManager
 import io.github.bucket4j.distributed.proxy.RemoteBucketBuilder
 import io.github.bucket4j.distributed.proxy.ProxyManager
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.util.Optional
@@ -22,6 +23,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
+@Tag("unit")
 class Bucket4jRedisRateLimitServiceTests {
     @Test
     fun anonymousRequestsShareAnIpBucketAndRefillAfterTheConfiguredPeriod() {
