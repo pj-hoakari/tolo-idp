@@ -116,7 +116,7 @@ class CappedRefreshTokenGeneratorTests {
         object : OAuth2TokenContext {
             override fun getAuthorization(): OAuth2Authorization? = authorization
 
-            override fun <V : Any?> get(key: Any): V? = null
+            override fun <V : Any> get(key: Any): V? = null
 
             override fun hasKey(key: Any): Boolean = false
         }

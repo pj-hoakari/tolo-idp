@@ -230,10 +230,12 @@ class SecurityConfig {
                     deviceAuthorizationEndpoint.deviceAuthorizationRequestConverter(
                         CameraDeviceAuthorizationRequestConverter(),
                     )
+                    val issuer = requireNotNull(settings.issuer) { "Authorization server issuer must be configured" }
+                    val verificationEndpoint = requireNotNull(settings.deviceVerificationEndpoint) {
+                        "Device verification endpoint must be configured"
+                    }
                     deviceAuthorizationEndpoint.deviceAuthorizationResponseHandler(
-                        DeviceAuthorizationResponseHandler(
-                            settings.issuer.trimEnd('/') + settings.deviceVerificationEndpoint,
-                        ),
+                        DeviceAuthorizationResponseHandler(issuer.trimEnd('/') + verificationEndpoint),
                     )
                 }
                 .oidc { oidc ->
@@ -253,6 +255,7 @@ class SecurityConfig {
                         }
                         endpoint.userInfoMapper { context ->
                             val subject = context.authorization.getToken(OidcIdToken::class.java)!!.token.subject
+                                ?: throw OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_TOKEN)
                             val user = try {
                                 users.loadUserById(subject)
                             } catch (_: UsernameNotFoundException) {

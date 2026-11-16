@@ -28,11 +28,13 @@ class DeviceAuthorizationResponseHandler(
         authentication: Authentication,
     ) {
         val token = authentication as OAuth2DeviceAuthorizationRequestAuthenticationToken
+        val userCode = requireNotNull(token.userCode) { "Device authorization response requires a user code" }
+        val deviceCode = requireNotNull(token.deviceCode) { "Device authorization response requires a device code" }
         val verificationUriComplete = UriComponentsBuilder.fromUriString(verificationUri)
-            .queryParam(OAuth2ParameterNames.USER_CODE, token.userCode.tokenValue)
+            .queryParam(OAuth2ParameterNames.USER_CODE, userCode.tokenValue)
             .build()
             .toUriString()
-        val deviceAuthorizationResponse = OAuth2DeviceAuthorizationResponse.with(token.deviceCode, token.userCode)
+        val deviceAuthorizationResponse = OAuth2DeviceAuthorizationResponse.with(deviceCode, userCode)
             .verificationUri(verificationUri)
             .verificationUriComplete(verificationUriComplete)
             .interval(POLLING_INTERVAL_SECONDS)

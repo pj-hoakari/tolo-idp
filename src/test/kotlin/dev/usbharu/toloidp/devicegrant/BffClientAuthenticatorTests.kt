@@ -97,8 +97,9 @@ class BffClientAuthenticatorTests {
         clientId: String = "console-ui",
         bffClientId: String = "console-ui",
     ): BffClientAuthenticator {
-        val client = RegisteredClient.withId("bff-test").clientId(clientId).clientSecret("{noop}secret")
-            .clientSecretExpiresAt(expiresAt)
+        val clientBuilder = RegisteredClient.withId("bff-test").clientId(clientId).clientSecret("{noop}secret")
+        if (expiresAt != null) clientBuilder.clientSecretExpiresAt(expiresAt)
+        val client = clientBuilder
             .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
             .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
             .scope("events.read").build()

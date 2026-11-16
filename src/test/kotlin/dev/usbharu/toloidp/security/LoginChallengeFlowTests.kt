@@ -97,7 +97,7 @@ class LoginChallengeFlowTests(
         mvc.loginWithChallengeSession(challenge, session = session)
         val idToken = decoder.decode(exchange(mvc.perform(resumeAuthorization(challenge, session)))["id_token"].stringValue())
         assertEquals(authenticationTime(session), idToken.getClaimAsInstant("auth_time"))
-        assertFalse(idToken.getClaimAsInstant("auth_time").isBefore(before))
+        assertFalse(idToken.getClaimAsInstant("auth_time")!!.isBefore(before))
     }
 
     @Test

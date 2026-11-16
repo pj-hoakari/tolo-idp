@@ -680,7 +680,7 @@ class SecurityComponentTests(
             AuthorizationRequestToken(authentication, authentication.additionalParameters, authorizationRequest(), false),
         )
             .registeredClient(registeredClient)
-            .authorizationRequest(base.authorizationRequest)
+            .authorizationRequest(checkNotNull(base.authorizationRequest))
             .build()
     }
 

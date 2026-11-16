@@ -32,18 +32,17 @@ class AuthorizationRequestConverter(
         }
         val resumed = request.parameterMap.containsKey(LOGIN_CHALLENGE_PARAMETER)
         val authorizationRequest = if (resumed) resume(request) else request
-        val converted = delegate.convert(authorizationRequest)
+        // Spring Security 7.1 stops parsing redirect_uri, scope, and state when
+        // request_uri is present (RFC 9126 PAR semantics). This server rejects
+        // request_uri in the OIDC validator, but the error response still needs the
+        // original parameters to redirect to the registered client, so hide it from
+        // the framework conversion and keep it on the request-local context.
+        val converted = delegate.convert(authorizationRequest.withoutRequestUri())
         if (converted !is OAuth2AuthorizationCodeRequestAuthenticationToken) {
             return converted
         }
 
         val additionalParameters = converted.additionalParameters.toMutableMap()
-        if ("openid" in converted.scopes.orEmpty()) {
-            // OIDC Request URI is unsupported. Keep it on the request-local context so
-            // our validator can reject it after client/redirect validation, rather than
-            // letting the framework interpret it as a pushed authorization request.
-            additionalParameters.remove(OAuth2ParameterNames.REQUEST_URI)
-        }
         return AuthorizationRequestToken(converted, additionalParameters, authorizationRequest, resumed)
     }
 
@@ -75,6 +74,20 @@ class AuthorizationRequestToken(
 
     override fun getScopes(): Set<String> = grantedScopes ?: super.getScopes()
 }
+
+private class RequestUriStrippedRequest(request: HttpServletRequest) : HttpServletRequestWrapper(request) {
+    override fun getParameter(name: String): String? =
+        if (name == OAuth2ParameterNames.REQUEST_URI) null else super.getParameter(name)
+
+    override fun getParameterValues(name: String): Array<String>? =
+        if (name == OAuth2ParameterNames.REQUEST_URI) null else super.getParameterValues(name)
+
+    override fun getParameterMap(): Map<String, Array<String>> =
+        super.getParameterMap().filterKeys { it != OAuth2ParameterNames.REQUEST_URI }
+}
+
+private fun HttpServletRequest.withoutRequestUri(): HttpServletRequest =
+    if (parameterMap.containsKey(OAuth2ParameterNames.REQUEST_URI)) RequestUriStrippedRequest(this) else this
 
 private class StoredAuthorizationRequest(
     request: HttpServletRequest,
