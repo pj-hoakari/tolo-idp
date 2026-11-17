@@ -159,7 +159,7 @@ PIT による mutation testing をローカルで実行できます。通常の 
 - Testcontainers を使う `DeviceAuthorizationPostgresFlowTests` は PIT の対象から除外しています。
 - `-PunitOnly` は Gradle の `test` タスクだけを絞るため、PIT には影響しません。
 - Arcmutate の Kotlin / Spring プラグインはライセンスが必要なため使用していません。Kotlin の基本的な junk mutant は PIT の `FKOTLIN` フィルタで除外されます。
-- mutation score の閾値はまだ設定していません。直近の全体実行は 1,845 mutants、Killed 1,571（85%）、Test strength 89%、実行時間 20分42秒（6並列）でした。192 件が SURVIVED、81 件が NO_COVERAGE で、このうち 129 件は Kotlin の null チェック由来のノイズです。初回は 2,039 mutants / Killed 1,615（79%）でしたが、`avoidCallsTo` への `dev.usbharu.toloidp.logging` 追加と survivor 対応テストで改善しました。
+- mutation score の閾値はまだ設定していません。直近の全体実行は 1,845 mutants、Killed 1,579（86%）、Test strength 89%、実行時間 20分02秒（6並列）でした。192 件が SURVIVED、73 件が NO_COVERAGE で、このうち 131 件は Kotlin の null チェック由来のノイズです。初回は 2,039 mutants / Killed 1,615（79%）でしたが、`avoidCallsTo` への `dev.usbharu.toloidp.logging` 追加と survivor 対応テストで改善しました。
 - PIT は実行ごとに `build/reports/pitest` を上書きします。レポートを残したい場合は `-PpitestReportDir=pitest-full` のように出力先を分けられます。対象を絞った再実行は `-PpitestTargetClasses` と `-PpitestTargetTests` で行ってください。
 
 ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service にも `(tenantId, sub)` を渡します。開発用 seed は `src/main/resources/seed/users.json` で定義し、既定では `(0123456789abcdef, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
