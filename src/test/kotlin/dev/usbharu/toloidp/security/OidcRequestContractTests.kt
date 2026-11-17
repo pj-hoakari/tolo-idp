@@ -132,6 +132,28 @@ class OidcRequestContractTests(
         assertEquals(authenticationTime(session), decoder.decode(tokens["id_token"].stringValue()).getClaimAsInstant("auth_time"))
     }
 
+    @Test
+    fun futureAuthenticationTimeRequiresAChallengeLogin() {
+        val session = login()
+        val context = session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY) as SecurityContext
+        val authentication = context.authentication as UsernamePasswordAuthenticationToken
+        authentication.details = (authentication.details as Map<*, *>).entries.associate { it.key.toString() to it.value.toString() }
+            .toMutableMap().apply { put("auth_time", Instant.now().plusSeconds(60).epochSecond.toString()) }
+
+        mvc.challengeFrom(authorize(session).queryParam("max_age", "30"))
+    }
+
+    @Test
+    fun missingAuthenticationTimeRequiresAChallengeLoginWhenMaxAgeIsRequested() {
+        val session = login()
+        val context = session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY) as SecurityContext
+        val authentication = context.authentication as UsernamePasswordAuthenticationToken
+        authentication.details = (authentication.details as Map<*, *>).entries.associate { it.key.toString() to it.value.toString() }
+            .filterKeys { it != "auth_time" }
+
+        mvc.challengeFrom(authorize(session).queryParam("max_age", "30"))
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["-1", "1.0", " 1", "9223372036854775808", ""])
     fun invalidMaxAgeIsRejected(value: String) {

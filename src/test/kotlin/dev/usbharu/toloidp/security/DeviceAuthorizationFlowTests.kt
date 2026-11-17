@@ -276,6 +276,37 @@ open class DeviceAuthorizationFlowTests(
     }
 
     @Test
+    fun approvalAndRevocationRecordAuditEvents() {
+        val edgeDeviceId = "8888888888888888"
+        val deviceCode = startDeviceAuthorization()
+
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val approval = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("event_access", approval.requestedTokenUse)
+        assertEquals("event-1", approval.eventId)
+        assertEquals(edgeDeviceId, approval.edgeDeviceId)
+        assertEquals("success", approval.result)
+
+        revoke("event-1", edgeDeviceId).andExpect(status().isNoContent)
+        val revocation = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("revocation", revocation.requestedTokenUse)
+        assertEquals("event-1", revocation.eventId)
+        assertEquals(edgeDeviceId, revocation.edgeDeviceId)
+        assertEquals("success", revocation.result)
+    }
+
+    @Test
+    fun approvalAndRevocationRejectInvalidEventAndEdgeIds() {
+        val deviceCode = startDeviceAuthorization()
+
+        approve(userCodeFor(deviceCode), "invalid event id", "9999999999999999").andExpect(status().isBadRequest)
+        approve(userCodeFor(deviceCode), "event-1", "short").andExpect(status().isBadRequest)
+
+        revoke("invalid event id", "9999999999999999").andExpect(status().isBadRequest)
+        revoke("event-1", "short").andExpect(status().isBadRequest)
+    }
+
+    @Test
     fun concurrentRefreshesWithTheSameTokenSucceedOnceAndRevokeOnReuse() {
         val edgeDeviceId = "5555555555555555"
         val deviceCode = startDeviceAuthorization()
