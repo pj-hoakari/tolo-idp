@@ -12,6 +12,7 @@ import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.springframework.dao.DataAccessResourceFailureException
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException
@@ -58,6 +59,20 @@ class SpecTokenExchangeAuthenticationProviderAuditFailureTests {
     fun returnsOAuthErrorWhenTheAuditTransactionCannotStart() {
         val auditService = mock(AuditService::class.java)
         doThrow(CannotCreateTransactionException("audit store unavailable"))
+            .`when`(auditService).record(anyAuditEvent())
+
+        val error = assertFailsWith<OAuth2AuthenticationException> {
+            provider(auditService).authenticate(tokenExchange)
+        }
+
+        assertEquals("invalid_request", error.error.errorCode)
+        verify(auditService).record(anyAuditEvent())
+    }
+
+    @Test
+    fun returnsOAuthErrorWhenTheAuditStoreIsUnavailable() {
+        val auditService = mock(AuditService::class.java)
+        doThrow(DataAccessResourceFailureException("audit store unavailable"))
             .`when`(auditService).record(anyAuditEvent())
 
         val error = assertFailsWith<OAuth2AuthenticationException> {

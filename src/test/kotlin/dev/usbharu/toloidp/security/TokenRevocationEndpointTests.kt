@@ -32,6 +32,11 @@ import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.security.oauth2.core.OAuth2AccessToken
 import org.springframework.security.oauth2.core.OAuth2RefreshToken
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm
+import org.springframework.security.oauth2.jwt.JwsHeader
+import org.springframework.security.oauth2.jwt.JwtClaimsSet
+import org.springframework.security.oauth2.jwt.JwtEncoder
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
@@ -63,6 +68,7 @@ class TokenRevocationEndpointTests(
     @Autowired private val auditLogRepository: AuditLogRepository,
     @Autowired private val cacheRepository: RelationMembershipCacheRepository,
     @Autowired private val jdbcClient: JdbcClient,
+    @Autowired private val jwtEncoder: JwtEncoder,
 ) {
     @BeforeEach
     fun setUp() {
@@ -127,6 +133,10 @@ class TokenRevocationEndpointTests(
         assertEquals(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit.subject)
         assertEquals(TOKEN_USE_TENANT_ACCESS, audit.sourceTokenUse)
         assertEquals("revocation", audit.requestedTokenUse)
+        assertEquals("tenant.read events.read events.manage", audit.requestedScope)
+        assertEquals("tenant-a", audit.tenantId)
+        assertEquals("https://api.example.com/tenants/tenant-a", audit.requestedResource)
+        assertEquals(null, audit.eventId)
         assertEquals("tenant-revoke-jti", audit.issuedJti)
         assertFalse(audit.payload.contains(token))
     }
@@ -144,7 +154,12 @@ class TokenRevocationEndpointTests(
             .andExpect(status().isOk)
 
         assertTrue(jtiDenylistRepository.existsById("event-revoke-jti"))
-        assertEquals(TOKEN_USE_EVENT_ACCESS, latestAudit().sourceTokenUse)
+        val audit = latestAudit()
+        assertEquals(TOKEN_USE_EVENT_ACCESS, audit.sourceTokenUse)
+        assertEquals("tenant.read events.read events.manage", audit.requestedScope)
+        assertEquals("tenant-a", audit.tenantId)
+        assertEquals("event-1", audit.eventId)
+        assertEquals("https://api.example.com/tenants/tenant-a/events/event-1", audit.requestedResource)
     }
 
     @Test
@@ -186,6 +201,91 @@ class TokenRevocationEndpointTests(
 
         assertFalse(jtiDenylistRepository.existsById("expired-revoke-jti"))
         assertTrue(jtiDenylistRepository.existsById("already-denied-jti"))
+    }
+
+    @Test
+    fun revokesUnstoredSignedJwtByAddingJtiToDenylist() {
+        val jti = "unstored-${UUID.randomUUID()}"
+        val token = unstoredJwt(jti)
+
+        mockMvc.perform(revocationRequest(token))
+            .andExpect(status().isOk)
+            .andExpect(content().string(""))
+
+        assertTrue(jtiDenylistRepository.existsById(jti))
+        val audit = latestAudit()
+        assertEquals("success", audit.result)
+        assertEquals("client-123", audit.clientId)
+        assertEquals(IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit.subject)
+        assertEquals(TOKEN_USE_TENANT_ACCESS, audit.sourceTokenUse)
+        assertEquals("revocation", audit.requestedTokenUse)
+        assertEquals("tenant.read events.read", audit.requestedScope)
+        assertEquals("tenant-a", audit.tenantId)
+        assertEquals(null, audit.eventId)
+        assertEquals("https://api.example.com/tenants/tenant-a", audit.requestedResource)
+        assertEquals(jti, audit.issuedJti)
+        assertFalse(audit.payload.contains(token))
+    }
+
+    @Test
+    fun unstoredJwtWithFutureNotBeforeIsNotDenylisted() {
+        val jti = "future-nbf-${UUID.randomUUID()}"
+        val token = unstoredJwt(jti, notBefore = Instant.now().plusSeconds(60))
+
+        mockMvc.perform(revocationRequest(token)).andExpect(status().isOk)
+
+        assertFalse(jtiDenylistRepository.existsById(jti))
+    }
+
+    @Test
+    fun revocationAuditFallsBackToPrincipalNameWhenSubjectClaimIsMissing() {
+        val token = saveAuthorization(
+            jti = "no-sub-${UUID.randomUUID()}",
+            principalName = "principal-only",
+            includeSubjectClaim = false,
+        )
+
+        mockMvc.perform(revocationRequest(token)).andExpect(status().isOk)
+
+        assertEquals("principal-only", latestAudit().subject)
+    }
+
+    @Test
+    fun revocationFallsBackToStoredExpiryWhenExpClaimIsMissing() {
+        val jti = "no-exp-${UUID.randomUUID()}"
+        val expiresAt = Instant.now().plusSeconds(1800)
+        val token = saveAuthorization(
+            jti = jti,
+            expiresAt = expiresAt,
+            includeExpiryClaim = false,
+        )
+
+        mockMvc.perform(revocationRequest(token)).andExpect(status().isOk)
+
+        val entry = jtiDenylistRepository.findById(jti).orElseThrow()
+        assertEquals(expiresAt.epochSecond, entry.expiresAt.epochSecond)
+    }
+
+    @Test
+    fun unstoredJwtForAnotherClientIsRejected() {
+        val token = unstoredJwt(
+            jti = "wrong-client-${UUID.randomUUID()}",
+            clientId = OTHER_CONFIDENTIAL_CLIENT_ID,
+        )
+
+        mockMvc.perform(revocationRequest(token))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_client"))
+    }
+
+    @Test
+    fun unstoredJwtWithCollectionScopeIsAudited() {
+        val jti = "collection-scope-${UUID.randomUUID()}"
+        val token = unstoredJwt(jti, scope = listOf("tenant.read", "events.read"))
+
+        mockMvc.perform(revocationRequest(token)).andExpect(status().isOk)
+
+        assertEquals("tenant.read events.read", latestAudit().requestedScope)
     }
 
     @Test
@@ -264,6 +364,11 @@ class TokenRevocationEndpointTests(
         assertEquals("success", audit.result)
         assertEquals(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID, audit.subject)
         assertEquals("refresh_token", audit.sourceTokenUse)
+        assertEquals(
+            setOf("tenant.read", "events.read", "events.manage"),
+            audit.requestedScope.split(" ").toSet(),
+        )
+        assertEquals("tenant-a", audit.tenantId)
         assertEquals(null, audit.issuedJti)
         assertFalse(audit.payload.contains(refresh))
         assertFalse(audit.payload.contains(access))
@@ -361,6 +466,34 @@ class TokenRevocationEndpointTests(
             .param("resource", "https://api.example.com/tenants/tenant-a/events/event-1")
             .param("scope", "events.read")
 
+    private fun unstoredJwt(
+        jti: String,
+        clientId: String = "client-123",
+        tokenUse: String = TOKEN_USE_TENANT_ACCESS,
+        expiresAt: Instant = Instant.now().plusSeconds(3600),
+        notBefore: Instant = Instant.now().minusSeconds(60),
+        scope: Any = "tenant.read events.read",
+    ): String {
+        val issuedAt = Instant.now()
+        val claims = JwtClaimsSet.builder()
+            .issuer("http://localhost:8080")
+            .subject(IdpUserDetailsManager.DEVELOPMENT_USER_ID)
+            .audience(listOf("backend-api"))
+            .claim("client_id", clientId)
+            .claim("token_use", tokenUse)
+            .claim("scope", scope)
+            .claim("tenant_id", "tenant-a")
+            .claim("resource", "https://api.example.com/tenants/tenant-a")
+            .id(jti)
+            .issuedAt(issuedAt)
+            .notBefore(notBefore)
+            .expiresAt(expiresAt)
+            .build()
+        return jwtEncoder.encode(
+            JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).build(), claims),
+        ).tokenValue
+    }
+
     private fun saveAuthorization(
         tokenUse: String = TOKEN_USE_TENANT_ACCESS,
         clientId: String = "client-123",
@@ -371,6 +504,9 @@ class TokenRevocationEndpointTests(
         expiresAt: Instant = Instant.now().plusSeconds(3600),
         refreshTokenValue: String? = null,
         refreshExpiresAt: Instant = Instant.now().plusSeconds(3600),
+        principalName: String = IdpUserDetailsManager.DEVELOPMENT_USER_ID,
+        includeSubjectClaim: Boolean = true,
+        includeExpiryClaim: Boolean = true,
     ): String {
         val tokenValue = "revocation-token-${UUID.randomUUID()}"
         val registeredClient = registeredClientRepository.findByClientId(clientId)
@@ -390,14 +526,13 @@ class TokenRevocationEndpointTests(
             scopes,
         )
         val authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
-            .principalName(dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID)
+            .principalName(principalName)
             .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .authorizedScopes(scopes)
             .attribute(Principal::class.java.name, authentication)
             .token(token) { metadata ->
                 val claims = linkedMapOf<String, Any>(
                     "iss" to "http://localhost:8080",
-                    "sub" to dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
                     "aud" to listOf("backend-api"),
                     "client_id" to clientId,
                     "scope" to scopes.joinToString(" "),
@@ -406,9 +541,14 @@ class TokenRevocationEndpointTests(
                     "tenant_id" to tenantId,
                     "iat" to issuedAt,
                     "nbf" to issuedAt,
-                    "exp" to expiresAt,
                     "jti" to jti,
                 )
+                if (includeSubjectClaim) {
+                    claims["sub"] = IdpUserDetailsManager.DEVELOPMENT_USER_ID
+                }
+                if (includeExpiryClaim) {
+                    claims["exp"] = expiresAt
+                }
                 if (eventId != null) {
                     claims["event_id"] = eventId
                 }
