@@ -10,8 +10,13 @@ import org.mockito.Mockito.mock
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
+import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import java.net.URI
 import java.util.concurrent.atomic.AtomicReference
@@ -23,9 +28,16 @@ import kotlin.test.assertTrue
 @Tag("unit")
 class AuthorizationErrorResponseHandlerTests {
     private val challenges = mock(LoginChallenges::class.java)
+    private val registeredClientRepository = mock(RegisteredClientRepository::class.java)
+    private val client = RegisteredClient.withId("client-id")
+        .clientId("client-123")
+        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+        .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+        .redirectUri("https://client.example.com/callback")
+        .build()
     private val handler = AuthorizationErrorResponseHandler(
         challenges,
-        mock(RegisteredClientRepository::class.java),
+        registeredClientRepository,
         URI("https://login.example.com/login"),
         URI("https://login.example.com/error"),
     )
@@ -84,6 +96,68 @@ class AuthorizationErrorResponseHandlerTests {
         assertEquals("https://login.example.com/error?error=invalid_request", response.redirectedUrl)
     }
 
+    @Test
+    fun rejectedLoginChallengeRedirectsToTheErrorPage() {
+        val response = handleError(LoginChallengeRejectedException())
+
+        assertEquals("https://login.example.com/error?error=invalid_challenge", response.redirectedUrl)
+    }
+
+    @Test
+    fun redirectsErrorsToAnAllowedClientRedirectUri() {
+        `when`(registeredClientRepository.findByClientId("client-123")).thenReturn(client)
+        val response = handleError(error(token(state = "state-1")))
+
+        val location = response.redirectedUrl!!
+        assertTrue(location.startsWith("https://client.example.com/callback?error=invalid_request"))
+        assertTrue(location.contains("error_description="))
+        assertTrue(location.contains("state=state-1"))
+    }
+
+    @Test
+    fun rejectsAnUnregisteredRedirectUri() {
+        `when`(registeredClientRepository.findByClientId("client-123")).thenReturn(client)
+        val response = handleError(error(token(redirectUri = "https://attacker.example/callback")))
+
+        assertEquals("https://login.example.com/error?error=invalid_request", response.redirectedUrl)
+    }
+
+    @Test
+    fun rejectsBlankRedirectUri() {
+        `when`(registeredClientRepository.findByClientId("client-123")).thenReturn(client)
+        val response = handleError(error(token(redirectUri = " ")))
+
+        assertEquals("https://login.example.com/error?error=invalid_request", response.redirectedUrl)
+    }
+
+    @Test
+    fun rejectsErrorsForUnknownClients() {
+        val response = handleError(error(token(clientId = "unknown-client")))
+
+        assertEquals("https://login.example.com/error?error=invalid_request", response.redirectedUrl)
+    }
+
+    @Test
+    fun rejectsErrorsWithoutAnAuthorizationRequest() {
+        val response = handleError(
+            OAuth2AuthorizationCodeRequestAuthenticationException(OAuth2Error("invalid_request"), null),
+        )
+
+        assertEquals("https://login.example.com/error?error=invalid_request", response.redirectedUrl)
+    }
+
+    private fun handleError(exception: OAuth2AuthorizationCodeRequestAuthenticationException): MockHttpServletResponse {
+        val response = MockHttpServletResponse()
+        handler.onAuthenticationFailure(MockHttpServletRequest(), response, exception)
+        return response
+    }
+
+    private fun error(token: OAuth2AuthorizationCodeRequestAuthenticationToken) =
+        OAuth2AuthorizationCodeRequestAuthenticationException(
+            OAuth2Error("invalid_request", "bad request", null),
+            token,
+        )
+
     private fun stubIssue(challenge: String?) {
         captured.set(null)
         `when`(challenges.issue(anyString(), anyString(), anyMap(), anyBoolean())).thenAnswer { invocation ->
@@ -104,6 +178,7 @@ class AuthorizationErrorResponseHandlerTests {
     }
 
     private fun token(
+        clientId: String = "client-123",
         redirectUri: String? = "https://client.example.com/callback",
         scopes: Set<String> = setOf("openid"),
         state: String? = "state-1",
@@ -111,7 +186,7 @@ class AuthorizationErrorResponseHandlerTests {
     ): OAuth2AuthorizationCodeRequestAuthenticationToken =
         OAuth2AuthorizationCodeRequestAuthenticationToken(
             "https://issuer.example.com/oauth2/authorize",
-            "client-123",
+            clientId,
             UsernamePasswordAuthenticationToken.authenticated("client-123", null, emptyList()),
             redirectUri,
             state,
