@@ -7,7 +7,9 @@ import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import org.springframework.core.io.FileSystemResource
 import java.security.KeyPairGenerator
 import java.security.interfaces.RSAPrivateKey
@@ -98,6 +100,29 @@ class SecurityConfigJwkTests {
         val secondKid = securityConfig.jwkSource(properties).firstJwk().keyID
 
         assertEquals(firstKid, secondKid)
+        assertTrue(firstKid.matches(Regex("[A-Za-z0-9_-]{43}")))
+    }
+
+    @Test
+    fun usesConfiguredKeyIdForEphemeralKey() {
+        val jwk = securityConfig.jwkSource(
+            IdpProperties(jwk = IdpProperties.Jwk(allowEphemeral = true, keyId = "ephemeral-key")),
+        ).firstJwk()
+
+        assertEquals("ephemeral-key", jwk.keyID)
+        assertNotNull(jwk.toRSAKey().toRSAPublicKey())
+    }
+
+    @Test
+    fun generatesRandomKeyIdForEphemeralKey() {
+        for (keyId in listOf(null, "", " ")) {
+            val properties = IdpProperties(jwk = IdpProperties.Jwk(allowEphemeral = true, keyId = keyId))
+            val first = securityConfig.jwkSource(properties).firstJwk().keyID
+            val second = securityConfig.jwkSource(properties).firstJwk().keyID
+
+            assertTrue(first.matches(Regex("[0-9a-f-]{36}")))
+            assertNotEquals(first, second)
+        }
     }
 
     private fun com.nimbusds.jose.jwk.source.JWKSource<com.nimbusds.jose.proc.SecurityContext>.firstJwk() =

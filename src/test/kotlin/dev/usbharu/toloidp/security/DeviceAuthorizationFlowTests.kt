@@ -39,6 +39,7 @@ import org.springframework.security.oauth2.jwt.JwtClaimsSet
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.JwtEncoder
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings
@@ -63,6 +64,7 @@ open class DeviceAuthorizationFlowTests(
     @Autowired private lateinit var clients: RegisteredClientRepository
     @Autowired private lateinit var users: IdpUserDetailsManager
     @Autowired private lateinit var deviceRepository: DeviceGrantRepository
+    @Autowired private lateinit var authorizationService: OAuth2AuthorizationService
 
     @BeforeEach
     fun setUp() {
@@ -172,6 +174,7 @@ open class DeviceAuthorizationFlowTests(
         val deviceCode = startDeviceAuthorization()
         approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
         val firstRefresh = json(poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].asText()
+        val grantId = grant(edgeDeviceId).id
 
         val secondRefresh = json(refresh(firstRefresh).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].asText()
         assertNotEquals(firstRefresh, secondRefresh)
@@ -180,8 +183,51 @@ open class DeviceAuthorizationFlowTests(
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
         assertNotNull(grant(edgeDeviceId).revokedAt)
+        val reuseAudit = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("refresh_token_reuse", reuseAudit.failureReason)
+        val revokedAuthorization = assertNotNull(authorizationService.findById(grantId))
+        assertTrue(revokedAuthorization.accessToken?.isInvalidated == true)
 
         refresh(secondRefresh)
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("invalid_grant"))
+    }
+
+    @Test
+    fun reapprovalSupersedesTheExistingGrantAuthorization() {
+        val edgeDeviceId = "abababababababae"
+        val firstCode = startDeviceAuthorization()
+        approve(userCodeFor(firstCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        poll(firstCode).andExpect(status().isOk)
+        val firstGrantId = grant(edgeDeviceId).id
+
+        val secondCode = startDeviceAuthorization()
+        approve(userCodeFor(secondCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+
+        val firstAuthorization = assertNotNull(authorizationService.findById(firstGrantId))
+        assertTrue(firstAuthorization.accessToken?.isInvalidated == true)
+    }
+
+    @Test
+    fun refreshRejectsWhenApproverLosesEventRole() {
+        val edgeDeviceId = "abababababababac"
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val refreshToken = json(
+            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
+        )["refresh_token"].asText()
+
+        cacheRepository.deleteAll()
+        cacheRepository.save(
+            RelationMembershipCache(
+                cacheId = RelationMembershipCacheId("tenant-a", IdpUserDetailsManager.DEVELOPMENT_USER_ID),
+                membership = TenantMembership("tenant-a", RelationRole.OWNER, emptyList()),
+                cachedAt = Instant.now(),
+                expiresAt = Instant.now().plusSeconds(300),
+            ),
+        )
+
+        refresh(refreshToken)
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
     }
@@ -266,6 +312,8 @@ open class DeviceAuthorizationFlowTests(
         val refreshToken = json(poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString)["refresh_token"].asText()
 
         revoke("event-1", edgeDeviceId).andExpect(status().isNoContent)
+        val revokedAuthorization = assertNotNull(authorizationService.findById(grant(edgeDeviceId).id))
+        assertTrue(revokedAuthorization.accessToken?.isInvalidated == true)
         refresh(refreshToken)
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
@@ -273,6 +321,37 @@ open class DeviceAuthorizationFlowTests(
         val nextDeviceCode = startDeviceAuthorization()
         approve(userCodeFor(nextDeviceCode), "event-1", edgeDeviceId)
             .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun approvalAndRevocationRecordAuditEvents() {
+        val edgeDeviceId = "8888888888888888"
+        val deviceCode = startDeviceAuthorization()
+
+        approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
+        val approval = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("event_access", approval.requestedTokenUse)
+        assertEquals("event-1", approval.eventId)
+        assertEquals(edgeDeviceId, approval.edgeDeviceId)
+        assertEquals("success", approval.result)
+
+        revoke("event-1", edgeDeviceId).andExpect(status().isNoContent)
+        val revocation = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("revocation", revocation.requestedTokenUse)
+        assertEquals("event-1", revocation.eventId)
+        assertEquals(edgeDeviceId, revocation.edgeDeviceId)
+        assertEquals("success", revocation.result)
+    }
+
+    @Test
+    fun approvalAndRevocationRejectInvalidEventAndEdgeIds() {
+        val deviceCode = startDeviceAuthorization()
+
+        approve(userCodeFor(deviceCode), "invalid event id", "9999999999999999").andExpect(status().isBadRequest)
+        approve(userCodeFor(deviceCode), "event-1", "short").andExpect(status().isBadRequest)
+
+        revoke("invalid event id", "9999999999999999").andExpect(status().isBadRequest)
+        revoke("event-1", "short").andExpect(status().isBadRequest)
     }
 
     @Test
@@ -343,6 +422,7 @@ open class DeviceAuthorizationFlowTests(
         val refreshToken = json(
             poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
         )["refresh_token"].asText()
+        val grantId = grant(edgeDeviceId).id
 
         // Make the next refresh-token history insert fail without relying on application hooks.
         jdbcClient.sql(
@@ -363,6 +443,10 @@ open class DeviceAuthorizationFlowTests(
         }
         assertNotNull(grant(edgeDeviceId).revokedAt)
         assertTrue(revocation(edgeDeviceId)?.permanent == false)
+        val failureAudit = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("refresh_state_failed", failureAudit.failureReason)
+        val failedAuthorization = assertNotNull(authorizationService.findById(grantId))
+        assertTrue(failedAuthorization.accessToken?.isInvalidated == true)
 
         refresh(refreshToken)
             .andExpect(status().isBadRequest)
@@ -374,12 +458,14 @@ open class DeviceAuthorizationFlowTests(
         val edgeDeviceId = "8888888888888888"
         val deviceCode = startDeviceAuthorization()
         approve(userCodeFor(deviceCode), "event-1", edgeDeviceId).andExpect(status().isOk)
-        val refreshToken = json(
-            poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString,
-        )["refresh_token"].asText()
+        val issued = json(poll(deviceCode).andExpect(status().isOk).andReturn().response.contentAsString)
+        val refreshToken = issued["refresh_token"].asText()
+        val oldGrantId = grant(edgeDeviceId).id
 
         revoke("event-1", edgeDeviceId, permanent = false).andExpect(status().isNoContent)
         assertEquals(false, revocation(edgeDeviceId)?.permanent)
+        val temporaryAudit = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals("temporary_revocation", temporaryAudit.failureReason)
         refresh(refreshToken)
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("invalid_grant"))
@@ -391,6 +477,8 @@ open class DeviceAuthorizationFlowTests(
         approve(reapprovalUserCode, "event-1", edgeDeviceId, reapproval = true)
             .andExpect(status().isOk)
         assertNull(revocation(edgeDeviceId))
+        val oldAuthorization = assertNotNull(authorizationService.findById(oldGrantId))
+        assertTrue(oldAuthorization.accessToken?.isInvalidated == true)
         poll(reapprovalCode).andExpect(status().isOk)
     }
 
@@ -407,6 +495,8 @@ open class DeviceAuthorizationFlowTests(
         // A later temporary revocation must not downgrade the permanent marker.
         revoke("event-1", edgeDeviceId, permanent = false).andExpect(status().isNoContent)
         assertEquals(true, revocation(edgeDeviceId)?.permanent)
+        val permanentAudit = assertNotNull(auditLogRepository.findAll().maxByOrNull { it.id ?: 0 })
+        assertEquals(null, permanentAudit.failureReason)
 
         val nextCode = startDeviceAuthorization()
         approve(userCodeFor(nextCode), "event-1", edgeDeviceId, reapproval = true)
@@ -603,6 +693,29 @@ open class DeviceAuthorizationFlowTests(
             .andExpect(status().isOk)
         revoke("event-1", edge, staffToken = staffToken(scope = "events.manage"))
             .andExpect(status().isNoContent)
+    }
+
+    @Test
+    fun staffTokenAudienceMustBeAllowed() {
+        val edgeDeviceId = "bababababababab0"
+        for (audience in listOf(emptyList(), listOf("other-api"))) {
+            val token = staffToken(audience = audience)
+            val deviceCode = startDeviceAuthorization()
+            approve(userCodeFor(deviceCode), "event-1", edgeDeviceId, token = token)
+                .andExpect(status().isUnauthorized)
+            revoke("event-1", edgeDeviceId, staffToken = token)
+                .andExpect(status().isUnauthorized)
+        }
+    }
+
+    @Test
+    fun staffTokenWithInvalidTenantIdIsRejected() {
+        val token = staffToken(tenantId = "tenant a")
+        val deviceCode = startDeviceAuthorization()
+        approve(userCodeFor(deviceCode), "event-1", "bababababababab1", token = token)
+            .andExpect(status().isUnauthorized)
+        revoke("event-1", "bababababababab1", staffToken = token)
+            .andExpect(status().isUnauthorized)
     }
 
     @Test
@@ -804,7 +917,7 @@ open class DeviceAuthorizationFlowTests(
     private fun grant(edgeDeviceId: String): GrantRow =
         jdbcClient.sql(
             """
-            SELECT approved_at, absolute_expires_at, revoked_at
+            SELECT id, approved_at, absolute_expires_at, revoked_at
             FROM idp_device_grant WHERE edge_device_id = ?
             ORDER BY created_at DESC
             """.trimIndent(),
@@ -812,6 +925,7 @@ open class DeviceAuthorizationFlowTests(
             .param(edgeDeviceId)
             .query { rs, _ ->
                 GrantRow(
+                    id = rs.getString("id"),
                     approvedAt = rs.getTimestamp("approved_at").toInstant(),
                     absoluteExpiresAt = rs.getTimestamp("absolute_expires_at").toInstant(),
                     revokedAt = rs.getTimestamp("revoked_at")?.toInstant(),
@@ -860,12 +974,13 @@ open class DeviceAuthorizationFlowTests(
         subject: String = IdpUserDetailsManager.DEVELOPMENT_USER_ID,
         jti: String? = UUID.randomUUID().toString(),
         scope: String? = "events.manage",
+        audience: List<String> = listOf("backend-api"),
     ): String {
         val now = Instant.now()
         val claims = JwtClaimsSet.builder()
             .issuer("http://localhost:8080")
             .subject(subject)
-            .audience(listOf("backend-api"))
+            .audience(audience)
             .issuedAt(now)
             .notBefore(now)
             .expiresAt(now.plusSeconds(300))
@@ -898,6 +1013,7 @@ open class DeviceAuthorizationFlowTests(
     protected fun json(body: String) = tools.jackson.databind.json.JsonMapper.builder().build().readTree(body)
 
     private data class GrantRow(
+        val id: String,
         val approvedAt: Instant,
         val absoluteExpiresAt: Instant,
         val revokedAt: Instant?,

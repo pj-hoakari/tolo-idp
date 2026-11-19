@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.security.oauth2.server.authorization.autoconfigure.servlet.OAuth2AuthorizationServerProperties
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.core.AuthorizationGrantType
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod
@@ -318,6 +319,41 @@ class RegisteredClientConfigurationSynchronizerTests(
         assertNotNull(registeredClientRepository.findByClientId("client-123"))
     }
 
+    @Test
+    fun acceptsSupportedTokenEndpointAuthenticationSigningAlgorithm() {
+        synchronizer.synchronizeTestClients(
+            mapOf(
+                "signed-client" to configuredClient(
+                    clientId = "signed-client",
+                    authenticationMethods = setOf("private_key_jwt"),
+                    tokenEndpointAuthenticationSigningAlgorithm = "rs256",
+                ),
+            ),
+        )
+
+        val client = assertNotNull(registeredClientRepository.findByClientId("signed-client"))
+        assertEquals(SignatureAlgorithm.RS256, client.clientSettings.tokenEndpointAuthenticationSigningAlgorithm)
+        assertTrue(isConfigurationManaged("signed-client"))
+    }
+
+    @Test
+    fun rejectsUnknownTokenEndpointAuthenticationSigningAlgorithm() {
+        val failure = assertFailsWith<IllegalStateException> {
+            synchronizer.synchronizeTestClients(
+                mapOf(
+                    "bad-signing-client" to configuredClient(
+                        clientId = "bad-signing-client",
+                        authenticationMethods = setOf("private_key_jwt"),
+                        tokenEndpointAuthenticationSigningAlgorithm = "not-an-algorithm",
+                    ),
+                ),
+            )
+        }
+
+        assertTrue(failure.message!!.contains("not-an-algorithm"))
+        assertNull(registeredClientRepository.findByClientId("bad-signing-client"))
+    }
+
     private fun isConfigurationManaged(clientId: String): Boolean =
         jdbcTemplate.queryForObject(
             "SELECT configuration_managed FROM oauth2_registered_client WHERE client_id = ?",
@@ -331,6 +367,7 @@ class RegisteredClientConfigurationSynchronizerTests(
         redirectUris: Set<String> = setOf("http://127.0.0.1:8080/callback"),
         scopes: Set<String> = setOf("openid"),
         authenticationMethods: Set<String> = setOf("client_secret_basic"),
+        tokenEndpointAuthenticationSigningAlgorithm: String? = null,
     ): OAuth2AuthorizationServerProperties.Client {
         val client = OAuth2AuthorizationServerProperties.Client()
         client.registration.clientId = clientId
@@ -342,6 +379,9 @@ class RegisteredClientConfigurationSynchronizerTests(
         client.registration.scopes = scopes.toCollection(linkedSetOf())
         client.isRequireProofKey = false
         client.isRequireAuthorizationConsent = false
+        tokenEndpointAuthenticationSigningAlgorithm?.let {
+            client.tokenEndpointAuthenticationSigningAlgorithm = it
+        }
         return client
     }
 

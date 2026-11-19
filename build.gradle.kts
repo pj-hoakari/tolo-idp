@@ -1,5 +1,6 @@
 import org.springframework.boot.gradle.tasks.aot.ProcessAot
 import org.springframework.boot.gradle.tasks.bundling.BootBuildImage
+import java.math.BigDecimal
 
 plugins {
     kotlin("jvm") version "2.4.21"
@@ -8,6 +9,7 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
     id("org.graalvm.buildtools.native") version "1.1.18" apply false
     id("org.jetbrains.kotlinx.kover") version "0.9.11"
+    id("info.solidsoft.pitest") version "1.19.0"
 }
 
 group = "dev.usbharu"
@@ -82,6 +84,84 @@ tasks.withType<Test> {
             includeTags("unit")
         }
     }
+}
+
+val pitestSmoke = providers.gradleProperty("pitestSmoke").isPresent
+val pitestTargetClassesOverride = providers.gradleProperty("pitestTargetClasses").orNull
+val pitestTargetTestsOverride = providers.gradleProperty("pitestTargetTests").orNull
+
+fun pitestGlobs(value: String): Set<String> =
+    value.split(",").map(String::trim).filter(String::isNotEmpty).toSet()
+
+pitest {
+    // PIT 1.30.x supports Java 24 and the JUnit Platform 6 line.
+    // gradle-pitest-plugin 1.19.0 can corrupt the JUnit 6 test classpath when it
+    // adds the platform launcher itself, so use the existing testRuntimeOnly
+    // junit-platform-launcher dependency instead.
+    pitestVersion = "1.30.2"
+    junit5PluginVersion = "1.2.3"
+    addJUnitPlatformLauncher = false
+
+    val smokeClasses = setOf(
+        "dev.usbharu.toloidp.scope.*",
+        "dev.usbharu.toloidp.resource.*",
+        "dev.usbharu.toloidp.user.UserAccountRules*",
+    )
+    val smokeTests = setOf(
+        "dev.usbharu.toloidp.scope.ScopePolicyTests",
+        "dev.usbharu.toloidp.resource.ResourceParserTests",
+        "dev.usbharu.toloidp.user.UserAccountRulesTests",
+    )
+    targetClasses = when {
+        pitestTargetClassesOverride != null -> pitestGlobs(pitestTargetClassesOverride)
+        pitestSmoke -> smokeClasses
+        else -> setOf("dev.usbharu.toloidp.*")
+    }
+    targetTests = when {
+        pitestTargetTestsOverride != null -> pitestGlobs(pitestTargetTestsOverride)
+        pitestSmoke -> smokeTests
+        // Only real test classes. This also excludes the Spring AOT-generated
+        // *Tests__TestContext... classes that share the test runtime classpath.
+        else -> setOf("dev.usbharu.toloidp.*Tests", "dev.usbharu.toloidp.*Test")
+    }
+    excludedClasses = setOf(
+        "dev.usbharu.toloidp.ToloIdpApplication*",
+        // Kotlin compiler-generated enum dispatch helpers.
+        "dev.usbharu.toloidp.*\$WhenMappings",
+        // Copies of inline function bodies; the definition is mutated instead.
+        "dev.usbharu.toloidp.*\$\$inlined\$*",
+    )
+    excludedTestClasses = setOf(
+        // Testcontainers based; keep it out of repeated mutation runs.
+        "dev.usbharu.toloidp.security.DeviceAuthorizationPostgresFlowTests",
+    )
+    // Logging is not a security boundary. Include the project wrapper in addition
+    // to PIT's defaults so its call sites are not reported as survivors.
+    avoidCallsTo = setOf(
+        "java.util.logging",
+        "org.apache.log4j",
+        "org.slf4j",
+        "org.apache.commons.logging",
+        "dev.usbharu.toloidp.logging",
+    )
+
+    outputFormats = setOf("HTML", "XML")
+    timestampedReports = false
+    reportDir.set(
+        providers.gradleProperty("pitestReportDir")
+            .flatMap { layout.buildDirectory.dir("reports/$it") }
+            .orElse(layout.buildDirectory.dir("reports/pitest")),
+    )
+    threads = if (pitestSmoke) 1 else providers.gradleProperty("pitestThreads").orNull?.toInt() ?: 4
+    timeoutConstInMillis = 10_000
+    timeoutFactor = BigDecimal("1.5")
+    jvmArgs = listOf("-Xmx1g")
+    verbose = pitestSmoke || providers.gradleProperty("pitestVerbose").isPresent
+    enableDefaultIncrementalAnalysis.set(providers.gradleProperty("pitestHistory").isPresent)
+}
+
+tasks.withType<JavaExec>().matching { it.name.startsWith("pitest") }.configureEach {
+    javaLauncher.set(javaToolchains.launcherFor(java.toolchain))
 }
 
 tasks.withType<ProcessAot>().configureEach {

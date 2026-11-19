@@ -10,6 +10,7 @@ import java.time.ZoneOffset
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 @SpringBootTest(properties = ["tolo-idp.seed.enabled=false"])
@@ -100,6 +101,10 @@ class AuditServiceTests(
         assertContains(row.payload, """"payloadTruncated":true""")
         assertContains(row.payload, """"payloadSha256":""")
         assertContains(row.payload, """"payloadLength":""")
+        assertContains(row.payload, """"requestedAudienceLength":300""")
+        assertContains(row.payload, """"requestedResourceLength":${resource.length}""")
+        val digest = Regex(""""payloadSha256":"([A-Za-z0-9_-]{43})"""").find(row.payload)
+        assertNotNull(digest, "payloadSha256 must contain an unpadded Base64 SHA-256 digest")
         assertFalse(row.payload.contains(audience))
         assertFalse(row.payload.contains(resource))
     }
@@ -150,6 +155,20 @@ class AuditServiceTests(
         val stored = repository.findAll().single().requestedAudience.orEmpty()
         assertTrue(stored.length <= 200)
         assertTrue(stored.endsWith("...[truncated]"))
-        assertFalse(stored.last().isHighSurrogate())
+
+        var index = 0
+        while (index < stored.length) {
+            val character = stored[index]
+            if (character.isHighSurrogate()) {
+                assertTrue(
+                    index + 1 < stored.length && stored[index + 1].isLowSurrogate(),
+                    "unpaired high surrogate at index $index",
+                )
+                index += 2
+            } else {
+                assertFalse(character.isLowSurrogate(), "unpaired low surrogate at index $index")
+                index += 1
+            }
+        }
     }
 }

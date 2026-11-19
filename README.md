@@ -133,6 +133,35 @@ docker compose -f docker-compose.dev-jvm.yaml down
 
 CI と公開手順は [CI.md](CI.md) を参照してください。
 
+### Mutation testing
+
+PIT による mutation testing をローカルで実行できます。通常の `test` / `build` には含まれません。
+
+```bash
+# 全体。環境により数十分〜数時間かかります（実測: 4並列で約36分、6並列で約21分）。
+./gradlew pitest
+
+# 動作確認用の小さな対象（scope / resource / UserAccountRules）
+./gradlew pitest -PpitestSmoke
+
+# 対象を絞る
+./gradlew pitest \
+  '-PpitestTargetClasses=dev.usbharu.toloidp.scope.*' \
+  '-PpitestTargetTests=dev.usbharu.toloidp.scope.ScopePolicyTests'
+```
+
+レポートは `build/reports/pitest/index.html` と `build/reports/pitest/mutations.xml` に出力されます。
+
+- PIT 1.30.2 と `pitest-junit5-plugin` 1.2.3 を使用します。
+- JUnit Platform 6 の launcher は既存の `testRuntimeOnly` から使うため、`addJUnitPlatformLauncher` は無効にしています。
+- 並列数は既定で 4 です。`-PpitestThreads=6` で変更できます。
+- 2 回目以降は `-PpitestHistory` を付けると PIT の incremental analysis が有効になります。
+- Testcontainers を使う `DeviceAuthorizationPostgresFlowTests` は PIT の対象から除外しています。
+- `-PunitOnly` は Gradle の `test` タスクだけを絞るため、PIT には影響しません。
+- Arcmutate の Kotlin / Spring プラグインはライセンスが必要なため使用していません。Kotlin の基本的な junk mutant は PIT の `FKOTLIN` フィルタで除外されます。
+- mutation score の閾値はまだ設定していません。直近の全体実行は 1,845 mutants、Killed 1,603（87%）、Test strength 90%、実行時間 20分54秒（6並列）でした。187 件が SURVIVED、55 件が NO_COVERAGE で、このうち 136 件は Kotlin の null チェック由来のノイズです。初回は 2,039 mutants / Killed 1,615（79%）でしたが、`avoidCallsTo` への `dev.usbharu.toloidp.logging` 追加と survivor 対応テストで改善しました。
+- PIT は実行ごとに `build/reports/pitest` を上書きします。レポートを残したい場合は `-PpitestReportDir=pitest-full` のように出力先を分けられます。対象を絞った再実行は `-PpitestTargetClasses` と `-PpitestTargetTests` で行ってください。
+
 ユーザーは `(tenantId, username)` ごとに管理し、別テナントの同名ユーザーを登録できます。UUID は内部主キーと JWT の `sub` に使い、Relation Service にも `(tenantId, sub)` を渡します。開発用 seed は `src/main/resources/seed/users.json` で定義し、既定では `(0123456789abcdef, user-123)`、内部主キーは `71c68dc1-2c72-45ac-a191-1c47c1551011` です。V6 は tenant 情報のない旧ユーザーテーブルを作り直し、開発用ユーザーを seed で再作成します。
 
 認可要求には `resource` に tenant resource（例: `https://api.example.com/tenants/0123456789abcdef`）を指定します。ログイン状態がない要求と `prompt=login` の要求は、Web のログイン画面（開発環境では `http://localhost:3000/login`）へ `challenge` を付けてリダイレクトします。ログイン画面は `POST /api/login` に `username`、`password`、`challenge` を送り、成功したら `/oauth2/authorize?challenge=...` を開いて元の認可要求を再開します。詳しくは [spec.md](spec.md) の 4.1 節と 4.1.3 節を参照してください。

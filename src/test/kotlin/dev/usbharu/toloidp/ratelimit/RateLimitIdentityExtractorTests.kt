@@ -86,6 +86,42 @@ class RateLimitIdentityExtractorTests(
     }
 
     @Test
+    fun unauthenticatedOrBlankPrincipalFallsBackToIp() {
+        SecurityContextHolder.getContext().authentication =
+            UsernamePasswordAuthenticationToken("user-123", null)
+        val request = MockHttpServletRequest("GET", "/actuator/health").apply {
+            remoteAddr = "192.0.2.10"
+        }
+        assertNull(extractor.identity(request).userId)
+
+        SecurityContextHolder.getContext().authentication =
+            UsernamePasswordAuthenticationToken.authenticated("", null, emptyList())
+        assertNull(extractor.identity(request).userId)
+    }
+
+    @Test
+    fun nonJsonOrUncachedLoginRequestFallsBackToIp() {
+        val nonJson = MockHttpServletRequest("POST", "/api/login").apply {
+            remoteAddr = "192.0.2.10"
+            contentType = MediaType.TEXT_PLAIN_VALUE
+            setContent("""{"username":"user-123","challenge":"challenge-a"}""".toByteArray())
+        }
+        assertNull(extractor.identity(nonJson).userId)
+        assertNull(extractor.identity(
+            loginRequest("""{"username":"user-123","challenge":"challenge-a"}"""),
+        ).userId)
+    }
+
+    @Test
+    fun emptyOrBlankLoginFieldsFallBackToIp() {
+        assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(""))).userId)
+        assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":" ","challenge":"challenge-a"}"""))).userId)
+        assertNull(extractor.identity(CachedBodyHttpServletRequest(loginRequest(
+            """{"username":"user-123","challenge":" "}"""))).userId)
+    }
+
+    @Test
     fun tokenExchangeRequestDoesNotUseUnvalidatedJwtClaims() {
         val request = MockHttpServletRequest("POST", "/oauth2/token").apply {
             remoteAddr = "192.0.2.10"

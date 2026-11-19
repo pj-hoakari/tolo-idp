@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -71,6 +72,7 @@ class RateLimitFilterTests(
 
         mockMvc.perform(get("/actuator/health").withRemoteAddr("192.0.2.10"))
             .andExpect(status().isTooManyRequests)
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(header().string("Retry-After", "3"))
             .andExpect(jsonPath("$.error").value("rate_limited"))
 
@@ -186,6 +188,7 @@ class RateLimitFilterTests(
 
         mockMvc.perform(get("/actuator/health").withRemoteAddr("192.0.2.13"))
             .andExpect(status().isServiceUnavailable)
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.error").value("rate_limit_unavailable"))
     }
 
