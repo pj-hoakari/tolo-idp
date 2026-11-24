@@ -13,11 +13,17 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.eq
+import org.mockito.Mockito.clearInvocations
+import org.mockito.Mockito.verify
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -37,8 +43,11 @@ class LoginControllerTests(
     @Autowired private val jsonMapper: JsonMapper,
     @Autowired private val users: IdpUserDetailsManager,
 ) {
+    @MockitoSpyBean private lateinit var encoder: PasswordEncoder
+
     @BeforeEach
     fun setUp() {
+        clearInvocations(encoder)
         cacheRepository.deleteAll()
         cacheRepository.save(
             RelationMembershipCache(
@@ -82,6 +91,7 @@ class LoginControllerTests(
         try {
             mockMvc.perform(loginRequest("disabled-user", "password"))
                 .andExpect(status().isUnauthorized)
+            verify(encoder).matches(eq("password"), anyString())
         } finally {
             users.deleteUser("tenant-a", "disabled-user")
         }
@@ -97,6 +107,7 @@ class LoginControllerTests(
     fun loginRejectsUnknownUser() {
         mockMvc.perform(loginRequest("missing-user", "password"))
             .andExpect(status().isUnauthorized)
+        verify(encoder).matches(eq("password"), anyString())
     }
 
     @Test

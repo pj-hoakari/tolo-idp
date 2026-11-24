@@ -29,6 +29,8 @@ class LoginController(
     private val challenges: LoginChallenges,
     private val clock: Clock,
 ) {
+    private val unknownUserPassword: String = passwordEncoder.encode(UUID.randomUUID().toString())!!
+
     @PostMapping("/login")
     fun login(
         @RequestBody request: LoginRequest,
@@ -43,6 +45,7 @@ class LoginController(
         val user = try {
             userDetailsService.loadUserByUsername(tenantId, request.username)
         } catch (ex: RuntimeException) {
+            passwordEncoder.matches(request.password, unknownUserPassword)
             log.structuredWarn(
                 "Login rejected",
                 ex,
@@ -53,7 +56,8 @@ class LoginController(
             )
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bad credentials")
         }
-        if (!user.isEnabled || !passwordEncoder.matches(request.password, user.password)) {
+        val passwordMatches = passwordEncoder.matches(request.password, user.password)
+        if (!user.isEnabled || !passwordMatches) {
             log.structuredWarn(
                 "Login rejected",
                 "event" to "login_rejected",
