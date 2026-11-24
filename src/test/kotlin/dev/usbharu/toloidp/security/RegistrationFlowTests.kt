@@ -12,9 +12,13 @@ import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.mock.web.MockHttpSession
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
@@ -48,6 +52,8 @@ class RegistrationFlowTests(
     @Autowired private val users: IdpUserDetailsManager,
     @Autowired private val clients: RegisteredClientRepository,
     @Autowired private val passwordEncoder: PasswordEncoder,
+    @Autowired private val jdbc: JdbcTemplate,
+    @Autowired private val authorizations: OAuth2AuthorizationService,
 ) {
     @Test
     fun signupCreatesTheUserInTheChallengeTenantAndIssuesARegistrationToken() {
@@ -208,14 +214,16 @@ class RegistrationFlowTests(
     @Test
     fun validGrantIsVerifiedOnceBeforeTheChallengeAndNotWhenTheChallengeResumes(output: CapturedOutput) {
         val token = RegistrationGrantStub.validToken()
-        val challenge = mvc.challengeFrom(authorize(grant = INVITATION_TOKEN to token))
+        val state = "state-${UUID.randomUUID()}"
+        val challenge = mvc.challengeFrom(authorize(grant = INVITATION_TOKEN to token, state = state))
         assertEquals(listOf(NEW_TENANT), RegistrationGrantStub.verificationsOf(token).map { it.tenantId })
+        assertWithoutGrant(storedChallengeRequest(state), INVITATION_TOKEN, token)
         val session = mvc.perform(signupRequest(challenge, uniqueUsername())).andExpect(status().isCreated)
             .andReturn().request.session as MockHttpSession
 
-        val tokens = exchange(mvc.perform(resumeAuthorization(challenge, session)))
+        val code = codeFrom(mvc.perform(resumeAuthorization(challenge, session)))
 
-        assertEquals("tenant.join", tokens["scope"].stringValue())
+        assertWithoutGrant(persistedAuthorization(code), INVITATION_TOKEN, token)
         assertEquals(1, RegistrationGrantStub.verificationsOf(token).size)
         assertFalse(output.all.contains(token))
     }
@@ -228,9 +236,10 @@ class RegistrationFlowTests(
         exchange(mvc.perform(resumeAuthorization(first, session)))
         val token = RegistrationGrantStub.validToken()
 
-        codeFrom(mvc.perform(authorize(grant = OWNERSHIP_CLAIM_TOKEN to token).session(session)))
+        val code = codeFrom(mvc.perform(authorize(grant = OWNERSHIP_CLAIM_TOKEN to token).session(session)))
 
         assertEquals(listOf(NEW_TENANT), RegistrationGrantStub.verificationsOf(token).map { it.tenantId })
+        assertWithoutGrant(persistedAuthorization(code), OWNERSHIP_CLAIM_TOKEN, token)
         val invalid = RegistrationGrantStub.invalidToken()
         assertClientError(mvc.perform(authorize(grant = OWNERSHIP_CLAIM_TOKEN to invalid).session(session)), "access_denied")
         assertFalse(output.all.contains(token))
@@ -278,10 +287,29 @@ class RegistrationFlowTests(
     @Test
     fun tenantAccessIgnoresRegistrationGrantParameters() {
         val token = RegistrationGrantStub.invalidToken()
+        val state = "state-${UUID.randomUUID()}"
 
-        mvc.challengeFrom(authorize(scope = "openid tenant.read", resource = "https://api.example.com/tenants/tenant-a", grant = INVITATION_TOKEN to token))
+        mvc.challengeFrom(
+            authorize(scope = "openid tenant.read", resource = "https://api.example.com/tenants/tenant-a", grant = INVITATION_TOKEN to token, state = state),
+        )
 
         assertTrue(RegistrationGrantStub.verificationsOf(token).isEmpty())
+        assertWithoutGrant(storedChallengeRequest(state), INVITATION_TOKEN, token)
+    }
+
+    private fun storedChallengeRequest(state: String): String =
+        jdbc.queryForList("SELECT authorization_request FROM idp_login_challenge", String::class.java).filterNotNull().single { state in it }
+
+    private fun persistedAuthorization(code: String): String {
+        val authorization = checkNotNull(authorizations.findByToken(code, OAuth2TokenType(OAuth2ParameterNames.CODE)))
+        val attributes = checkNotNull(jdbc.queryForObject("SELECT attributes FROM oauth2_authorization WHERE id = ?", ByteArray::class.java, authorization.id))
+        return attributes.decodeToString()
+    }
+
+    private fun assertWithoutGrant(stored: String, parameter: String, token: String) {
+        assertTrue(stored.contains("\"${OAuth2ParameterNames.RESOURCE}\""))
+        assertFalse(stored.contains(parameter))
+        assertFalse(stored.contains(token))
     }
 
     private fun assertClientError(result: ResultActions, error: String): String {
@@ -303,9 +331,10 @@ class RegistrationFlowTests(
         scope: String = "tenant.join",
         resource: String = NEW_TENANT_RESOURCE,
         grant: Pair<String, String>? = OWNERSHIP_CLAIM_TOKEN to RegistrationGrantStub.validToken(),
+        state: String = "request-state",
     ): MockHttpServletRequestBuilder =
         get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
-            .queryParam("redirect_uri", REDIRECT).queryParam("scope", scope).queryParam("state", "request-state")
+            .queryParam("redirect_uri", REDIRECT).queryParam("scope", scope).queryParam("state", state)
             .queryParam("resource", resource)
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
             .apply { if (grant != null) queryParam(grant.first, grant.second) }

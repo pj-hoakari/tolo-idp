@@ -45,7 +45,7 @@ class AuthorizationRequestConverter(
 
         val additionalParameters = converted.additionalParameters.toMutableMap()
         val registrationGrantParameters = RegistrationGrantType.entries
-            .mapNotNull { type -> additionalParameters[type.parameter]?.let { type to it } }
+            .mapNotNull { type -> additionalParameters.remove(type.parameter)?.let { type to it } }
             .toMap()
         return AuthorizationRequestToken(converted, additionalParameters, authorizationRequest, resumed, registrationGrantParameters)
     }
