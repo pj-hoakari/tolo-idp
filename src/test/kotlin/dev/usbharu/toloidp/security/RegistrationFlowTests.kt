@@ -3,18 +3,27 @@ package dev.usbharu.toloidp.security
 import dev.usbharu.toloidp.scope.IdpScopes
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.mock.web.MockHttpSession
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames
 import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenType
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
@@ -35,6 +44,7 @@ import kotlin.test.assertTrue
 
 @SpringBootTest(properties = ["spring.datasource.url=jdbc:h2:mem:registration-flow;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false"])
 @AutoConfigureMockMvc
+@ExtendWith(OutputCaptureExtension::class)
 class RegistrationFlowTests(
     @Autowired private val mvc: MockMvc,
     @Autowired private val json: JsonMapper,
@@ -42,6 +52,8 @@ class RegistrationFlowTests(
     @Autowired private val users: IdpUserDetailsManager,
     @Autowired private val clients: RegisteredClientRepository,
     @Autowired private val passwordEncoder: PasswordEncoder,
+    @Autowired private val jdbc: JdbcTemplate,
+    @Autowired private val authorizations: OAuth2AuthorizationService,
 ) {
     @Test
     fun signupCreatesTheUserInTheChallengeTenantAndIssuesARegistrationToken() {
@@ -199,17 +211,133 @@ class RegistrationFlowTests(
         assertEquals("invalid_scope", UriComponentsBuilder.fromUriString(location).build().queryParams.getFirst("error"))
     }
 
+    @Test
+    fun validGrantIsVerifiedOnceBeforeTheChallengeAndNotWhenTheChallengeResumes(output: CapturedOutput) {
+        val token = RegistrationGrantStub.validToken()
+        val state = "state-${UUID.randomUUID()}"
+        val challenge = mvc.challengeFrom(authorize(grant = INVITATION_TOKEN to token, state = state))
+        assertEquals(listOf(NEW_TENANT), RegistrationGrantStub.verificationsOf(token).map { it.tenantId })
+        assertWithoutGrant(storedChallengeRequest(state), INVITATION_TOKEN, token)
+        val session = mvc.perform(signupRequest(challenge, uniqueUsername())).andExpect(status().isCreated)
+            .andReturn().request.session as MockHttpSession
+
+        val code = codeFrom(mvc.perform(resumeAuthorization(challenge, session)))
+
+        assertWithoutGrant(persistedAuthorization(code), INVITATION_TOKEN, token)
+        assertEquals(1, RegistrationGrantStub.verificationsOf(token).size)
+        assertFalse(output.all.contains(token))
+    }
+
+    @Test
+    fun signedInRegistrationVerifiesTheGrantBeforeIssuingACode(output: CapturedOutput) {
+        val first = mvc.challengeFrom(authorize())
+        val session = mvc.perform(signupRequest(first, uniqueUsername())).andExpect(status().isCreated)
+            .andReturn().request.session as MockHttpSession
+        exchange(mvc.perform(resumeAuthorization(first, session)))
+        val token = RegistrationGrantStub.validToken()
+
+        val code = codeFrom(mvc.perform(authorize(grant = OWNERSHIP_CLAIM_TOKEN to token).session(session)))
+
+        assertEquals(listOf(NEW_TENANT), RegistrationGrantStub.verificationsOf(token).map { it.tenantId })
+        assertWithoutGrant(persistedAuthorization(code), OWNERSHIP_CLAIM_TOKEN, token)
+        val invalid = RegistrationGrantStub.invalidToken()
+        assertClientError(mvc.perform(authorize(grant = OWNERSHIP_CLAIM_TOKEN to invalid).session(session)), "access_denied")
+        assertFalse(output.all.contains(token))
+        assertFalse(output.all.contains(invalid))
+    }
+
+    @Test
+    fun registrationRequiresExactlyOneWellFormedGrant() {
+        val first = RegistrationGrantStub.validToken()
+        val second = RegistrationGrantStub.validToken()
+        listOf(
+            authorize(grant = null),
+            authorize(grant = INVITATION_TOKEN to first).queryParam(OWNERSHIP_CLAIM_TOKEN, second),
+            authorize(grant = INVITATION_TOKEN to first).queryParam(INVITATION_TOKEN, second),
+            authorize(grant = OWNERSHIP_CLAIM_TOKEN to ""),
+            authorize(grant = OWNERSHIP_CLAIM_TOKEN to " "),
+        ).forEach { assertClientError(mvc.perform(it), "invalid_request") }
+        assertTrue(RegistrationGrantStub.verificationsOf(first).isEmpty())
+        assertTrue(RegistrationGrantStub.verificationsOf(second).isEmpty())
+    }
+
+    @Test
+    fun invalidGrantIsDeniedWithoutAChallenge(output: CapturedOutput) {
+        val token = RegistrationGrantStub.invalidToken()
+
+        val location = assertClientError(mvc.perform(authorize(grant = INVITATION_TOKEN to token)), "access_denied")
+
+        assertFalse(location.contains(token))
+        assertEquals(listOf(NEW_TENANT), RegistrationGrantStub.verificationsOf(token).map { it.tenantId })
+        assertFalse(output.all.contains(token))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["404", "500", "answerless"])
+    fun unavailableGrantVerificationFailsClosed(failure: String, output: CapturedOutput) {
+        val token = failure.toIntOrNull()?.let(RegistrationGrantStub::failingToken) ?: RegistrationGrantStub.answerlessToken()
+
+        val location = assertClientError(mvc.perform(authorize(grant = INVITATION_TOKEN to token)), "temporarily_unavailable")
+
+        assertFalse(location.contains(token))
+        assertEquals(1, RegistrationGrantStub.verificationsOf(token).size)
+        assertFalse(output.all.contains(token))
+    }
+
+    @Test
+    fun tenantAccessIgnoresRegistrationGrantParameters() {
+        val token = RegistrationGrantStub.invalidToken()
+        val state = "state-${UUID.randomUUID()}"
+
+        mvc.challengeFrom(
+            authorize(scope = "openid tenant.read", resource = "https://api.example.com/tenants/tenant-a", grant = INVITATION_TOKEN to token, state = state),
+        )
+
+        assertTrue(RegistrationGrantStub.verificationsOf(token).isEmpty())
+        assertWithoutGrant(storedChallengeRequest(state), INVITATION_TOKEN, token)
+    }
+
+    private fun storedChallengeRequest(state: String): String =
+        jdbc.queryForList("SELECT authorization_request FROM idp_login_challenge", String::class.java).filterNotNull().single { state in it }
+
+    private fun persistedAuthorization(code: String): String {
+        val authorization = checkNotNull(authorizations.findByToken(code, OAuth2TokenType(OAuth2ParameterNames.CODE)))
+        val attributes = checkNotNull(jdbc.queryForObject("SELECT attributes FROM oauth2_authorization WHERE id = ?", ByteArray::class.java, authorization.id))
+        return attributes.decodeToString()
+    }
+
+    private fun assertWithoutGrant(stored: String, parameter: String, token: String) {
+        assertTrue(stored.contains("\"${OAuth2ParameterNames.RESOURCE}\""))
+        assertFalse(stored.contains(parameter))
+        assertFalse(stored.contains(token))
+    }
+
+    private fun assertClientError(result: ResultActions, error: String): String {
+        val location = result.andExpect(status().isFound).andReturn().response.redirectedUrl!!
+        assertTrue(location.startsWith("$REDIRECT?"))
+        val parameters = UriComponentsBuilder.fromUriString(location).build().queryParams
+        assertEquals(error, parameters.getFirst("error"))
+        assertEquals("request-state", parameters.getFirst("state"))
+        return location
+    }
+
     private fun uniqueUsername() = "owner-${UUID.randomUUID().toString().take(8)}"
 
     private fun signupRequest(challenge: String, username: String, password: String = "correct horse", extra: String = ""): MockHttpServletRequestBuilder =
         post("/api/signup").contentType(MediaType.APPLICATION_JSON)
             .content(json.writeValueAsString(mapOf("username" to username, "password" to password, "challenge" to challenge)).dropLast(1) + extra + "}")
 
-    private fun authorize(scope: String = "tenant.join", resource: String = NEW_TENANT_RESOURCE): MockHttpServletRequestBuilder =
+    private fun authorize(
+        scope: String = "tenant.join",
+        resource: String = NEW_TENANT_RESOURCE,
+        grant: Pair<String, String>? = OWNERSHIP_CLAIM_TOKEN to RegistrationGrantStub.validToken(),
+        state: String = "request-state",
+    ): MockHttpServletRequestBuilder =
         get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
-            .queryParam("redirect_uri", REDIRECT).queryParam("scope", scope).queryParam("state", "request-state")
+            .queryParam("redirect_uri", REDIRECT).queryParam("scope", scope).queryParam("state", state)
             .queryParam("resource", resource)
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256")
+            .apply { if (grant != null) queryParam(grant.first, grant.second) }
 
     private fun exchange(result: ResultActions): JsonNode {
         val code = codeFrom(result)
@@ -230,5 +358,11 @@ class RegistrationFlowTests(
         private const val REDIRECT = "http://127.0.0.1:8080/login/oauth2/code/client-123"
         private const val NEW_TENANT = "tenant-new"
         private const val NEW_TENANT_RESOURCE = "https://api.example.com/tenants/tenant-new"
+        private const val INVITATION_TOKEN = "invitation_token"
+        private const val OWNERSHIP_CLAIM_TOKEN = "ownership_claim_token"
+
+        @JvmStatic
+        @DynamicPropertySource
+        fun registrationGrants(registry: DynamicPropertyRegistry) = RegistrationGrantStub.register(registry)
     }
 }

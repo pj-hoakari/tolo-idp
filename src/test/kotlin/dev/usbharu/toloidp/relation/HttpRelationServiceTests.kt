@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.relation
 
+import ch.qos.logback.classic.Level
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import dev.usbharu.toloidp.config.IdpProperties
@@ -9,6 +10,15 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.extension.ExtendWith
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
+import tools.jackson.databind.json.JsonMapper
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -18,8 +28,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@ExtendWith(OutputCaptureExtension::class)
 class HttpRelationServiceTests {
     private lateinit var server: HttpServer
     private lateinit var service: HttpRelationService
@@ -252,6 +265,96 @@ class HttpRelationServiceTests {
         }
     }
 
+    @Test
+    fun verifiesARegistrationGrantWithTheTokenOnlyInTheRequestBody(output: CapturedOutput) {
+        val requests = mutableListOf<RecordedRequest>()
+        answerGrantVerification(200, "application/json", """{"valid":true}""", requests)
+
+        val root = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as ch.qos.logback.classic.Logger
+        val level = root.level
+        root.level = Level.TRACE
+        val verdict = try {
+            service.verify("tenant-a", RegistrationGrant(RegistrationGrantType.INVITATION, GRANT_TOKEN))
+        } finally {
+            root.level = level
+        }
+
+        assertEquals(RegistrationGrantVerdict.VALID, verdict)
+        val request = requests.single()
+        assertEquals("POST", request.method)
+        assertEquals("/tenants/tenant-a/registration-grants/verify", request.path)
+        assertNull(request.query)
+        assertTrue(request.contentType.orEmpty().startsWith("application/json"))
+        assertEquals(mapOf("invitation_token" to GRANT_TOKEN), JsonMapper().readValue(request.body, Map::class.java))
+        assertFalse(output.all.contains(GRANT_TOKEN))
+    }
+
+    @Test
+    fun reportsAnInvalidOwnershipClaimToken() {
+        val requests = mutableListOf<RecordedRequest>()
+        answerGrantVerification(200, "application/json", """{"valid":false}""", requests)
+
+        val verdict = service.verify("tenant-a", RegistrationGrant(RegistrationGrantType.OWNERSHIP_CLAIM, GRANT_TOKEN))
+
+        assertEquals(RegistrationGrantVerdict.INVALID, verdict)
+        assertEquals(mapOf("ownership_claim_token" to GRANT_TOKEN), JsonMapper().readValue(requests.single().body, Map::class.java))
+    }
+
+    @ParameterizedTest
+    @MethodSource("responsesWithoutAVerdict")
+    fun treatsAnythingButAnOkWithABooleanValidAsUnavailable(status: Int, contentType: String, body: String, output: CapturedOutput) {
+        answerGrantVerification(status, contentType, body, mutableListOf())
+
+        val verdict = service.verify("tenant-a", RegistrationGrant(RegistrationGrantType.INVITATION, GRANT_TOKEN))
+
+        assertEquals(RegistrationGrantVerdict.UNAVAILABLE, verdict)
+        assertFalse(output.all.contains(GRANT_TOKEN))
+    }
+
+    @Test
+    fun treatsAnUnreachableRelationServiceAsUnavailable(output: CapturedOutput) {
+        val closedPort = ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()).use { it.localPort }
+        val unreachable = HttpRelationService(
+            IdpProperties(
+                relation = IdpProperties.Relation(
+                    baseUrl = "http://127.0.0.1:$closedPort",
+                    connectTimeout = Duration.ofSeconds(1),
+                ),
+            ),
+            parser,
+        )
+
+        val verdict = unreachable.verify("tenant-a", RegistrationGrant(RegistrationGrantType.INVITATION, GRANT_TOKEN))
+
+        assertEquals(RegistrationGrantVerdict.UNAVAILABLE, verdict)
+        assertFalse(output.all.contains(GRANT_TOKEN))
+    }
+
+    private fun answerGrantVerification(status: Int, contentType: String, body: String, requests: MutableList<RecordedRequest>) {
+        server.createContext("/") { exchange ->
+            requests += RecordedRequest(
+                exchange.requestMethod,
+                exchange.requestURI.rawPath,
+                exchange.requestURI.rawQuery,
+                exchange.requestHeaders.getFirst("Content-Type"),
+                exchange.requestBody.readAllBytes().decodeToString(),
+            )
+            val bytes = body.toByteArray()
+            exchange.responseHeaders.add("Content-Type", contentType)
+            if (status in 300..399) exchange.responseHeaders.add("Location", "/elsewhere")
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    private data class RecordedRequest(
+        val method: String,
+        val path: String,
+        val query: String?,
+        val contentType: String?,
+        val body: String,
+    )
+
     private fun respondWith(status: Int, body: String) {
         server.createContext("/") { exchange ->
             if (exchange.requestURI.rawPath == "/tenants/tenant-a/users/user-123/memberships") {
@@ -267,5 +370,25 @@ class HttpRelationServiceTests {
         responseHeaders.add("Content-Type", "application/json")
         sendResponseHeaders(status, bytes.size.toLong())
         responseBody.use { it.write(bytes) }
+    }
+
+    companion object {
+        private const val GRANT_TOKEN = "grant-token-value-7f3a"
+
+        @JvmStatic
+        fun responsesWithoutAVerdict(): List<Arguments> = listOf(
+            Arguments.of(200, "application/json", "{}"),
+            Arguments.of(200, "application/json", """{"valid":null}"""),
+            Arguments.of(200, "application/json", """{"valid":"true"}"""),
+            Arguments.of(200, "application/json", """[{"valid":true}]"""),
+            Arguments.of(200, "application/json", "not json"),
+            Arguments.of(200, "text/plain", "valid"),
+            Arguments.of(201, "application/json", """{"valid":true}"""),
+            Arguments.of(302, "application/json", """{"valid":true}"""),
+            Arguments.of(400, "application/json", """{"error":"invalid body"}"""),
+            Arguments.of(404, "application/json", """{"valid":false}"""),
+            Arguments.of(500, "application/json", """{"valid":true}"""),
+            Arguments.of(503, "text/plain", "unavailable"),
+        )
     }
 }

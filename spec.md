@@ -139,7 +139,7 @@ access token に `profile` scope が含まれる場合、現在の username を 
 
 認可要求は `resource` に 12.2 節の tenant resource を1つ指定する。省略した要求は `invalid_request`、形式や host が許可されない要求は `invalid_target` とする。tenant はこの `resource` だけから決め、ログイン状態から補わない。tenant / membership 不許可は `access_denied` とし、詳細な理由は返さない。token endpoint の発行拒否は従来どおり `invalid_grant` とする。
 
-ログイン状態がない要求、ログインしたユーザーが要求の tenant のユーザーでない要求、再ログインが必要な要求には、一回限りの login challenge を発行する。registration の認可要求（11.3）も同じとし、別の tenant のログイン状態をログイン済みとして扱わない。発行の前に、client policy、`resource`、`audience`、OIDC のパラメータを検証する。membership と role による scope の検証は、ログイン後に要求を再開したときに行う。IdP は challenge を元の認可要求のパラメータと組にして保存し、ブラウザを `<ログイン画面の URL>?challenge=<challenge>` へ `302` でリダイレクトする。ほかのパラメータは付けない。
+ログイン状態がない要求、ログインしたユーザーが要求の tenant のユーザーでない要求、再ログインが必要な要求には、一回限りの login challenge を発行する。registration の認可要求（11.3）も同じとし、別の tenant のログイン状態をログイン済みとして扱わない。発行の前に、client policy、`resource`、`audience`、OIDC のパラメータを検証する。registration の認可要求では、招待トークンまたは所有権取得トークン（11.3）も検証する。membership と role による scope の検証は、ログイン後に要求を再開したときに行う。IdP は challenge を元の認可要求のパラメータと組にして保存し、ブラウザを `<ログイン画面の URL>?challenge=<challenge>` へ `302` でリダイレクトする。ほかのパラメータは付けない。保存するパラメータに `invitation_token` と `ownership_claim_token` は含めない。
 
 challenge は 256 bit の乱数を base64url で表した値とし、発行から10分で期限が切れる。IdP は challenge の SHA-256 ハッシュだけを DB の `idp_login_challenge` に保存し、challenge の値をログに出さない。期限切れの challenge は次の challenge を発行するときに削除する。保存する認可要求は JSON で 8 KiB までとし、超える要求には challenge を発行せず、エラー画面へ `error=invalid_request` でリダイレクトする。
 
@@ -664,6 +664,27 @@ CSRF はこの内部 API では無効化する。
 
 X.509 client certificate がない場合は `401 Unauthorized`、allow-list 外の subject/CN の場合は `403 Forbidden` とする。
 
+### 10.8 registration の認可要求のトークン照会
+
+registration の認可要求（11.3）では、Authorization Server は招待トークンまたは所有権取得トークンが `resource` の tenant で有効かを relation service に照会する。接続先は 10.1 と同じ relation service（`tolo-idp.relation.base-url`）とする。
+
+```http
+POST /tenants/{tenantId}/registration-grants/verify
+Content-Type: application/json
+
+{ "invitation_token": "<招待トークン>" }
+```
+
+本文は `{"invitation_token": "..."}` と `{"ownership_claim_token": "..."}` のどちらか1つとし、キーは認可要求のパラメータ名と同じにする。トークンは URL に載せない。relation service は有効かどうかだけを `200 {"valid": true}` または `200 {"valid": false}` で返し、無効の理由を区別しない。未知の tenant には `{"valid": false}` を返す。
+
+Authorization Server は照会の結果を以下のように扱う。結果はキャッシュしない。
+
+```text
+- 200 で valid が true の場合、有効とする
+- 200 で valid が false の場合、無効とする
+- それ以外（200 以外の status、通信失敗、timeout、valid が真偽値でない本文）は照会の失敗とする
+```
+
 ---
 
 ## 11. scope 発行ルール
@@ -729,7 +750,13 @@ resource の `eventId` に一致する event が `event_roles` に存在しな�
 
 scope が `tenant.join` だけの認可要求には、tenant_access の代わりに registration token（5.3）を発行する。`tenant.join` と、`openid`、`profile`、業務 scope のいずれかとの併用は `invalid_scope` とする。このため registration の認可では ID Token を発行しない。
 
-認可要求には、tenant_access と同じく対象 tenant の `resource` を1つ指定する。IdP はその tenant のユーザーとしてログインまたはサインアップ（4.1.5）させる。所属はまだないので、relation service への問い合わせは行わない。
+認可要求には、tenant_access と同じく対象 tenant の `resource` を1つ指定する。IdP はその tenant のユーザーとしてログインまたはサインアップ（4.1.5）させる。所属はまだないので、relation service に所属は問い合わせない。
+
+認可要求は、`invitation_token`（招待の受諾）と `ownership_claim_token`（仮テナントの所有権取得）のちょうど1つを、空白だけでない1つの値で持つ。どちらもない要求、両方ある要求、値が重複・空・空白だけの要求は `invalid_request` とする。IdP は値を trim しない。
+
+IdP は、login challenge を発行する前、またはログイン状態で認可を続ける前に、トークンが `resource` の tenant で有効かを relation service に照会する（10.8）。無効なら `access_denied`、照会に失敗したら `temporarily_unavailable` とし、challenge も認可コードも発行しない。下記の scope の検証は照会より先に行う。login challenge を認証した後に、保存した認可要求を再開するときは照会しない。challenge はトークンを検証した後にだけ発行するからである。
+
+`invitation_token` と `ownership_claim_token` は、login challenge と組にして保存する認可要求にも、保存する認可（`oauth2_authorization`）の認可要求にも含めない。ログ、監査ログ、エラー本文、client へのリダイレクトにも値を出さない。tenant_access の認可要求ではこの2つを照会に使わないが、保存もしない。
 
 以下を満たさない要求は、login challenge を発行する前に client へ `invalid_scope` を返す。
 
@@ -1196,6 +1223,8 @@ refresh token 本体
 client_secret
 authorization code
 password
+招待トークン（invitation_token）
+所有権取得トークン（ownership_claim_token）
 ```
 
 ### 19.3 result

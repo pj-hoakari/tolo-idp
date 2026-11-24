@@ -11,10 +11,15 @@ import dev.usbharu.toloidp.scope.RelationRole
 import dev.usbharu.toloidp.scope.UnknownRelationRoleException
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
+import org.springframework.http.StreamingHttpOutputMessage
 import org.springframework.http.client.JdkClientHttpRequestFactory
 import org.springframework.stereotype.Service
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
+import org.springframework.web.client.RestClientResponseException
+import tools.jackson.databind.JsonNode
+import tools.jackson.databind.json.JsonMapper
 import java.net.http.HttpClient
 
 /**
@@ -27,7 +32,7 @@ import java.net.http.HttpClient
 class HttpRelationService(
     properties: IdpProperties,
     private val resourceParser: ResourceParser,
-) : RelationService {
+) : RelationService, RegistrationGrantVerifier {
     private val restClient: RestClient = RestClient.builder()
         .baseUrl(properties.relation.baseUrl)
         .requestFactory(
@@ -107,6 +112,59 @@ class HttpRelationService(
             "event_count" to events.size,
         )
         return TenantMembership(tenantId, tenantRole, events)
+    }
+
+    override fun verify(tenantId: String, grant: RegistrationGrant): RegistrationGrantVerdict {
+        val verdict = try {
+            val response = restClient.post()
+                .uri("/tenants/{tenantId}/registration-grants/verify", tenantId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(StreamingHttpOutputMessage.Body { it.write(JsonMapper.shared().writeValueAsBytes(mapOf(grant.type.parameter to grant.token))) })
+                .retrieve()
+                .toEntity(JsonNode::class.java)
+            when (response.body?.get("valid")?.takeIf { response.statusCode == HttpStatus.OK && it.isBoolean }?.booleanValue()) {
+                true -> RegistrationGrantVerdict.VALID
+                false -> RegistrationGrantVerdict.INVALID
+                null -> grantVerificationFailed(tenantId, grant, "relation_response_invalid", response.statusCode.value())
+            }
+        } catch (ex: RestClientResponseException) {
+            grantVerificationFailed(tenantId, grant, "relation_lookup_failed", ex.statusCode.value())
+        } catch (ex: RuntimeException) {
+            log.structuredWarn(
+                "Registration grant verification failed",
+                ex,
+                "event" to "registration_grant_verification_failed",
+                "tenant_id" to tenantId,
+                "registration_grant_type" to grant.type.parameter,
+                "failure_reason" to "relation_lookup_failed",
+            )
+            RegistrationGrantVerdict.UNAVAILABLE
+        }
+        log.structuredDebug(
+            "Registration grant verification completed",
+            "event" to "registration_grant_verification_completed",
+            "tenant_id" to tenantId,
+            "registration_grant_type" to grant.type.parameter,
+            "result" to verdict.name.lowercase(),
+        )
+        return verdict
+    }
+
+    private fun grantVerificationFailed(
+        tenantId: String,
+        grant: RegistrationGrant,
+        reason: String,
+        status: Int,
+    ): RegistrationGrantVerdict {
+        log.structuredWarn(
+            "Registration grant verification failed",
+            "event" to "registration_grant_verification_failed",
+            "tenant_id" to tenantId,
+            "registration_grant_type" to grant.type.parameter,
+            "status" to status,
+            "failure_reason" to reason,
+        )
+        return RegistrationGrantVerdict.UNAVAILABLE
     }
 
     private inline fun <reified T : Any> getOrNull(path: String, vararg variables: String): T? {

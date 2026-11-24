@@ -12,6 +12,8 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.mock.web.MockHttpSession
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.MvcResult
@@ -92,6 +94,13 @@ class SignupConcurrencyTests(
             .queryParam("response_type", "code").queryParam("client_id", "client-123")
             .queryParam("redirect_uri", "http://127.0.0.1:8080/login/oauth2/code/client-123")
             .queryParam("scope", "tenant.join").queryParam("resource", "https://api.example.com/tenants/$tenant")
+            .queryParam("ownership_claim_token", RegistrationGrantStub.validToken())
             .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
             .queryParam("code_challenge_method", "S256"))
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun registrationGrants(registry: DynamicPropertyRegistry) = RegistrationGrantStub.register(registry)
+    }
 }

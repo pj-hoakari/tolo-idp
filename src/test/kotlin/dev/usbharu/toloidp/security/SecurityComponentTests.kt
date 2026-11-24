@@ -12,6 +12,9 @@ import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
 import dev.usbharu.toloidp.relation.RelationMembershipCacheRepository
 import dev.usbharu.toloidp.relation.RelationLookupException
+import dev.usbharu.toloidp.relation.RegistrationGrantType
+import dev.usbharu.toloidp.relation.RegistrationGrantVerdict
+import dev.usbharu.toloidp.relation.RegistrationGrantVerifier
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.relation.TenantMembership
 import dev.usbharu.toloidp.resource.ResourceParser
@@ -84,6 +87,7 @@ class SecurityComponentTests(
     @Autowired private val auditLogs: AuditLogRepository,
 ) {
     private lateinit var registeredClient: RegisteredClient
+    private val registrationGrants = RegistrationGrantVerifier { _, _ -> RegistrationGrantVerdict.VALID }
     private val principal = UsernamePasswordAuthenticationToken.authenticated(
         dev.usbharu.toloidp.user.IdpUserDetailsManager.DEVELOPMENT_USER_ID,
         null,
@@ -169,7 +173,7 @@ class SecurityComponentTests(
     @Test
     fun tenantAuthorizationValidatorRejectsClientPolicyWithoutAuthorizationCodeGrant() {
         replaceClientPolicy(allowedGrantTypes = setOf(AuthorizationGrantType.TOKEN_EXCHANGE.value))
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
 
         val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = setOf("tenant.read")))
@@ -180,7 +184,7 @@ class SecurityComponentTests(
 
     @Test
     fun tenantAuthorizationValidatorRejectsAudienceOutsidePolicy() {
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
 
         val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(audience = "other-api"))
@@ -191,7 +195,7 @@ class SecurityComponentTests(
 
     @Test
     fun tenantAuthorizationValidatorRejectsNonStringAudienceParameter() {
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
 
         val exception = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(audience = listOf("backend-api", "other-api")))
@@ -210,7 +214,7 @@ class SecurityComponentTests(
                 events = emptyList(),
             ),
         )
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         val context = tenantAuthorizationContext(setOf("openid", "tenant.write"))
 
         validator.accept(context)
@@ -349,7 +353,7 @@ class SecurityComponentTests(
         cacheRepository.deleteAll()
         cacheMembership(TenantMembership("tenant-a", role, emptyList()))
         val scopes = scope.split(' ').toSet()
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         validator.accept(authorizationContext(scopes = scopes))
 
         val context = tenantJwtContext(scopes)
@@ -371,7 +375,7 @@ class SecurityComponentTests(
     ])
     fun rejectsTenantJoinMixedWithOtherScopesAtAuthorizationAndIssuance(scope: String) {
         val scopes = scope.split(' ').toSet()
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = scopes))
         }
@@ -388,7 +392,7 @@ class SecurityComponentTests(
         cacheRepository.deleteAll()
         cacheMembership(TenantMembership("tenant-a", RelationRole.STAFF, emptyList()))
         val scopes = setOf("events.report", "tenant.write")
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         val context = tenantAuthorizationContext(scopes)
 
         validator.accept(context)
@@ -405,7 +409,7 @@ class SecurityComponentTests(
         registeredClient = RegisteredClient.from(registeredClient).scope("events.write").build()
         replaceClientPolicy(allowedScopes = IdpScopes.SUPPORTED + "events.write")
         val scopes = setOf("events.write")
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = scopes))
         }
@@ -427,7 +431,7 @@ class SecurityComponentTests(
             }
         }
         val scopes = setOf("tenant.read")
-        val validator = TenantAuthorizationValidator(users, resourceParser, failingRelation, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, failingRelation, registrationGrants, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = scopes))
         }
@@ -456,7 +460,7 @@ class SecurityComponentTests(
                 throw RelationLookupException("user_not_tenant_member")
         }
         val scopes = setOf("tenant.join")
-        val validator = TenantAuthorizationValidator(users, resourceParser, noMembership, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, noMembership, registrationGrants, scopePolicy, oidcRequests)
         val authorization = tenantAuthorizationContext(scopes)
         validator.accept(authorization)
         assertEquals(scopes, authorization.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>().scopes)
@@ -482,9 +486,18 @@ class SecurityComponentTests(
     }
 
     @Test
+    fun registrationWithoutARegistrationGrantIsRejected() {
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
+        val error = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
+            validator.accept(authorizationContext(scopes = setOf("tenant.join")))
+        }
+        assertEquals("invalid_request", error.error.errorCode)
+    }
+
+    @Test
     fun registrationRequiresAClientRegisteredForTenantJoin() {
         replaceClientPolicy(allowedScopes = IdpScopes.SUPPORTED - IdpScopes.TENANT_JOIN)
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         val error = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = setOf("tenant.join")))
         }
@@ -534,7 +547,7 @@ class SecurityComponentTests(
         registeredClientRepository.clearPolicy("client-123")
         registeredClient = checkNotNull(registeredClientRepository.findByClientId("client-123"))
         val scopes = setOf("tenant.join")
-        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, scopePolicy, oidcRequests)
+        val validator = TenantAuthorizationValidator(users, resourceParser, relationService, registrationGrants, scopePolicy, oidcRequests)
         val authorizationError = assertFailsWith<OAuth2AuthorizationCodeRequestAuthenticationException> {
             validator.accept(authorizationContext(scopes = scopes))
         }
@@ -677,7 +690,13 @@ class SecurityComponentTests(
         val base = authorizationContext(scopes = scopes)
         val authentication = base.getAuthentication<OAuth2AuthorizationCodeRequestAuthenticationToken>()
         return OAuth2AuthorizationCodeRequestAuthenticationContext.with(
-            AuthorizationRequestToken(authentication, authentication.additionalParameters, authorizationRequest(), false),
+            AuthorizationRequestToken(
+                authentication,
+                authentication.additionalParameters,
+                authorizationRequest(),
+                false,
+                mapOf(RegistrationGrantType.INVITATION to "invitation-token"),
+            ),
         )
             .registeredClient(registeredClient)
             .authorizationRequest(checkNotNull(base.authorizationRequest))
