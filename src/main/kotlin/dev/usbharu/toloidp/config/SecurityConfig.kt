@@ -12,6 +12,7 @@ import dev.usbharu.toloidp.client.ClientPolicy
 import dev.usbharu.toloidp.client.ClientType
 import dev.usbharu.toloidp.logging.structuredInfo
 import dev.usbharu.toloidp.logging.structuredWarn
+import dev.usbharu.toloidp.relation.RegistrationGrantVerifier
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.ratelimit.RateLimitFilter
@@ -199,6 +200,7 @@ class SecurityConfig {
         tokenGenerator: OAuth2TokenGenerator<OAuth2Token>,
         resourceParser: ResourceParser,
         relationService: RelationService,
+        registrationGrants: RegistrationGrantVerifier,
         scopePolicy: ScopePolicy,
         properties: IdpProperties,
         deviceGrantService: DeviceGrantService,
@@ -316,6 +318,7 @@ class SecurityConfig {
                                     users,
                                     resourceParser,
                                     relationService,
+                                    registrationGrants,
                                     scopePolicy,
                                     oidcRequests,
                                 ),

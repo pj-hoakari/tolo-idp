@@ -6,6 +6,10 @@ import dev.usbharu.toloidp.logging.structuredDebug
 import dev.usbharu.toloidp.logging.structuredTrace
 import dev.usbharu.toloidp.logging.structuredWarn
 import dev.usbharu.toloidp.relation.RelationLookupException
+import dev.usbharu.toloidp.relation.RegistrationGrant
+import dev.usbharu.toloidp.relation.RegistrationGrantType
+import dev.usbharu.toloidp.relation.RegistrationGrantVerdict
+import dev.usbharu.toloidp.relation.RegistrationGrantVerifier
 import dev.usbharu.toloidp.relation.RelationService
 import dev.usbharu.toloidp.resource.ResourceParser
 import dev.usbharu.toloidp.scope.ScopeNotAllowedException
@@ -32,6 +36,7 @@ class TenantAuthorizationValidator(
     private val users: IdpUserDetailsManager,
     private val resourceParser: ResourceParser,
     private val relationService: RelationService,
+    private val registrationGrants: RegistrationGrantVerifier,
     private val scopePolicy: ScopePolicy,
     private val oidcRequests: OidcAuthenticationRequestValidator,
 ) : Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> {
@@ -122,6 +127,9 @@ class TenantAuthorizationValidator(
             )
             throwAuthorizationError(OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ParameterNames.SCOPE)
         }
+        if (registration && (authentication as? AuthorizationRequestToken)?.resumed != true) {
+            verifyRegistrationGrant(authentication, clientId, tenantResource.tenantId)
+        }
         val principal = authentication.principal as org.springframework.security.core.Authentication
         oidcRequests.validate(authentication, context.registeredClient, tenantResource.tenantId, signedIn(principal, tenantResource.tenantId))
         if (registration) {
@@ -182,6 +190,45 @@ class TenantAuthorizationValidator(
         log.structuredTrace("Tenant authorization validation completed", "event" to "tenant_authorization_validation_completed", "client_id" to clientId, "tenant_id" to tenantResource.tenantId)
     }
 
+    private fun verifyRegistrationGrant(
+        authentication: OAuth2AuthorizationCodeRequestAuthenticationToken,
+        clientId: String,
+        tenantId: String,
+    ) {
+        val parameters = (authentication as? AuthorizationRequestToken)?.registrationGrantParameters.orEmpty()
+        val (type, value) = parameters.entries.singleOrNull()
+            ?: rejectRegistrationGrant(
+                clientId, tenantId, OAuth2ErrorCodes.INVALID_REQUEST, REGISTRATION_GRANT_PARAMETERS,
+                if (parameters.isEmpty()) "registration_grant_missing" else "registration_grant_ambiguous",
+            )
+        val token = (value as? String)?.takeIf { it.isNotBlank() }
+            ?: rejectRegistrationGrant(clientId, tenantId, OAuth2ErrorCodes.INVALID_REQUEST, type.parameter, "registration_grant_malformed")
+        when (registrationGrants.verify(tenantId, RegistrationGrant(type, token))) {
+            RegistrationGrantVerdict.VALID -> Unit
+            RegistrationGrantVerdict.INVALID ->
+                rejectRegistrationGrant(clientId, tenantId, OAuth2ErrorCodes.ACCESS_DENIED, type.parameter, "registration_grant_invalid")
+            RegistrationGrantVerdict.UNAVAILABLE ->
+                rejectRegistrationGrant(clientId, tenantId, OAuth2ErrorCodes.TEMPORARILY_UNAVAILABLE, type.parameter, "registration_grant_verification_failed")
+        }
+    }
+
+    private fun rejectRegistrationGrant(
+        clientId: String,
+        tenantId: String,
+        errorCode: String,
+        parameter: String,
+        reason: String,
+    ): Nothing {
+        log.structuredWarn(
+            "Registration authorization request rejected",
+            "event" to "authorization_request_rejected",
+            "client_id" to clientId,
+            "tenant_id" to tenantId,
+            "failure_reason" to reason,
+        )
+        throwAuthorizationError(errorCode, parameter)
+    }
+
     private fun signedIn(principal: org.springframework.security.core.Authentication, tenantId: String): Boolean =
         principal.isAuthenticated && principal !is AnonymousAuthenticationToken && try {
             users.requireTenantUser(tenantId, principal.name)
@@ -197,5 +244,6 @@ class TenantAuthorizationValidator(
 
     companion object {
         private val log = LoggerFactory.getLogger(TenantAuthorizationValidator::class.java)
+        private val REGISTRATION_GRANT_PARAMETERS = RegistrationGrantType.entries.joinToString(" ") { it.parameter }
     }
 }

@@ -1,5 +1,6 @@
 package dev.usbharu.toloidp.security
 
+import dev.usbharu.toloidp.relation.RegistrationGrantType
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletRequestWrapper
 import org.springframework.security.core.Authentication
@@ -43,7 +44,10 @@ class AuthorizationRequestConverter(
         }
 
         val additionalParameters = converted.additionalParameters.toMutableMap()
-        return AuthorizationRequestToken(converted, additionalParameters, authorizationRequest, resumed)
+        val registrationGrantParameters = RegistrationGrantType.entries
+            .mapNotNull { type -> additionalParameters[type.parameter]?.let { type to it } }
+            .toMap()
+        return AuthorizationRequestToken(converted, additionalParameters, authorizationRequest, resumed, registrationGrantParameters)
     }
 
     private fun resume(request: HttpServletRequest): HttpServletRequest {
@@ -62,6 +66,7 @@ class AuthorizationRequestToken(
     parameters: Map<String, Any>,
     val httpRequest: HttpServletRequest,
     val resumed: Boolean,
+    val registrationGrantParameters: Map<RegistrationGrantType, Any>,
 ) : OAuth2AuthorizationCodeRequestAuthenticationToken(
     original.authorizationUri, original.clientId, original.principal as Authentication,
     original.redirectUri, original.state, original.scopes, parameters,

@@ -3,6 +3,7 @@ package dev.usbharu.toloidp.ratelimit
 import dev.usbharu.toloidp.user.IdpUserDetailsManager
 import dev.usbharu.toloidp.relation.EventMembership
 import dev.usbharu.toloidp.security.LoginChallenges
+import dev.usbharu.toloidp.security.RegistrationGrantStub
 import dev.usbharu.toloidp.security.challengeFrom
 import dev.usbharu.toloidp.relation.RelationMembershipCache
 import dev.usbharu.toloidp.relation.RelationMembershipCacheId
@@ -20,6 +21,8 @@ import org.springframework.context.annotation.Bean
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
@@ -132,6 +135,7 @@ class RateLimitFilterTests(
             get("/oauth2/authorize").queryParam("response_type", "code").queryParam("client_id", "client-123")
                 .queryParam("redirect_uri", "http://127.0.0.1:8080/login/oauth2/code/client-123")
                 .queryParam("scope", "tenant.join").queryParam("resource", "https://api.example.com/tenants/tenant-rate")
+                .queryParam("ownership_claim_token", RegistrationGrantStub.validToken())
                 .queryParam("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM").queryParam("code_challenge_method", "S256"),
         )
         mockMvc.perform(
@@ -190,6 +194,12 @@ class RateLimitFilterTests(
             .andExpect(status().isServiceUnavailable)
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.error").value("rate_limit_unavailable"))
+    }
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun registrationGrants(registry: DynamicPropertyRegistry) = RegistrationGrantStub.register(registry)
     }
 
     @TestConfiguration
