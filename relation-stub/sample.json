@@ -1,7 +1,8 @@
 {
   "tenants": [
     { "id": "0123456789abcdef", "name": "Tolo dev tenant (seed user is owner)" },
-    { "id": "tenant-b", "name": "Tenant B (seed user is not a member)" }
+    { "id": "tenant-b", "name": "Tenant B (seed user is not a member)" },
+    { "id": "tenant-onboarding", "name": "Pending tenant for the signup registration scenario" }
   ],
   "events": [
     { "id": "event-1", "tenantId": "0123456789abcdef", "name": "Event 1 (seed user is owner)" },
@@ -20,5 +21,8 @@
     { "eventId": "event-2", "userId": "user-456", "role": "owner" },
     { "eventId": "event-3", "userId": "user-456", "role": "staff" },
     { "eventId": "event-b1", "userId": "user-789", "role": "owner" }
+  ],
+  "registrationGrants": [
+    { "tenantId": "tenant-onboarding", "type": "ownership_claim_token", "token": "scenario-ownership-claim-token" }
   ]
 }

@@ -25,6 +25,8 @@ vars:
   redirect_uri: http://127.0.0.1:8080/login/oauth2/code/client-123
   audience: backend-api
   tenant_resource: https://api.example.com/tenants/tenant-onboarding
+  ownership_claim_token: scenario-ownership-claim-token
+  unknown_ownership_claim_token: scenario-unknown-ownership-claim-token
   state: scenario-state-registration
   code_verifier: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
   code_challenge: E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
@@ -32,6 +34,8 @@ secrets:
   - vars.password
   - vars.client_secret
   - vars.code_verifier
+  - vars.ownership_claim_token
+  - vars.unknown_ownership_claim_token
   - challenge
   - '"Basic " + toBase64(vars.client_id + ":" + vars.client_secret)'
   - vars.gateway_client_secret
@@ -79,10 +83,39 @@ steps:
       && hasPrefix(current.res.headers["Location"][0], vars.redirect_uri + "?")
       && url(current.res.headers["Location"][0]).Query().Get("error") == "invalid_scope"
 
-  authorize:
-    desc: 対象テナントの resource と tenant.join の認可要求は Web のログイン画面へ challenge だけを付けてリダイレクトする
+  reject_missing_grant:
+    desc: 所有権取得トークンも招待トークンもない tenant.join の認可要求は challenge を発行せず invalid_request を返す
     idp:
       "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope=tenant.join&resource={{ urlencode(vars.tenant_resource) }}&state={{ urlencode(vars.state) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
+        get:
+          useCookie: false
+          headers:
+            Accept: text/html
+          body: null
+    test: |
+      current.res.status == 302
+      && hasPrefix(current.res.headers["Location"][0], vars.redirect_uri + "?")
+      && url(current.res.headers["Location"][0]).Query().Get("error") == "invalid_request"
+
+  reject_unknown_grant:
+    desc: Relation Service が有効と答えない所有権取得トークンの tenant.join の認可要求は challenge を発行せず access_denied を返す
+    idp:
+      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope=tenant.join&resource={{ urlencode(vars.tenant_resource) }}&ownership_claim_token={{ urlencode(vars.unknown_ownership_claim_token) }}&state={{ urlencode(vars.state) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
+        get:
+          useCookie: false
+          headers:
+            Accept: text/html
+          body: null
+    test: |
+      current.res.status == 302
+      && hasPrefix(current.res.headers["Location"][0], vars.redirect_uri + "?")
+      && url(current.res.headers["Location"][0]).Query().Get("error") == "access_denied"
+      && !(current.res.headers["Location"][0] contains vars.unknown_ownership_claim_token)
+
+  authorize:
+    desc: 対象テナントの resource、tenant.join、有効な所有権取得トークンの認可要求は Web のログイン画面へ challenge だけを付けてリダイレクトする
+    idp:
+      "{{ authorization_path }}?response_type=code&client_id={{ urlencode(vars.client_id) }}&redirect_uri={{ urlencode(vars.redirect_uri) }}&scope=tenant.join&resource={{ urlencode(vars.tenant_resource) }}&ownership_claim_token={{ urlencode(vars.ownership_claim_token) }}&state={{ urlencode(vars.state) }}&code_challenge={{ urlencode(vars.code_challenge) }}&code_challenge_method=S256":
         get:
           headers:
             Accept: text/html

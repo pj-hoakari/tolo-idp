@@ -87,15 +87,17 @@ IDP_ISSUER=http://localhost:18080 runn run --verbose 'scenario/*.yml'
 
 1. Discovery の `scopes_supported` が `tenant.join` を含み、`tenant.claim` を含まないことを確認する。
 2. `openid tenant.join` の認可要求が、challenge を発行せずに `invalid_scope` を返すことを確認する。
-3. tenant-onboarding の resource と `tenant.join` だけの認可要求が、Web のログイン画面へ `challenge` だけを付けた302を返すことを確認する。
-4. `challenge` と新しいユーザー名・パスワードで `/api/signup` を呼び、tenant-onboarding のユーザーと HttpOnly のセッション cookie が作られることを確認する。
-5. 認可要求を再開し、コードを registration に交換する。ID Token と Refresh Token がなく、scope が `tenant.join` だけであることを確認する。
-6. JWT 本体と Introspection で `token_use=registration` を確認し、`tenant_id`、`event_id`、`resource` がないことを確認する。
-7. registration を交換元にした Token Exchange が `invalid_grant` になることを確認する。
+3. `ownership_claim_token` も `invitation_token` もない `tenant.join` の認可要求が、challenge を発行せずに `invalid_request` を返すことを確認する。
+4. relation-stub が有効と答えない `ownership_claim_token` の認可要求が、challenge を発行せずに `access_denied` を返し、リダイレクト先にそのトークンを含めないことを確認する。
+5. tenant-onboarding の resource、`tenant.join` だけの scope、`relation-stub/sample.json` の `registrationGrants` にある `ownership_claim_token` の認可要求が、Web のログイン画面へ `challenge` だけを付けた302を返すことを確認する。
+6. `challenge` と新しいユーザー名・パスワードで `/api/signup` を呼び、tenant-onboarding のユーザーと HttpOnly のセッション cookie が作られることを確認する。
+7. 認可要求を再開し、コードを registration に交換する。ID Token と Refresh Token がなく、scope が `tenant.join` だけであることを確認する。
+8. JWT 本体と Introspection で `token_use=registration` を確認し、`tenant_id`、`event_id`、`resource` がないことを確認する。
+9. registration を交換元にした Token Exchange が `invalid_grant` になることを確認する。
 
 scope は順序によらず完全一致を確認します。両 access token の issuer、subject、client、単一 audience、resource、tenant/event、token_use、時刻、jti を確認します。jti は JWT 本体と Introspection の両方で、存在する非空の文字列であることを確認します。role、tenant_role、event_role の不在は JWT 本体をデコードして確認します。Introspection は保存された claim の検証です。JWT 署名検証は既存の Kotlin テストで行います。ID Token の nonce や署名はこの runbook の検証対象に含めません。
 
-password、client secret、login challenge、認可コード、token、セッション cookie は runn の `secrets` に登録しています。runn v1.10.0 の失敗 trace にはマスクされない値が出るため、公開済み seed 値を使う専用開発環境で実行してください。標準の実行は HTTP 詳細を無効にし、ステップの成否と失敗時の trace を表示します。
+password、client secret、所有権取得トークン、login challenge、認可コード、token、セッション cookie は runn の `secrets` に登録しています。runn v1.10.0 の失敗 trace にはマスクされない値が出るため、公開済み seed 値を使う専用開発環境で実行してください。標準の実行は HTTP 詳細を無効にし、ステップの成否と失敗時の trace を表示します。
 
 ## CI
 
