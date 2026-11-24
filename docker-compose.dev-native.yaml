@@ -40,7 +40,7 @@ services:
 
   relation-stub:
     # Use the /users/{userId}/memberships API contract.
-    image: ghcr.io/pj-hoakari/tolo-relation-stub:0.2@sha256:3f3809c45568f8a61c97ac516820c42ca1663f7a705c615d5b13879beadec1e8
+    image: ghcr.io/pj-hoakari/tolo-relation-stub:0.3@sha256:657e33c99bf5debf53af69c8d1d6e60385a7bd62a36338819b2609323a0a01bf
     ports:
       - "18081:8080"
     environment:
